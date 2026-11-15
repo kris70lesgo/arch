@@ -1,0 +1,18 @@
+/** Ordinary bot controls only. Financial/claim authority copy is not translated here. */
+export const botControlsEnglish = Object.freeze({
+  introduction: "Ask a question to receive an answer with citations.",
+  usage: "Usage:",
+  exampleQuestion: "what is x402?",
+  reviewBoundary: "Review-first is available only in the authenticated live browser; review mode flags are refused here.",
+  privateQuestion: "In this private chat you can also just type the question.",
+  status: "Status:",
+  financialDetails: "Financial details (English):",
+  languageHelp: "Use /language en|vi|pt|es|fr|zh-Hans|de|ja|ko|hi|id|ru|ar|auto to set answer and help language. An explicit output-language instruction in your original question takes priority; auto follows the question.",
+  languageCurrent: "Answer language preference: {preference}.",
+  languageSaved: "Saved answer and help language preference: {preference}.",
+  languageUnavailable: "The language preference could not be read or confirmed as saved. No successful save is claimed.",
+  languageInvalid: "Supported values: en, vi, pt (also pt-BR), es, fr, zh-Hans, de, ja, ko, hi, id, ru, ar, auto.",
+  languagePrivate: "Set or inspect your language preference in a private chat with Keryx.",
+  privatePreparing: "Keryx is preparing your private research reply…",
+} as const);
+export type BotControlsCatalogue = { readonly [K in keyof typeof botControlsEnglish]: string };

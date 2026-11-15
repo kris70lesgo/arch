@@ -1,0 +1,92 @@
+import { describe, expect, it, vi } from "vitest";
+import nextConfig from "../next.config";
+import {
+  appSecurityHeaders,
+  CLOUDFLARE_WEB_ANALYTICS_SCRIPT_ORIGIN,
+  contentSecurityPolicy,
+  SCALAR_API_REFERENCE_SCRIPT_URL,
+  CIRCLE_WALLET_AUTH_FRAME_ORIGIN,
+} from "./security-headers";
+
+describe("application security headers", () => {
+  it("allows the exact Circle confirmation iframe only for explicitly configured Google onboarding", () => {
+    vi.stubEnv("KERYX_CIRCLE_GOOGLE_ENABLED", "true");
+    vi.stubEnv("NEXT_PUBLIC_CIRCLE_APP_ID", "synthetic-circle-app");
+    vi.stubEnv("NEXT_PUBLIC_GOOGLE_CLIENT_ID", "synthetic-google-client");
+    try {
+      const csp = contentSecurityPolicy(true);
+      const frames = csp.split("; ").find(value => value.startsWith("frame-src"));
+      expect(frames).toContain(CIRCLE_WALLET_AUTH_FRAME_ORIGIN);
+      expect(csp).not.toContain("https://*.circle.com");
+      expect(csp).not.toContain("'unsafe-eval'");
+      expect(csp.split("; ").find(value => value.startsWith("connect-src"))).not.toContain("pw-auth.circle.com");
+      expect(csp).not.toContain("accounts.google.com");
+      vi.stubEnv("KERYX_CIRCLE_GOOGLE_ENABLED", "false");
+      expect(contentSecurityPolicy(true)).not.toContain(CIRCLE_WALLET_AUTH_FRAME_ORIGIN);
+      vi.stubEnv("KERYX_CIRCLE_GOOGLE_ENABLED", "true"); vi.stubEnv("NEXT_PUBLIC_CIRCLE_APP_ID", "");
+      expect(contentSecurityPolicy(true)).not.toContain(CIRCLE_WALLET_AUTH_FRAME_ORIGIN);
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it("compiles only the selected mainnet payment destinations and rejects mixed deployment rails", () => {
+    vi.stubEnv("KERYX_NETWORK", "arc"); vi.stubEnv("NEXT_PUBLIC_KERYX_NETWORK", "arc");
+    try {
+      const csp = contentSecurityPolicy(true);
+      expect(csp).toContain("https://rpc.blockdaemon.mainnet.arc.io");
+      expect(csp).toContain("https://gateway-api.circle.com");
+      expect(csp).not.toContain("https://rpc.testnet.arc.network");
+      expect(csp).not.toContain("https://gateway-api-testnet.circle.com");
+      vi.stubEnv("NEXT_PUBLIC_KERYX_NETWORK", "arcTestnet"); expect(() => contentSecurityPolicy(true)).toThrow("must match");
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it("blocks framing/plugins and limits wallet network destinations", () => {
+    const csp = contentSecurityPolicy(true);
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("https://gateway-api-testnet.circle.com");
+    expect(csp).toContain("https://*.supabase.co");
+    expect(csp).toContain(CLOUDFLARE_WEB_ANALYTICS_SCRIPT_ORIGIN);
+    expect(csp).not.toContain("https://cdn.jsdelivr.net");
+    expect(csp).not.toContain("'unsafe-eval'");
+    expect(contentSecurityPolicy(false)).not.toContain("upgrade-insecure-requests");
+  });
+
+  it("allows Scalar's pinned entry point only in the API docs policy", () => {
+    const docsCsp = contentSecurityPolicy(true, [SCALAR_API_REFERENCE_SCRIPT_URL]);
+    const docsHeaders = appSecurityHeaders([SCALAR_API_REFERENCE_SCRIPT_URL]);
+
+    expect(docsCsp).toContain(SCALAR_API_REFERENCE_SCRIPT_URL);
+    expect(docsCsp).toContain(CLOUDFLARE_WEB_ANALYTICS_SCRIPT_ORIGIN);
+    expect(docsHeaders).toContainEqual({
+      key: "Content-Security-Policy",
+      value: expect.stringContaining(SCALAR_API_REFERENCE_SCRIPT_URL),
+    });
+  });
+
+  it("scopes the Scalar CDN override to /api/docs after the global rule", async () => {
+    const rules = await nextConfig.headers?.();
+    const globalRule = rules?.find((rule) => rule.source === "/(.*)");
+    const docsRule = rules?.find((rule) => rule.source === "/api/docs");
+    const globalCsp = globalRule?.headers.find(
+      (header) => header.key === "Content-Security-Policy",
+    )?.value;
+    const docsCsp = docsRule?.headers.find(
+      (header) => header.key === "Content-Security-Policy",
+    )?.value;
+
+    expect(globalCsp).not.toContain(SCALAR_API_REFERENCE_SCRIPT_URL);
+    expect(docsCsp).toContain(SCALAR_API_REFERENCE_SCRIPT_URL);
+  });
+
+  it("ships transport, MIME, referrer, and permissions protections", () => {
+    const keys = appSecurityHeaders().map((header) => header.key);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        "Strict-Transport-Security",
+        "X-Content-Type-Options",
+        "X-Frame-Options",
+        "Referrer-Policy",
+        "Permissions-Policy",
+      ]),
+    );
+  });
+});

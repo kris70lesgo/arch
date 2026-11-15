@@ -1,0 +1,127 @@
+import { createHash } from "node:crypto";
+import { reviewMicros } from "../research/decision-review-types";
+import { ACTUAL_READ_POLICY, type ReadCheck, type CheckpointOutcome } from "../research-audit/actual-read-policy";
+import { canonicalReadPacket, MAX_READ_CHECKPOINTS, type ActualReadPacket, type ActualReadRecord } from "../research-audit/actual-read-record";
+import { ACTUAL_READ_CAPTURE_V2, replayMapping, replayNormalization, type MappingInput, type MappingOutcome,
+  type NormalizationInput, type PortfolioObservation, type StopRecord, type FinalObservations } from "../research-audit/actual-read-v2";
+import { ACTUAL_READ_CAPTURE_V3 } from "../research-audit/actual-read-v3";
+import type { OptimizerCheckpoint } from "../research-audit/optimizer-checkpoint";
+import { ACTUAL_READ_CAPTURE_V4 } from "../research-audit/actual-read-v4";
+import { ECONOMIC_POLICY, ECONOMIC_LIMIT, EconomicUnavailable, economicRecord,
+  type EconomicCapture, type EconomicRecord, type EconomicPayload, type EconomicKind, type EconomicEvent, type EconomicRefusal } from "../research-audit/economic-checkpoint";
+
+export type ReadCheckpointCapture = { status: "unavailable" } | {
+  status: "available"; packet: ActualReadPacket; retainedDigest: string;
+};
+export interface ReadCheckpointContext {
+  candidate: number; round: number; proposal: ActualReadRecord["proposal"]; plan: ActualReadRecord["plan"];
+  price?: number; remaining?: number;
+}
+/** Existing ordinary optional port is an immutable own data property. No native fallback or IO. */
+export function ordinaryCheckpointCapability(db: unknown): boolean {
+  try {
+    if (!db || typeof db !== "object") return false;
+    const descriptor = Object.getOwnPropertyDescriptor(db, "decisionReviews");
+    return !!descriptor && "value" in descriptor && !!descriptor.value && !descriptor.get && !descriptor.set;
+  } catch { return false; }
+}
+function qualifiedMicros(value?: number): string | null {
+  if (value === undefined) return null;
+  try { return reviewMicros(value); } catch { return null; }
+}
+
+/** Optional capture cannot escape into agent execution, including a throwing trusted sink. */
+export function createReadCheckpointCapture(enabled: boolean, sink?: (record: ActualReadRecord) => void, runtime = false, economicRuntime = false) {
+  const records: ActualReadRecord[] = [];
+  const mappings: { input: MappingInput; outcome: MappingOutcome }[] = [];
+  const normalizations: { input: NormalizationInput; outcome: ReturnType<typeof replayNormalization> }[] = [];
+  const stops: StopRecord[] = [];
+  let portfolio: PortfolioObservation | null = null;
+  let optimizer: OptimizerCheckpoint | undefined;
+  let economics: EconomicCapture = { status: "available", policy: ECONOMIC_POLICY, records: [] };
+  let observations: FinalObservations = { actions: [], citations: [], payments: [] };
+  let unavailable = !enabled;
+  const observe = (operation: () => void) => {
+    if (!runtime || unavailable) return;
+    try { operation(); } catch { unavailable = true; records.length = 0; }
+  };
+  function appendEconomic(kind: EconomicKind, event: EconomicEvent, candidate: number, round: number,
+    project?: () => EconomicPayload, reason: EconomicRefusal = "authority-not-captured") {
+    if (!runtime || !economicRuntime || unavailable || economics.status !== "available") return;
+    if (economics.records.length >= ECONOMIC_LIMIT) { economics = { status: "unavailable", reason: "bounds" }; return; }
+    const context = { sequence: economics.records.length, afterCheckpoint: records.length, candidate, round };
+    let record: EconomicRecord;
+    try {
+      if (!project) throw new EconomicUnavailable(reason);
+      const observed = project();
+      if (observed.kind !== kind || observed.event !== event) throw new EconomicUnavailable("invalid-input");
+      record = economicRecord({ ...context, status: "available", ...observed }, context.sequence, records.length);
+    } catch (error) {
+      record = { ...context, status: "unavailable", kind, event, reason: error instanceof EconomicUnavailable ? error.reason : "capture-failed" };
+    }
+    economics.records.push(record);
+  }
+  return {
+    economic(kind: EconomicKind, event: EconomicEvent, candidate: number, round: number, project: () => EconomicPayload) {
+      appendEconomic(kind, event, candidate, round, project);
+    },
+    economicUnavailable(kind: EconomicKind, event: EconomicEvent, candidate: number, round = 0) { appendEconomic(kind, event, candidate, round); },
+    refuse() { if (runtime && enabled) { unavailable = true; records.length = 0; } },
+    mapping(project: () => { input: MappingInput; outcome: MappingOutcome }) { observe(() => {
+      const { input, outcome } = project();
+      if (mappings.length >= MAX_READ_CHECKPOINTS || JSON.stringify(replayMapping(input)) !== JSON.stringify(outcome)) throw Error("Mapping capture disagreement");
+      mappings.push(structuredClone({ input, outcome }));
+    }); },
+    normalization(input: NormalizationInput, action: "BUY" | "SKIP" | "CACHE", targets: number[]) { observe(() => {
+      const outcome = replayNormalization(input);
+      if (normalizations.length >= MAX_READ_CHECKPOINTS || outcome.action !== action || JSON.stringify(outcome.targets) !== JSON.stringify(targets)) throw Error("Normalization capture disagreement");
+      normalizations.push(structuredClone({ input, outcome }));
+    }); },
+    portfolio(project: () => PortfolioObservation) { observe(() => { portfolio = structuredClone(project()); }); },
+    optimizer(project: () => OptimizerCheckpoint) {
+      if (!runtime || unavailable) return;
+      try { optimizer = structuredClone(project()); } catch { optimizer = { status: "unavailable", reason: "capture-failed" }; }
+    },
+    stop(stage: StopRecord["stage"], count: number) { observe(() => {
+      if (count !== 0 || stops.length >= MAX_READ_CHECKPOINTS) throw Error("Stop capture disagreement");
+      stops.push({ afterCheckpoint: records.length, stage, count, action: "STOP" });
+    }); },
+    observations(project: () => FinalObservations) { observe(() => { observations = structuredClone(project()); }); },
+    append(check: ReadCheck, outcome: CheckpointOutcome, context: ReadCheckpointContext) {
+      if (unavailable) return;
+      try {
+        if (records.length >= MAX_READ_CHECKPOINTS) throw Error("Checkpoint capacity");
+        const entry: ActualReadRecord = { sequence: records.length, candidate: context.candidate, round: context.round,
+          proposal: context.proposal, plan: context.plan, facts: "assertions", check: { ...check }, outcome: { ...outcome },
+          amounts: { priceMicros: qualifiedMicros(context.price), remainingMicros: qualifiedMicros(context.remaining) } };
+        // A trusted observer receives a separate snapshot; it cannot rewrite the retained record.
+        const observed: unknown = sink?.(structuredClone(entry));
+        if (observed !== undefined) {
+          // A void observer must complete synchronously. Consume any rejected promise
+          // without awaiting it or letting it escape into answer/payment delivery.
+          void Promise.resolve(observed).catch(() => undefined);
+          throw Error("Asynchronous capture unsupported");
+        }
+        records.push(entry);
+      } catch { unavailable = true; records.length = 0; }
+    },
+    finish(): ReadCheckpointCapture | undefined {
+      if (!enabled) return undefined;
+      try {
+        if (unavailable || !records.length && !stops.length) return { status: "unavailable" };
+        let packet: ActualReadPacket = runtime ? { schema: 2, policy: ACTUAL_READ_CAPTURE_V2,
+          coverage: "normalization-and-read-checkpoints", monetaryAuthority: "qualified-assertions-only",
+          records, mappings, normalizations, portfolio, stops, observations } :
+          { schema: 1, policy: ACTUAL_READ_POLICY, coverage: "post-portfolio-checkpoints", monetaryAuthority: "qualified-assertions-only", records };
+        if (packet.schema === 2 && optimizer !== undefined) packet = { ...packet, schema: 3, policy: ACTUAL_READ_CAPTURE_V3,
+          coverage: "normalization-optimizer-read-checkpoints", optimizer };
+        if (runtime && economicRuntime && packet.schema === 2) packet = { ...packet, schema: 3, policy: ACTUAL_READ_CAPTURE_V3,
+          coverage: "normalization-optimizer-read-checkpoints", optimizer: { status: "unavailable", reason: "capture-failed" } };
+        if (economicRuntime && packet.schema === 3) packet = { ...packet, schema: 4, policy: ACTUAL_READ_CAPTURE_V4,
+          coverage: "normalization-optimizer-query-economics-checkpoints", economics };
+        const canonical = canonicalReadPacket(packet);
+        return { status: "available", packet: JSON.parse(canonical), retainedDigest: createHash("sha256").update(canonical).digest("hex") };
+      } catch { return { status: "unavailable" }; }
+    },
+  };
+}

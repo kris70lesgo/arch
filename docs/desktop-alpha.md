@@ -1,0 +1,238 @@
+# Operator desktop alpha (Windows)
+
+The coordinated app0.27.47 candidate selects desktop **0.4.13** for the changed
+checked-export graph. Explicit saved-bibliography BibTeX, RIS and CSL-JSON choices
+remain distinct from cited exports and use integrity-checked original-task data,
+native save dialogs and overwrite refusal. No account editor, sharing upload,
+new payment authority or scheduler is added. See [checked bibliography exports](engineering/checked-bibliography-exports-2026-10-09.md)
+and [surface parity](surface-parity.md). Package/platform checks, source-bound
+installer publication and actual owner installation remain separate gates;
+the dated observations below do not establish this candidate's delivery.
+
+Research Monthly purchasing/redemption uses the [shared web/API product](research-monthly.md).
+The desktop remains a local task/inspection/recovery surface; it does not create
+another entitlement writer or schedule recurring research. Public production uses
+Arc mainnet; task preparation supports mainnet and retained testnet originals.
+GitHub `v0.26.8` published desktop **0.4.3** artifacts from `1297d43` on October 4,
+2026. See [current deployment and distribution evidence](mainnet-status.md).
+
+Desktop **0.4.5** defaults newly created tasks to Arc mainnet, matching the public
+service. Explicit testnet selection and all saved task networks remain intact.
+Its claim-aware receipt reader is retained from **0.4.4** for [public source claims](public-source-claims.md).
+Its receipt reader and exports preserve the captured claim policy and creator-free
+delivery status. Claim verification, linking and earnings management remain in the
+hosted wallet flow; the desktop does not acquire signing or publisher authority.
+Exact-source packaged and fresh standard-user installer acceptance, downloadable
+assets and production readback remain release gates.
+
+The Windows desktop uses a Tauri 2/WebView2 shell under
+[D-260](../DECISIONS.md). The shell bundles a pinned Node runtime and a bounded
+stdio helper using the existing TypeScript WorkspaceStore for inspection, private
+exports and GET-only recovery. The desktop and `npm run operator` use the same
+source-pinned Rust implementation for immutable task and workspace creation.
+This is a shell and visual change, not a migration of payment or result authority
+to Rust. Release acceptance requires hosted standard-user installer and
+fresh-runner checks.
+It creates and lists private task directories, including
+tasks created by the CLI. It saves a research question, Quick/Deep mode, pinned seller
+payee, creator budget, and total cap on the selected Arc network. Creation does not buy research.
+
+For development on Windows x64, install Node 24, root dependencies, a Windows SDK,
+Microsoft C++ Build Tools, the MSVC Rust toolchain and the WebView2 runtime. Then:
+
+```powershell
+npm run desktop:install
+npm run desktop:start
+```
+
+`desktop:install` installs desktop Tauri and build dependencies in `desktop/`.
+Start and package commands build the native writer from the exact checkout and
+bundle the UI, helper and runtime. Commit source changes before a release build;
+a dirty checkout is refused rather than labelled as a different commit. To build
+the Windows package and verify its staged output:
+
+```powershell
+npm run desktop:package
+```
+
+Keep the whole generated package together, including the bundled TypeScript helper,
+Node runtime, native engine and manifest. The installed app does not require a
+separate Node installation, but does require WebView2. This alpha has no auto-updater.
+The generated `release/` and Tauri build directories are ignored by Git.
+
+A same-machine, three-launch pre-release comparison used Electron desktop 0.2 and
+Tauri source `bd3e80cfb00327f613b2bdd9fef898b6a4a6d754` with WebView2
+153.0.4234.48. The portable folder shrank from 386,264,152 to 105,143,561
+bytes (72.8%), while mean UI readiness rose from 512 to 1,637 ms. After seven
+seconds, summed process-tree working set/private memory was 297.9/213.5 MiB for
+Electron and 368.6/239.6 MiB for Tauri. Working-set sums include shared pages,
+so they are not unique physical RAM. Portable folder sizes exclude the separately
+installed/shared WebView2 runtime and do not measure total system install cost.
+This one-machine result does not prove lower
+memory use or faster startup. WebView2 browser processes dominate the Tauri tree
+sample. Profiling remains separate from the release gates and cannot relax the
+desktop's process boundary or change domain authority.
+
+Choose an existing workspace to read its tasks, or create a new private workspace
+under an existing folder. New workspaces receive current-user-only permissions at
+creation. Existing folder permissions are not changed. Creating new tasks requires
+the supported private-parent ACL and creator token; use a normal user session if
+an elevated session is refused. Tasks, buyer journals,
+answers, and exports may contain private questions or bearer job identifiers. The
+desktop app never asks for a key. The only purchase handoff is a PowerShell command
+shown in a task's detail view. Run it deliberately **from the Keryx repository**, with
+the existing buyer CLI and its documented key environment. Independently verify the
+pinned payee and total cap before buying. Keep the original journal after an uncertain
+attempt; do not buy again for recovery.
+
+The app preserves partial or uncertain creation attempts. When the native writer
+returns a typed error, it identifies the generated target for inspection. A helper
+timeout or lost IPC acknowledgement may leave that random target unknown; preserve
+the chosen parent or selected workspace and inspect recent directories before any
+new creation attempt. The app never retries with a different writer. On Windows,
+successful creation establishes visible, flushed and verified files but does not prove
+directory-entry persistence after power loss. A missing or modified native engine
+blocks new creation; reopening old tasks and saved results remains available.
+See [native task creation](./native-task-creation.md) for the complete boundary.
+
+Once a buyer journal exists, **Check original job** uses the shared GET-only Operator
+recovery path. A completed verified check saves a bounded private result in the task
+folder. The desktop can reopen its plain-text answer and cited source names offline
+after relaunch, rechecking the original task/journal and archived receipt. It can
+export a private Markdown brief, BibTeX, RIS or evidence CSV through native save dialogs, using the recorded article identities and bounded claim excerpts in the checked receipt. The answer may itself
+contain sensitive material; review the brief before sharing. A later incomplete check
+keeps the earlier saved result and labels it as previous. A local save failure shows
+the current answer temporarily and preserves the original buyer receipt.
+
+The saved local observation may be out of date; task status and JSON export continue
+to say payment and delivery are unknown. Offline rechecking verifies local integrity
+and request binding, not the historical HTTPS channel, independent settlement, or
+factual correctness. Seller-reported payment evidence is labelled separately. Both
+private brief and JSON export use the same complete-file publisher as the CLI brief
+command. They write and sync a private sibling staging file, then publish the complete
+file without overwriting an existing destination. A filesystem without hard-link
+support refuses the export. Select a trusted private output folder; Windows exports
+inherit its ACL, and the app does not audit that ACL.
+
+Canceling the save dialog creates no export. A write, sync or close failure does not
+publish this attempt. If the hard-link publication step returns an error, its outcome
+is unconfirmed: inspect the named final path before retrying. A cleanup failure after publication
+leaves the complete final file in place and reports an error. The app identifies any
+staging file requiring inspection and never deletes the final path as rollback.
+These guarantees cover complete-file publication, not directory-entry durability
+after a crash or a hostile process replacing the output parent.
+
+**Import file** accepts a local UTF-8 text or Markdown file up to 256 KiB through a
+native picker. The workspace keeps immutable raw bytes and a SHA-256 digest with the
+source filename and import time. These reference snapshots stay local and are not yet
+used to generate answers. They are not uploaded by the desktop app.
+
+This alpha does not schedule jobs, notify, approve spending, create or fund wallets,
+sign purchases, or provide a business obligation ledger. Mainnet task preparation
+and GET-only recovery use the configured rail; actual purchases use the deliberate
+buyer CLI handoff and its caller-held payment authority.
+
+Validation commands: `npm --prefix desktop test`, `npm --prefix desktop run typecheck`,
+`node desktop/scripts/test-ui.mjs`, and `npm run desktop:build`. The isolated UI test
+uses a fake DesktopAPI to check layout, visible keyboard focus, and overflow at
+1240×850 and 760×600; it does not prove packaged IPC or native dialogs. Tauri
+package smoke uses temporary workspaces and native-dialog stubs and does not load
+`.env.local` or `.env.buyer.local`.
+The standard-user installer check compares every bundled resource byte for byte.
+Tauri patches the installed executable's single bundle marker from `UNK` to `NSS`
+and restores the portable executable after bundling; the identity check allows only
+those three marker bytes to differ across the two executables.
+
+For the complete-file publisher and packaged Windows app, run from the repository:
+
+```powershell
+npx vitest run lib/operator/private-text-export.test.ts
+npm run desktop:package
+$env:KERYX_NETWORK='arc'
+$env:NEXT_PUBLIC_KERYX_NETWORK='arc'
+node --import tsx desktop/scripts/tauri-smoke.mjs desktop/release/KeryxOperator-win32-x64/KeryxOperator.exe
+```
+
+The Windows desktop CI workflow must run dependency installation, publisher and
+desktop tests, type checking, package verification and the Tauri smoke command.
+Synthetic tests should cover both export formats, cancellation, overwrite refusal,
+offline reopening and saved-result recovery. The fresh-runner package handoff,
+MSVC/WebView2 checks, independent review and CI are separate release gates. A
+development-host UI screenshot is not a packaged or clean-machine acceptance claim.
+
+## Publishing accepted packages
+
+The desktop release workflow attaches the exact package already accepted by both
+Windows CI jobs to a published GitHub release whose tag resolves to that source
+commit. It does not rebuild binaries. Publish after Operator desktop CI succeeds;
+if release publication races CI, rerun **Publish accepted Operator desktop** with
+the existing release tag. Accepted artifacts are retained for 30 days. An expired
+artifact needs a new verified release source, not an unverified replacement build.
+
+Assets include the portable ZIP, installer, source manifest and SHA-256 checksums.
+Asset names include the full source commit, and uploads refuse to overwrite existing
+assets. The desktop package version is independent of the web release version;
+the release tag and manifest establish the shared source identity. The alpha has
+no automatic updater, so installed users must deliberately install a newer package.
+These packaging gates do not authorize mainnet or establish payment readiness.
+
+Replays verify existing manifests, checksums, installer bytes and every portable
+file against the accepted artifact before skipping. A partial asset set refuses
+automatic recovery: inspect the release and retain any already published bytes;
+do not remove or overwrite them to force a retry. Installer hashes are recorded
+in the source manifest for new packages.
+
+
+## Network-scoped tasks (introduced in 0.4.1)
+
+New preparation explicitly selects Arc Testnet/Mainnet and saves the rail before
+buyer handoff. Mainnet uses task v2 with `network: eip155:5042`; legacy v1 files
+remain testnet originals. Both stay in one workspace without relabelling. Creating
+a task never signs, funds or purchases. The PowerShell handoff sets BOTH
+`KERYX_NETWORK` and `NEXT_PUBLIC_KERYX_NETWORK` to that saved task's rail. Confirm
+the trusted seller, caller custody and ordinary total cap separately.
+
+Original-job GET recovery checks the helper's trusted selected rail against the
+saved task before contacting a server. Launch the app with BOTH labels set to
+`arc` for mainnet recovery, or both `arcTestnet` for testnet; both unset retains
+testnet. A mismatch refuses and preserves the original files. Local status/exports
+validate retained journal domains by the stored rail. Do not attach an old testnet
+journal to a new mainnet task. The desktop remains a local workspace and deliberate
+CLI handoff; no wallet signer or autonomous scheduler is added.
+
+The source version is not a published installer claim. Exact native Windows
+package/manifest, standard-user mixed-history handoff/recovery and published asset
+checksums remain coordinated release gates.
+
+### Historical October 3 coordinated research repair checkpoint
+
+Desktop 0.4.1 rebuilds the TypeScript receipt/result helper so integrity-checked saved
+research exports demote trusted synthetic demo evidence while retaining recorded money
+state when provenance is present in the checked receipt or its exact title/URL/body-hash
+triple matches the checked static corpus manifest after original digest verification.
+Missing strong fingerprints require a refreshed hosted receipt. Derived exports never
+rewrite saved receipt bytes or digests. Hosted archived prose remains visibly illustrative;
+no native Rust domain cutover or new desktop payment authority is inferred. Web registration
+and feed proof remain deliberate hosted SIWE handoffs. Exact-source installer hashes,
+packaged exports and fresh standard-user acceptance remain required before distribution
+is reported synchronized with application 0.26.1.
+
+### Historical October 3 claim-grounding follow-up checkpoint
+
+Desktop 0.4.2 is a new coordinated source candidate; the published 0.4.1 installer
+from `f9dca8d` remains immutable. After accepted hosted deployment of the repair, new
+hosted evidence-bearing answers retain qualified
+literal source excerpts and explicitly labelled quoted research targets/gaps. Marker-level
+support cannot prove arbitrary synthesis or each assertion, even when all target coverage
+is high; Low/incomplete remains the disclosed boundary. Saved answers and checked receipts
+retain their original bytes, paid-fetch debits, source/version bindings and settlement
+identities. Local exports do not independently certify or repair historical prose.
+
+The desktop still performs local task preparation, receipt-bound exports and deliberate
+buyer handoff; it gains no signer or autonomous scheduler. Exact-source rebuilt installer
+and standard-user/export acceptance remain required. Existing public maintenance is an
+independent live gate; this source candidate does not establish deployment or live quality.
+
+Artifact publication may complete while hosted runtime maintenance remains held. Check
+verified release manifests/checksums for installer status independently of hosted health;
+installing a new desktop package does not switch or repair the hosted server.

@@ -1,0 +1,164 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "locales/en/research-flow.ts",
+  "sourceSha256": "08624b2d69b1e55478bca2ec23697acc8155b21698c9019762c07581a9487014",
+  "entries": {
+    "researchTour.open": {
+      "source": "How it works",
+      "text": "Cara kerja"
+    },
+    "researchTour.label": {
+      "source": "How Keryx works",
+      "text": "Cara kerja Keryx"
+    },
+    "researchTour.questionTitle": {
+      "source": "Ask a question",
+      "text": "Ajukan pertanyaan"
+    },
+    "researchTour.questionBody": {
+      "source": "Enter the research question you want answered. You can inspect decisions as the answer streams.",
+      "text": "Masukkan pertanyaan riset yang ingin Anda jawab. Anda dapat memeriksa keputusan saat jawaban sedang dibuat."
+    },
+    "researchTour.startTitle": {
+      "source": "Start research",
+      "text": "Mulai riset"
+    },
+    "researchTour.closeLabel": {
+      "source": "Close tour",
+      "text": "Tutup panduan"
+    },
+    "researchTour.close": {
+      "source": "Close",
+      "text": "Tutup"
+    },
+    "researchTour.back": {
+      "source": "Back",
+      "text": "Kembali"
+    },
+    "researchTour.done": {
+      "source": "Done",
+      "text": "Selesai"
+    },
+    "researchTour.next": {
+      "source": "Next",
+      "text": "Berikutnya"
+    },
+    "researchTour.step": {
+      "source": "Step {number} of {total}",
+      "text": "Langkah {number} dari {total}"
+    },
+    "decisionLog.jumpToLatest": {
+      "source": "Jump to latest",
+      "text": "Ke langkah terbaru"
+    },
+    "decisionLog.followingLatest": {
+      "source": "Following latest steps",
+      "text": "Mengikuti langkah terbaru"
+    },
+    "decisionLog.readingEarlier": {
+      "source": "Reading earlier steps",
+      "text": "Membaca langkah sebelumnya"
+    },
+    "decisionLog.scrollHint": {
+      "source": "Scroll inside the log to read earlier steps. Jump to latest to follow new steps.",
+      "text": "Gulir di dalam log untuk membaca langkah sebelumnya. Buka langkah terbaru untuk mengikuti langkah baru."
+    },
+    "decisionLog.title": {
+      "source": "The decision",
+      "text": "Keputusan"
+    },
+    "decisionLog.label": {
+      "source": "Decision log",
+      "text": "Log keputusan"
+    },
+    "researchChat.label": {
+      "source": "Research conversation",
+      "text": "Percakapan riset"
+    },
+    "researchChat.kicker": {
+      "source": "Research with Keryx",
+      "text": "Riset bersama Keryx"
+    },
+    "researchChat.title": {
+      "source": "Ask Keryx",
+      "text": "Tanya Keryx"
+    },
+    "researchChat.introduction": {
+      "source": "Get a cited answer. Inspect source decisions.",
+      "text": "Dapatkan jawaban dengan kutipan. Periksa keputusan tentang sumber."
+    },
+    "researchChat.turnsLabel": {
+      "source": "Conversation turns",
+      "text": "Riwayat percakapan"
+    },
+    "researchChat.followUpContext": {
+      "source": "Follow-ups use the previous question only, not its answer or the full chat. Include the details you want researched.",
+      "text": "Pertanyaan lanjutan hanya menggunakan pertanyaan sebelumnya, bukan jawabannya atau seluruh percakapan. Sertakan rincian yang ingin Anda teliti."
+    },
+    "researchChat.newResearch": {
+      "source": "New research",
+      "text": "Riset baru"
+    },
+    "researchChat.stopResearch": {
+      "source": "Stop research",
+      "text": "Hentikan riset"
+    },
+    "researchChat.toolsLabel": {
+      "source": "Research tools",
+      "text": "Alat riset"
+    },
+    "researchChat.savedReports": {
+      "source": "My saved reports",
+      "text": "Laporan tersimpan saya"
+    },
+    "researchTurn.inProgress": {
+      "source": "Keryx · Research in progress",
+      "text": "Keryx · Riset berlangsung"
+    },
+    "researchTurn.findingSources": {
+      "source": "Finding sources worth reading…",
+      "text": "Mencari sumber yang layak dibaca…"
+    },
+    "decisionLog.deciding": {
+      "source": "deciding",
+      "text": "sedang memutuskan"
+    },
+    "decisionLog.connecting": {
+      "source": "Waiting for research updates…",
+      "text": "Menunggu pembaruan riset…"
+    },
+    "decisionLog.newSteps.one": {
+      "source": "{count} new step",
+      "text": "{count} langkah baru"
+    },
+    "decisionLog.newSteps.other": {
+      "source": "{count} new steps",
+      "text": "{count} langkah baru"
+    },
+    "decisionLog.steps.one": {
+      "source": "{count} steps",
+      "text": "{count} langkah"
+    },
+    "decisionLog.steps.other": {
+      "source": "{count} steps",
+      "text": "{count} langkah"
+    },
+    "followUp.title": {
+      "source": "Ask a follow-up",
+      "text": "Ajukan pertanyaan lanjutan"
+    },
+    "followUp.questionLabel": {
+      "source": "Your follow-up question",
+      "text": "Pertanyaan lanjutan Anda"
+    },
+    "followUp.placeholder": {
+      "source": "How does that compare to…?",
+      "text": "Bagaimana perbandingannya dengan…?"
+    },
+    "followUp.submit": {
+      "source": "Dispatch follow-up",
+      "text": "Kirim pertanyaan lanjutan"
+    }
+  }
+}

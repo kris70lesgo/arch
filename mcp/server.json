@@ -1,0 +1,39 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.tang-vu/keryx",
+  "description": "Budgeted research with cited evidence and visible payment state on the selected Arc network.",
+  "repository": {
+    "url": "https://github.com/tang-vu/keryx",
+    "source": "github",
+    "subfolder": "mcp"
+  },
+  "websiteUrl": "https://keryx.cc",
+  "version": "0.4.48",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://keryx.cc/mcp"
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "keryx-mcp",
+      "version": "0.4.48",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "title": "Keryx",
+  "icons": [
+    {
+      "src": "https://keryx.cc/icon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": [
+        "any"
+      ]
+    }
+  ]
+}

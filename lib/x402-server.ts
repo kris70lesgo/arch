@@ -1,0 +1,312 @@
+/**
+ * Keryx x402 seller helper. Wraps content behind a Circle Gateway batched payment:
+ * returns 402 with payment requirements, then verifies + settles on retry and serves content.
+ *
+ * Unlike the scaffold's withGateway, this does NOT write to the DB — the agent records payments
+ * with full context (queryId, rationale, weight). `payTo` is per-source (the creator's wallet),
+ * so the toll/reward lands directly in the creator's wallet.
+ */
+
+import { BatchFacilitatorClient } from "@circle-fin/x402-batching/server";
+import { NextRequest, NextResponse } from "next/server";
+import { config } from "./config";
+import { paymentRuntimeConfig } from "./payment-runtime-config";
+import { guardPublicMerchant } from "./payments/public-merchant-guard";
+import { getDb } from "./db";
+import { createHash } from "node:crypto";
+
+// The facilitator is selected independently from the request payment payload.
+const facilitator = new BatchFacilitatorClient({ url: paymentRuntimeConfig().gatewayApiUrl });
+
+export interface PaidOptions {
+  /** Trusted mutable admission rechecked before every vendor attempt, never request metadata. */
+  admissionCheck?: () => Response | null;
+  /** Trusted retained attempt admission, after native purpose claim and before settlement HTTP. */
+  beforeSettlement?: () => Response | null;
+  /** Finite acceptance prohibits retries/fallback after possible settlement exposure. */
+  singleSettlementAttempt?: boolean;
+  priceUsdc: number;
+  payTo: string;
+  endpoint: string;
+  description?: string;
+  /** Durable debit admission binds a research request or the exact seller resource. */
+  purchasePurpose?: "a2a" | "monthly";
+  purchaseRequestHash?: string;
+  /** Source-managed admission is checked atomically with the original nonce purpose. */
+  resourceSourceId?: string;
+  resourceKind?: "fetch" | "citation" | "operating-fee";
+  sourceClaim?: import("./db/research-monthly").ResearchPurchaseClaim["sourceClaim"];
+  /**
+   * Bazaar discovery metadata (x402 discovery extension). When set, the 402 challenge advertises
+   * `extensions.bazaar.info` and the payload forwarded to the facilitator carries it, so the
+   * facilitator can catalog the service into the x402 registry. Additive only — if the facilitator
+   * rejects the extended payload shape, settleThenServe falls back to the bare payload.
+   */
+  discovery?: Record<string, unknown>;
+}
+
+function buildRequirements(priceUsdc: number, payTo: string) {
+  const amount = Math.max(1, Math.round(priceUsdc * 1_000_000)); // atomic 6dp, min 1 unit
+  return {
+    scheme: "exact" as const,
+    network: config.networkId,
+    asset: config.usdcAddress,
+    amount: amount.toString(),
+    payTo,
+    maxTimeoutSeconds: config.maxTimeoutSeconds,
+    extra: {
+      name: "GatewayWalletBatched",
+      version: "1",
+      verifyingContract: config.gatewayWallet,
+    },
+  };
+}
+
+function b64(s: string): string {
+  return Buffer.from(s).toString("base64");
+}
+
+/**
+ * Build the x402 "402 Payment Required" challenge response for a paid endpoint.
+ * The machine-readable challenge (x402 v2) rides in the PAYMENT-REQUIRED header; `body` is an
+ * optional human-readable JSON payload (defaults to `{}` — the scaffold's empty-body convention).
+ * Exposed so a discovery probe (e.g. the GET that `circle services inspect` issues) can advertise
+ * the same price + schema as the paid POST, without running the handler or taking any payment.
+ */
+export function challengeResponse(opts: PaidOptions, body: unknown = {}): NextResponse {
+  const denied = guardPublicMerchant(opts.payTo);
+  if (denied) return denied;
+  const requirements = buildRequirements(opts.priceUsdc, opts.payTo);
+  const challenge = {
+    x402Version: 2,
+    resource: {
+      url: opts.endpoint,
+      description: opts.description ?? `Paid resource (${opts.priceUsdc} USDC)`,
+      mimeType: "application/json",
+    },
+    accepts: [requirements],
+    ...(opts.discovery ? { extensions: { bazaar: { info: opts.discovery } } } : {}),
+  };
+  return new NextResponse(JSON.stringify(body), {
+    status: 402,
+    headers: {
+      "Content-Type": "application/json",
+      "PAYMENT-REQUIRED": b64(JSON.stringify(challenge)),
+    },
+  });
+}
+
+/**
+ * Settle an x402 payment (if present) then produce the response body.
+ * Returns a 402 challenge when no payment-signature header is present.
+ */
+export interface SettleInfo {
+  payer: string;
+  transaction: string;
+  /** Facilitator receipt network, verified against the selected merchant rail. */
+  network: string;
+  amountUsdc: number;
+  /** Signed EIP-3009 nonce when present. Correlation/idempotency only, never settlement proof. */
+  authorizationId: string | null;
+}
+
+export async function settleThenServe(
+  req: NextRequest,
+  opts: PaidOptions,
+  produce: (settle: SettleInfo) => Promise<unknown | Response> | unknown | Response,
+): Promise<NextResponse> {
+  const deniedMerchant = guardPublicMerchant(opts.payTo);
+  if (deniedMerchant) return deniedMerchant;
+  const requirements = buildRequirements(opts.priceUsdc, opts.payTo);
+  const sig = req.headers.get("payment-signature");
+  const checkAdmission = () => { const held = opts.admissionCheck?.(); if (held) throw new PaidAdmissionHeld(held); };
+  const verifyPayment = (selected: typeof payload) => {
+    checkAdmission(); return facilitator.verify(selected, requirements);
+  };
+  const settlePayment = (selected: typeof payload) => {
+    checkAdmission();
+    const held = opts.beforeSettlement?.(); if (held) throw new PaidAdmissionHeld(held);
+    return facilitator.settle(selected, requirements);
+  };
+
+  if (!sig) {
+    return challengeResponse(opts);
+  }
+
+  // Decode the base64 payment-signature header. Two buyer shapes reach here:
+  //   • SDK buyer (GatewayClient.pay) sends the FULL x402 PaymentPayload:
+  //     { x402Version, resource, accepted, payload: { authorization, signature } }.
+  //   • Browser co-sign sends only the INNER blob: { signature, authorization }.
+  // Typed as any to match the SDK's PaymentPayload (same as the prior JSON.parse result).
+  let decoded: any;
+  try {
+    decoded = JSON.parse(Buffer.from(sig, "base64").toString("utf-8"));
+  } catch {
+    return NextResponse.json({ error: "invalid payment header" }, { status: 400 });
+  }
+
+  // Circle's facilitator requires the full PaymentPayload — it rejects the inner-only blob
+  // with 400 "x402Version/resource/accepted/payload: Required". The SDK shape already has
+  // `.payload`; the browser shape doesn't, so wrap it. `accepted` must equal the very
+  // requirements the browser signed against — which is exactly what buildRequirements()
+  // produced for this route's 402 challenge, so it always matches. `resource` is unsigned
+  // metadata, so reconstructing it server-side is safe.
+  const payload = decoded?.payload
+    ? decoded
+    : {
+        x402Version: 2,
+        resource: {
+          url: opts.endpoint,
+          description: opts.description ?? `Paid resource (${opts.priceUsdc} USDC)`,
+          mimeType: "application/json",
+        },
+        accepted: requirements,
+        payload: { authorization: decoded?.authorization, signature: decoded?.signature },
+      };
+
+  const deniedAuthorization = guardPublicMerchant(opts.payTo, { to: payload?.payload?.authorization?.to });
+  if (deniedAuthorization) return deniedAuthorization;
+
+  // Best-effort discovery: carry the declared bazaar metadata through verify/settle so the
+  // facilitator can catalog this service. The extension must never break the money path — every
+  // facilitator call below falls back to the bare payload if the extended shape is rejected.
+  let activePayload = payload;
+  if (opts.discovery && !payload.extensions) {
+    activePayload = { ...payload, extensions: { bazaar: { info: opts.discovery } } };
+  }
+
+  try {
+    // Circle's facilitator occasionally throws a transient 4xx ("Circle Gateway verify
+    // failed (400)…") on otherwise-valid payments (~5% on testnet). Retry the throwing
+    // call a couple of times with a short backoff before giving up.
+    // verify() is read-only — always safe to retry. settle() is retried only with the identical
+    // EIP-3009 authorization: the single-use nonce prevents a duplicate debit. A throw is still
+    // ambiguous (the first call may have succeeded before its response was lost), so buyers that
+    // never receive this route's PAYMENT-RESPONSE retain the attempt as pending.
+    let verify;
+    try {
+      verify = await withRetry(() => verifyPayment(activePayload), "verify", opts.endpoint);
+    } catch (err) {
+      if (err instanceof PaidAdmissionHeld) throw err;
+      if (activePayload === payload) throw err;
+      console.warn(`[x402] verify rejected bazaar-extended payload ${opts.endpoint} — retrying bare`);
+      activePayload = payload;
+      verify = await withRetry(() => verifyPayment(payload), "verify", opts.endpoint);
+    }
+    if (!verify.isValid && activePayload !== payload) {
+      // A soft rejection may also be extension-induced — try once bare before failing the call.
+      activePayload = payload;
+      verify = await withRetry(() => verifyPayment(payload), "verify", opts.endpoint);
+    }
+    if (!verify.isValid) {
+      console.error(`[x402] verify FAILED ${opts.endpoint}: ${verify.invalidReason}`, JSON.stringify(requirements));
+      return NextResponse.json({ error: "verification failed", reason: verify.invalidReason }, { status: 402 });
+    }
+    // verify is read-only. Admit purpose before the first possible debit; an unknown
+    // settlement retains this binding and never authorizes a second product.
+    const authorization = payload?.payload?.authorization;
+    if (!authorization || typeof authorization.from !== "string" || typeof authorization.to !== "string"
+      || typeof authorization.nonce !== "string" || authorization.to.toLowerCase() !== opts.payTo.toLowerCase()
+      || String(authorization.value) !== requirements.amount) {
+      return NextResponse.json({ error: "payment authorization disagrees with resource" }, { status: 400 });
+    }
+    const db = await getDb(); checkAdmission();
+    await db.claimResearchPurchase({ network: requirements.network, payer: authorization.from,
+      payee: authorization.to, authorizationId: authorization.nonce,
+      purpose: opts.purchasePurpose ?? "resource",
+      requestHash: opts.purchaseRequestHash ?? createHash("sha256").update(opts.endpoint).digest("hex"),
+      amountMicros: Number(requirements.amount), resourceSourceId: opts.resourceSourceId, resourceKind: opts.resourceKind, sourceClaim: opts.sourceClaim });
+    let settle;
+    try {
+      settle = await withRetry(() => settlePayment(activePayload), "settle", opts.endpoint, opts.singleSettlementAttempt ? 1 : 2);
+    } catch (err) {
+      if (err instanceof PaidAdmissionHeld || opts.singleSettlementAttempt) throw err;
+      // No confirmation was received. Retrying the identical nonce cannot double-debit, but the
+      // eventual caller still treats a missing success response as pending rather than failed.
+      if (activePayload === payload) throw err;
+      console.warn(`[x402] settle rejected bazaar-extended payload ${opts.endpoint} — retrying bare`);
+      activePayload = payload;
+      settle = await withRetry(() => settlePayment(payload), "settle", opts.endpoint);
+    }
+    if (!settle.success) {
+      console.error(`[x402] settle FAILED ${opts.endpoint}: ${settle.errorReason}`);
+      return NextResponse.json({ error: "settlement failed", reason: settle.errorReason }, { status: 402 });
+    }
+    if (settle.network !== requirements.network || typeof settle.transaction !== "string" || !settle.transaction) {
+      return NextResponse.json({ error: "settlement evidence unavailable" }, { status: 503 });
+    }
+    console.log(`[x402] settled ${opts.endpoint}: ${settle.transaction}`);
+    const paymentResponse = b64(JSON.stringify({
+      success: true,
+      transaction: settle.transaction,
+      payer: settle.payer ?? verify.payer,
+      network: settle.network,
+    }));
+    const settleInfo = {
+      payer: settle.payer ?? verify.payer ?? "unknown",
+      transaction: settle.transaction ?? "",
+      network: settle.network,
+      amountUsdc: opts.priceUsdc,
+      authorizationId:
+        typeof payload?.payload?.authorization?.nonce === "string"
+          ? payload.payload.authorization.nonce
+          : null,
+    };
+
+    // Settlement and resource delivery are separate state transitions. Once Circle confirms the
+    // debit, a producer/DB/IPFS failure must not erase that proof and make the buyer call a real
+    // payment pending. Return the receipt on the 5xx so the buyer can retain the settled ledger
+    // leg while skipping unavailable content.
+    let body: unknown | Response;
+    try {
+      body = await produce(settleInfo);
+    } catch (produceError) {
+      // Preserve the stack: minified bundle initialization errors cannot be traced from their
+      // message alone, and this is the only log emitted after a confirmed debit.
+      console.error(`[x402] paid resource failed after settlement ${opts.endpoint}:`, produceError);
+      const res = NextResponse.json(
+        { error: "paid resource unavailable after settlement" },
+        { status: 500 },
+      );
+      res.headers.set("PAYMENT-RESPONSE", paymentResponse);
+      return res;
+    }
+    const res =
+      body instanceof Response
+        ? new NextResponse(body.body, {
+            status: body.status,
+            statusText: body.statusText,
+            headers: body.headers,
+          })
+        : NextResponse.json(body ?? { ok: true });
+    res.headers.set("PAYMENT-RESPONSE", paymentResponse);
+    return res;
+  } catch (err) {
+    if (err instanceof PaidAdmissionHeld) return new NextResponse(err.response.body,
+      { status: err.response.status, headers: err.response.headers });
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: "payment processing error", message }, { status: 500 });
+  }
+}
+
+class PaidAdmissionHeld extends Error {
+  constructor(readonly response: Response) { super("Paid admission held; preserve the original"); }
+}
+
+/** Retry an async facilitator call up to 2 attempts on a thrown transient error. */
+async function withRetry<T>(fn: () => Promise<T>, label: string, endpoint: string, maximumAttempts = 2): Promise<T> {
+  const MAX_ATTEMPTS = maximumAttempts;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof PaidAdmissionHeld) throw err;
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[x402] ${label} threw (attempt ${attempt}/${MAX_ATTEMPTS}) ${endpoint}: ${msg}`);
+      if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  throw lastErr;
+}

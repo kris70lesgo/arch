@@ -1,0 +1,88 @@
+import { hasKnownSyntheticFingerprint } from "./evidence-provenance";
+import { z } from "zod";
+import { researchExports } from "./surface-result";
+import { sourceClaimReceiptSchema } from "../sources/public-source-claim";
+import { bibliographyFromCheckedReceipt } from "./bibliographic-task-result";
+import { paperReferencesCslJson } from "../papers/reference-export";
+import { observedPdfTextScope, pdfTextScopeSchema } from "../web-research/pdf-text-scope";
+import { observedHtmlSectionScope, htmlSectionScopeSchema } from "../web-research/html-section-scope";
+
+const text = z.string().max(4096);
+const scholarly = z.object({
+  provider: z.enum(["crossref", "arxiv"]), recordUrl: text, retrievedAt: text, title: text,
+  authors: z.array(text).max(50), authorCount: z.number().int().nonnegative().optional(), authorsTruncated: z.boolean().optional(),
+  authorNames: z.array(z.object({ given: text.optional(), family: text.optional(), literal: text.optional() })).max(50).optional(),
+  doi: text.optional(), arxivId: text.optional(), workType: z.enum(["journal-article", "preprint", "other"]),
+  journal: text.optional(), publishedDate: text.optional(), volume: text.optional(), issue: text.optional(), pages: text.optional(),
+  peerReview: z.literal("unknown"), evidenceScope: z.enum(["paper-text", "abstract-page", "publisher-page"]).optional(),
+});
+const identity = { sourceClaim: sourceClaimReceiptSchema.optional(), accessKind: z.literal("creator-free").optional(),
+  contentReceipt: z.object({ bodyHash: text.optional(), deliveryKind: z.enum(["full_text", "excerpt", "abstract", "metadata_only"]),
+  storageMode: z.enum(["ipfs_encrypted", "db_encrypted", "db_plaintext"]), plaintextBytes: z.number().int().nonnegative() }).optional(), evidenceProvenance: z.literal("synthetic-demo").optional(), itemId: text.optional(), itemTitle: text.optional(), itemUrl: text.optional(),
+  contentVersion: text.optional(), itemPublishedAt: text.optional(), sourceKind: z.literal("public-reference").optional(), scholarly: scholarly.optional() };
+const citation = z.object({ marker: text, sourceId: text.default(""), sourceName: text, ...identity,
+  weight: z.number().finite().default(0), rewardPlannedUsdc: z.number().finite().nonnegative().default(0), rationale: text.default("") });
+const evidence = z.object({ marker: text, sourceId: text, sourceName: text, ...identity,
+  quote: z.string().max(240), support: z.number().finite(), qualifiesForAnswer: z.boolean().optional(), qualifiesForReward: z.boolean() });
+const claim = z.object({ claimIndex: z.number().int().nonnegative(), claim: text, evidence: z.array(z.unknown()).max(256) });
+const webProvenance = z.object({
+  retrievedAt: text, publisherGroup: text, normalizedBodyHash: text,
+  extraction: z.enum(["html", "text", "pdf"]), truncated: z.boolean(),
+  pdfTextScope: z.preprocess(observedPdfTextScope, pdfTextScopeSchema.optional()),
+  htmlSectionScope: z.preprocess(observedHtmlSectionScope, htmlSectionScopeSchema.optional()),
+});
+
+/** Read only the existing optional metadata; never discard a valid quote because
+ * an older receipt has incomplete extraction metadata, or mutate checked bytes. */
+function receiptWebProvenance(record: unknown) {
+  try {
+    if (!record || typeof record !== "object") return {};
+    const field = Object.getOwnPropertyDescriptor(record, "webProvenance");
+    if (!field || !("value" in field) || !field.value || typeof field.value !== "object" || Array.isArray(field.value)) return {};
+    const fields = Object.getOwnPropertyDescriptors(field.value);
+    if (Object.values(fields).some(value => !("value" in value))) return {};
+    const parsed = webProvenance.safeParse(Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, value.value])));
+    return parsed.success ? { webProvenance: parsed.data } : {};
+  } catch { return {}; }
+}
+
+/** Called only after receipt integrity and original task binding have been checked.
+ * Parse the read model separately: an older or malformed optional ledger cannot break recovery. */
+export function exportsFromCheckedReceipt(receipt: unknown) {
+  const parsed = z.object({ payload: z.object({ citations: z.array(z.unknown()).max(64).optional(),
+    claims: z.unknown().optional() }) }).safeParse(receipt);
+  const payload = parsed.success ? parsed.data.payload : {};
+  const citations = (payload.citations ?? []).flatMap(value => {
+    const item = citation.safeParse(value);
+    return item.success ? [{ ...item.data, ...receiptWebProvenance(value), ...(hasKnownSyntheticFingerprint(item.data) ? { evidenceProvenance: "synthetic-demo" as const } : {}), reward: item.data.rewardPlannedUsdc }] : [];
+  });
+  // An unsupported optional ledger must not erase independently valid citations.
+  // Keep the same bound and leave unavailable claims unknown, never repaired.
+  const ledger = z.array(z.unknown()).max(256).safeParse(payload.claims);
+  const claims = (ledger.success ? ledger.data : []).flatMap(value => {
+    const item = claim.safeParse(value); return item.success ? [item.data] : [];
+  });
+  const records = claims.flatMap(row => row.evidence.flatMap(value => {
+    const item = evidence.safeParse(value);
+    return item.success ? [{ ...item.data, ...receiptWebProvenance(value), ...(hasKnownSyntheticFingerprint(item.data) ? { evidenceProvenance: "synthetic-demo" as const, qualifiesForAnswer: false, qualifiesForReward: false, support: 0 } : {}), claimIndex: row.claimIndex, claim: row.claim }] : [];
+  }));
+  // Match the live read projection: older receipts may mark only a citation or
+  // one excerpt. Keep every same-marker excerpt illustrative in this export.
+  const syntheticMarkers = new Set([...citations, ...records]
+    .filter(item => item.evidenceProvenance === "synthetic-demo").map(item => item.marker));
+  const projectedRecords = records.map(item => syntheticMarkers.has(item.marker)
+    ? { ...item, evidenceProvenance: "synthetic-demo" as const, qualifiesForAnswer: false, qualifiesForReward: false, support: 0 } : item);
+  const input = { citations, subClaims: [] as string[], claimCoverage: claims.map(row => ({
+    claimIndex: row.claimIndex, claim: row.claim, coverage: 0, coveredBy: [] as string[] })),
+    evidence: ledger.success ? projectedRecords : undefined };
+  return researchExports(input);
+}
+
+/** Separate unread metadata role; call only after the same receipt integrity and
+ * original task binding checks. Never inject bibliography papers into citations. */
+export function bibliographyExportsFromCheckedReceipt(receipt: unknown) {
+  const bibliography = bibliographyFromCheckedReceipt(receipt);
+  if (!bibliography) return;
+  return { ...bibliography.bibliographyExports,
+    cslJson: paperReferencesCslJson(bibliography.record.paper ? [bibliography.record.paper] : []) };
+}

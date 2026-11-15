@@ -1,0 +1,401 @@
+# Current Arc mainnet deployment
+
+## Latest verified delivery: app 0.27.101 — November 7, 2026
+
+The completed release101 cohort identifies application **0.27.101**, source
+**`78d34ac41548e251f84dc2c8e5e0574cd0d19a19`**, on Arc mainnet. Its retained public
+restoration acceptance at `2026-11-07T03:14:22Z` records HTTP 200, matching source,
+network `arc` and maintenance cleared. These are dated delivery observations,
+not a continuous availability guarantee or a fresh research, funding or settlement
+trial. A later November 7 read from the documentation client's network returned
+HTTP 403; that response establishes neither an outage nor a fresh
+successful health check.
+
+| Surface | Accepted identity and evidence boundary |
+| --- | --- |
+| Hosted web/API | App **0.27.101**, source **`78d34ac4`**; accepted release101 public restoration above |
+| Hosted MCP | Server **0.3.19**, verified during release101 public postflight; distinct from the package version |
+| GitHub MCP artifact | **0.4.47**; release101's [source manifest](https://github.com/tang-vu/keryx/releases/download/v0.27.101/keryx-mcp-0.4.47.tgz.source.json) binds the artifact to source101 |
+| npm / official MCP Registry | **0.4.47**, published from source101; exact-version and latest readbacks match the committed manifest, npm integrity matches the GitHub tarball, and cryptographic Sigstore source/workflow provenance was accepted |
+| Operator desktop | Published **0.4.44**; source101 [release manifest](https://github.com/tang-vu/keryx/releases/download/v0.27.101/KeryxOperator-78d34ac41548e251f84dc2c8e5e0574cd0d19a19-release.json), independent standard-user Windows acceptance, and portable/installed smoke tests. Owner-machine installation remains unverified |
+| Browser extension | **0.1.4.3**, unchanged verified inputs and existing handoff role; no new extension release |
+
+The [release101 notes and assets](https://github.com/tang-vu/keryx/releases/tag/v0.27.101)
+and its successful [exact-source main CI](https://github.com/tang-vu/keryx/actions/runs/42329688098)
+identify the accepted source/distribution cohort. See also
+[distribution](mcp-distribution.md). Published packages and installer acceptance do
+not prove that a user's local client has been installed or updated.
+
+Later accepted source commits on `main` are not part of this installed cohort.
+Routine reviewed/check-passing source merges remain authorized; deployment and
+release/publication require a separate explicit user command. Keep installed101
+serving, preserve its originals and existing ROOT/Circle authority, and do not
+repeat this completed release. The sections below retain dated historical
+observations rather than current-version instructions.
+
+## Retained delivery: app 0.27.100 — November 6, 2026
+
+The completed release100 cohort identifies application **0.27.100**, source
+**`db6302568c8020e1922ba52fc00336b3d49bf909`**, on Arc mainnet. A passive
+[health](https://keryx.cc/api/health) read at `2026-11-06T14:39:24Z` returned
+HTTP 200, operational status, network `arc` and that exact commit. This is a
+point-in-time observation, not a continuous availability guarantee or a fresh
+research, funding or settlement trial.
+
+| Surface | Accepted identity and evidence boundary |
+| --- | --- |
+| Hosted web/API | App **0.27.100**, source **`db630256`**; release100 restoration and the dated health read above |
+| Hosted MCP | Server **0.3.19**, observed during release100 public postflight; not a new npm or desktop version |
+| GitHub MCP artifact | **0.4.46**; release100's [source manifest](https://github.com/tang-vu/keryx/releases/download/v0.27.100/keryx-mcp-0.4.46.tgz.source.json) binds the artifact to source100 |
+| npm / official MCP Registry | **0.4.46**, published from source99 **`c327dbb8`**; release100 acceptance verified the existing published package is byte-identical to its GitHub artifact. No npm/Registry republication occurred for release100 |
+| Operator desktop | Published **0.4.43**; source100 [release manifest](https://github.com/tang-vu/keryx/releases/download/v0.27.100/KeryxOperator-db6302568c8020e1922ba52fc00336b3d49bf909-release.json), producer and independent fresh-runner standard-user acceptance. Owner-machine installation remains unverified |
+| Browser extension | **0.1.4.3**, unchanged verified inputs and existing handoff role; no new extension release |
+
+The [release100 notes and assets](https://github.com/tang-vu/keryx/releases/tag/v0.27.100)
+describe the archive/IME fixes, batched publisher validation, Research entry/status
+improvements and isolated production CI lanes. Its
+[exact-source main CI](https://github.com/tang-vu/keryx/actions/runs/42148744611)
+passed before delivery. The
+[source99 release](https://github.com/tang-vu/keryx/releases/tag/v0.27.99)
+retains the distinct npm publication provenance; see also
+[distribution](mcp-distribution.md). Versions and published assets do not prove
+that a user's local client has been installed or updated.
+
+The identities above describe release100's historical delivery boundary.
+Release101 supersedes it. Preserve its qualified recovery originals; do not
+redeploy or republish this completed cohort.
+
+## Retained delivery: app 0.27.96 — November 2, 2026
+
+The completed release96 record identifies application **0.27.96**, source
+**`8c3cb261af1970d9c15ff1ff59a3cd11d7981834`**, on Arc mainnet. Its retained
+post-restoration observation records public HTTP 200, the matching application
+build, operational health and maintenance cleared. These are November 2 delivery
+observations, not a continuous availability guarantee or a fresh November 3 probe.
+The November 3 assessment's three public API reads returned HTTP 403 from that
+client; they do not establish a production outage or a successful health check.
+
+| Surface | Accepted identity and evidence boundary |
+| --- | --- |
+| Hosted web/API | App **0.27.96**, source **`8c3cb261`**, accepted exact-source main CI and retained public restoration |
+| Hosted MCP | Server version **0.3.19**; hosted application cohort above |
+| GitHub MCP artifact | **0.4.43**, publication/download acceptance bound to source96 |
+| npm / official MCP Registry | **0.4.43** retains independently accepted source95 provenance; no new source96 npm/Registry publication is claimed |
+| Operator desktop | Published **0.4.41**, source96 package acceptance; owner-machine installation is unverified |
+| Browser extension | **0.1.4.3**, existing verified inputs and handoff role; no new extension release |
+
+The [release96 record](engineering/release96-20261102.md) describes the included
+source changes, publication boundaries and the failed short-maintenance target.
+[Exact-source main CI](https://github.com/tang-vu/keryx/actions/runs/41429639098)
+and the [GitHub release](https://github.com/tang-vu/keryx/releases/tag/v0.27.96)
+provide public source/distribution references. A package version alone does not
+prove a matching local installation or npm provenance.
+
+The November 3 owner clarification authorizes routine reviewed/check-passing
+source merges; deployment and release/publication await an explicit user command.
+Keep the latest verified installed cohort above serving. Any later operation must first qualify each
+role's fresh-start requirements, including finite policy/grant expiry; source
+preparation and historical healthy processes cannot substitute for that check.
+The dated observations below remain historical and are not the current version.
+
+## October 16 health readback
+
+A read-only [health](https://keryx.cc/api/health) check at `2026-10-16T08:22:29.241Z`
+reported operational, database ok, network `arc`, settlement mode `real`, and
+commit `2dda3717`. That commit's package version is **0.27.70**. The registry
+address in the response is V3
+[`0x2217250019ab614dae7391d346d05c3fc4d71ae1`](https://explorer.arc.io/address/0x2217250019ab614dae7391d346d05c3fc4d71ae1).
+This identifies the deployed web source. It does not republish MCP, desktop, or
+extension packages, and it does not change the October 13 form comparison.
+
+The same response reported `monitoring.state` `incomplete`. Registry parity,
+research outcomes, settlement parity, and payment reconciliation were last
+checked on October 6 and were stale. The settlement block used basis
+`empty-ledger` and zero confirmed USDC. The traction block on the same payload
+reported 100 payments. Those are separate projections. This read did not rerun
+the observation jobs.
+
+The October 15 section below is the 0.27.68 delivery record. It includes a
+Dashboard source-leaderboard overflow at 390px. Later source contains the
+overflow fix from [#518](https://github.com/tang-vu/keryx/pull/518).
+[#513](https://github.com/tang-vu/keryx/issues/513) is still open. This read
+did not repeat a 390px layout check.
+
+## October 15 public-research release delivered
+
+Production app/OpenAPI **0.27.68** is live on Arc at source
+**d1b3aff65318fecdf17f8e6f6bcf5e8e0e5ae5b7**. After one combined deployment and
+the exact owned maintenance clear at about `13:40Z`, public health, OpenAPI and
+`/` returned HTTP 200 with maintenance disabled. Exact-source
+[main CI](https://github.com/tang-vu/keryx/actions/runs/38731364014) and
+[Desktop acceptance](https://github.com/tang-vu/keryx/actions/runs/38731364070)
+passed before delivery.
+
+The reviewed insert-only restoration completed once for **156/156** historical
+questions missing visibility sidecars, with no stale or blocked records. Original
+content, financial records, custody, limits, Operator and private holds were
+preserved. Their original network evidence remains intact across the restored
+records. Separately, the complete bounded Arc public-question population is **99**;
+a 50-row API sample is a separate page
+bound. The archive's observed **115 cited answers** spans research history and
+is a different measure from questions on Arc.
+
+Ordinary research now defaults to Public when no saved preference exists, with
+Public/Unlisted/Private shown before submission. Saved preferences and protected
+research remain authoritative. Read-only browser checks verified populated recent
+questions, a restored public answer, the default chooser and numeric Owner fee
+values. The count/recent cards and chooser fit 390px; the Dashboard source
+leaderboard still causes horizontal overflow, tracked in
+[#513](https://github.com/tang-vu/keryx/issues/513).
+
+Published stdio/npm/official Registry MCP **0.4.23** and Desktop **0.4.21** bind
+the same `d1b3aff6` source; downloaded assets, hashes and npm Sigstore provenance
+were accepted. Owner Desktop installation is unknown. Hosted MCP initialize
+returned HTTP 200 at **0.3.18**; extension **0.1.4.2** retains its verified unchanged
+shipped inputs and existing role. See [distribution](mcp-distribution.md) and
+[surface boundaries](surface-parity.md).
+
+The existing four #274 cases passed after clear, and one Arc Canteen update was
+acknowledged. [#266 is closed](https://github.com/tang-vu/keryx/issues/266#issuecomment-6193908274);
+separate #269 acceptance and other private activation holds remain open. No new
+funding or allowance renewal occurred. Earlier records below remain historical.
+
+## October 13 deployment record
+
+October 13, 2026: application **0.27.63**, source `ec5f39c9750dfc9e80e66edd41348ca6034c01c3`,
+is live on Arc mainnet after one combined deploy and the owned maintenance clear.
+Public health, OpenAPI and `/` returned HTTP 200; health reported `ec5f39c9`, OpenAPI **0.27.63**.
+ENV (commit-only update), custody, Operator and private holds were preserved.
+Public readback SHA-256: `1ddfed95ac1b2282120e761f0d221f98e620fad5626aa3a51ccac621f3d9e401`; release receipt: `dd2681b77ecf4a7df19d6685de23777c7d53615a7c13a5f55946a4b8b1ed9e47`.
+
+Fresh public readback on October 13 at `08:17:58Z` again confirmed HTTP 200,
+`ec5f39c9`, Arc, app0.27.63 and no maintenance page. App0.27.64 is in local
+release preparation; accepted focused PRs accumulate on main for one deployment.
+No App64 publication, maintenance window or deployment has started.
+
+## Owner operating fee — October 13
+
+The owner-fee policy is active on the same app0.27.63 source after one configuration
+update. The October 13 bounded sponsored validation batch completed at `18:07:42Z`:
+six canonical operating-fee payments settled **0.015 USDC** to the owner. The
+owner's Arc Gateway balance rose from 0.030000 to 0.045000 USDC, with no pending
+batch fee. This is separate from creator payouts and does
+not demonstrate payment from the user's own wallet. Existing caps, expiry,
+custody, Operator and private/scheduler holds remain unchanged.
+
+## October 12 live Conzit gas pilot
+
+Application **0.27.62**, source `d7f79046874899c0df4bd29b927349d627805f1e`, was observed live on Arc mainnet on October 12.
+Accepted PR/main CI preceded deployment. Public [/api/health](https://keryx.cc/api/health)
+and the [Conzit publishing-control page](https://keryx.cc/claim-source?url=https%3A%2F%2Fconzit.com%2F&rss=https%3A%2F%2Fconzit.com%2Frss.xml)
+returned HTTP 200 at `2026-10-12T12:45:15.336Z`, with exact `d7f79046` / Arc / V3 health.
+Postflight completed at `12:43:03.623Z`: normal boot, existing private holds and the
+financial-original digest were preserved. Normal public admission resumed at `12:44:11.714Z`.
+Both existing listings retain V1 creator/payout/price authority. Scoped cursors read back
+V1 `25583527`, V3 `25583532`; the retained global cursor stayed `25558372`.
+
+V3 CREATE confirmed in block `25564218`, transaction
+`0x553aed2b7063fcf0b9d517adb4e1eec5a1718d32d33b12a045a52cc61bfa81f8`.
+The existing public-fee EOA `0xdbd07d89eb85d7a36fb204b2a4d2aa68735c24e1` paid
+`0.039205040001960252` native USDC deployment gas. This is contract deployment cost,
+not a creator registration or reward. Current and retained registry addresses are below.
+
+The installed policy allows only `https://conzit.com`: **0.04 native USDC/original,
+0.08/day, 0.20/lifetime**, at most five attempts/day and five total, two per wallet and per publisher origin,
+with 1,000,000 gas and 40 gwei ceilings. Its fixed window is
+`2026-10-12T10:39:10.054Z` to `2026-10-13T10:39:10.054Z` (October 13 **17:39:10.054 Vietnam time** end).
+Policy digest: `0x961e313198b014bc0ed4f4328b63e7bb36d21f473fc8ca5686a0c1b376d737eb`.
+There is no automatic renewal, funding or top-up; other activations retain their explicit gates.
+
+Authenticated SIWE acceptance passed all 13 assertions for the selected fee EOA:
+exact sponsor availability and Conzit origin, unverified preparation refused with
+`403 proof_required`, signout acknowledged, replayed cookie rejected with `401`, and
+sponsor unavailable after signout. It did not prove Conzit publishing control or submit
+any creator registration. The creator must still verify control and sign the registration.
+
+Retained receipt SHA-256: postflight `c40f55fea824eb9fa792ceb380a215b1e6f8594bcd4fbf552bdb9c11956dc799`;
+front-door clear `b5488e1dda6c9dacaa8294c4a733d0ad8cff56126b57bf21f20ebcd77932f183`;
+public readback `24f45bf693646d372612242a0b2b1882562bf5d0b3c26eb98ce29476c2c9d64c`;
+authenticated availability `3f3834a1504f5a2db7411796de9f0d52c911b9fc288b1e3b71bf8696fdd62c63`.
+The Arc Canteen product event created at `12:47:35Z` was acknowledged HTTP 200
+(delivery known); event SHA `0db56487b7c7ca11eea7240177ad20fe55b1da9b66a1d6bcb09f18bf8ebf143f`.
+It names Arc mainnet and makes no traction claim; historical event/profile settings were retained.
+
+Earlier accepted `b6009528` and `2f47a2d4` / 0.27.61 evidence retains its original source/profile.
+The limited [v0.27.62](https://github.com/tang-vu/keryx/releases/tag/v0.27.62) asset readback
+retained MCP **0.4.18** and Operator installer **0.4.16** manifests whose embedded
+`sourceCommit` is `b60095280d60f2fe1991b4ae37f14ae8e0a8d5c3`. Those package/installer
+observations remain bound to that source; the application's deployed `d7f79046` / **0.27.62**
+identity was verified separately above. The MCP manifest records `npmRegistryPublished: false`;
+this limited readback does not verify npm or binary byte equality.
+The reviewed read-only typed backup succeeded; retained SQLite backup SHA
+`d099899511523050385a562faa22d4f2487b0a819f79d6254c967d22a060423d`.
+The ordinary storage-identity snapshot's mainnet network-classification refusal remains open;
+its scanner/runtime was not weakened. See [pilot authority and channel boundaries](creator-registration-sponsorship.md).
+
+October 6 distribution observation (`2026-10-06T04:05:21.690Z`):
+[v0.27.0](https://github.com/tang-vu/keryx/releases/tag/v0.27.0) binds source
+`df17c4243e87cb2ea7cefebe0e8f20befb1f9890` ([PR 185](https://github.com/tang-vu/keryx/pull/185));
+exact-main CI and package/desktop acceptance passed. Downloaded npm
+**keryx-mcp 0.4.6** equals the accepted Linux release tarball byte-for-byte,
+SHA256 `033bb67384a24ff5af8fe29dbde861a8e2e11b96b394f76df1b37eca419c0cc0`.
+Official MCP Registry exact/latest both read back 0.4.6. Npm exposes provenance
+attestations; downloaded attestation metadata was retained separately from byte
+verification.
+
+All six release assets were downloaded and checked against their accepted
+manifests/checksums. Desktop **0.4.6** setup SHA256 is
+`c00b6bb3b9fba483fc950211701778be5d21c60dfb9a69ee91bc9b24bf4e16ba`;
+portable ZIP is `36a8dd87d9c8b22ab1faf122c79378b4fef1ad771da2403d7ef5c00d67efa148`.
+The extracted executable hash and actual PE product/file version match acceptance;
+download verification did not install or run it on the owner's computer.
+
+These publication observations do not establish production availability or a
+completed paid business cycle. Source delivery was separately in a held
+maintenance transition on October 6. The [0.27.2 finite-canary candidate](operator-canary.md)
+and desktop 0.4.7 require their own exact-source CI/deployment/artifact readbacks;
+unchanged MCP 0.4.6 remains bound to its accepted publication above.
+
+October 5 planning-repair baseline: read-only public health at
+`2026-10-05T08:20:26.904Z` reported operational, database ok, Arc and real settlement
+mode at `31286250`; SSH source identity was
+`3128625054836e51aaace3310bda426bbe06da14`, application **0.26.16**. Public roles used
+the reviewed steady brief-disabled definitions, no allowance environment, zero active
+root-crontab entries, and an idle A2A queue. Separately installed system cron jobs
+were activated by the other authorized delivery at 08:02 UTC; they require an explicit
+hold/drain and reviewed source/storage repinning before this maintenance deployment.
+The existing private worker was active with
+infinite graceful stop and no forced kill. This establishes baseline identity and
+availability, not useful research or a new settlement.
+
+The **0.26.17 candidate** addresses [bounded planning and heading recall](engineering/research-planning-2026-10-05.md).
+It retains remote MCP **0.3.1**, accepted caller-funded MCP **0.4.5**, desktop **0.4.6**
+and extension **0.1.1**. Its deployment and independent publication readbacks remain
+release steps. The closed browser round remains 0/3 useful; #128 and #169 live
+acceptance gates remain open.
+
+October 5 release observation: [PR 166](https://github.com/tang-vu/keryx/pull/166)
+was merged and app **0.26.12**, commit `a85bc1b6f75138ede9980d1123d5449a0da9693f`,
+was deployed. Public health at `2026-10-05T04:12:43.013Z` reported operational,
+database ok, Arc and real settlement mode at `a85bc1b6`. This establishes service
+availability and release identity, not a new settled payment or complete usefulness.
+Steady public controls retained brief0, the old closed allowance/journal, held schedules
+and unchanged custody; the previously active private worker was restored.
+
+Public distribution readback at `2026-10-05T04:30:40.677Z` verified all six assets in
+[v0.26.12](https://github.com/tang-vu/keryx/releases/tag/v0.26.12), Operator **0.4.5**
+with source/embedded commit `a85bc1b`, public npm **keryx-mcp 0.4.4** with bytes equal
+to the GitHub tarball, and official MCP Registry exact/latest **0.4.4**. The MCP tarball
+SHA-256 is `74b3e2c564b4100fc3ac9e0d170096e77999b6db16da8f180c001d3f0f5a1f77`.
+Subsequent main commits and the **0.26.16 / remote MCP 0.3.1 candidate** have their own
+deployment gates; recheck health before treating any source version as live.
+
+Updated October 4, 2026. Keryx production at [keryx.cc](https://keryx.cc) is on
+**Arc mainnet**. The owner confirmed the launch, and a read-only
+[/api/health](https://keryx.cc/api/health) observation at
+`2026-10-04T16:42:30.685Z` reported `operational`, database `ok`, network `arc`,
+settlement mode `real`, and deployed commit `1297d43`. This is a dated deployment
+observation; recheck health for the current release.
+
+## October 5 reliability candidate
+
+Application 0.26.15, stdio MCP 0.4.5 and Operator desktop 0.4.6 coordinate
+[the open-issue repairs](engineering/issue-followups-2026-10-05.md). They require
+exact-source CI/review, separate accepted package publication and deployed-health
+readback. The dated observations below remain historical. Remote MCP protocol
+0.3.0 from the merged v0.26.12 correction and extension 0.1.1 retain their roles. This candidate does not
+reopen paid evaluation, clear durable circuits, activate richer briefs or admit
+immutable production cutover.
+
+## Network and public contracts
+
+The implementation source of truth is [the canonical network profile](../lib/arc-network-profile.ts).
+Network parameters were rechecked against [Arc's connection guide](https://docs.arc.io/arc/references/connect-to-arc)
+and [Circle's Gateway contracts](https://developers.circle.com/gateway/references/contract-addresses)
+on October 4. The RPC below is the repository's pinned public default, not a disclosure
+of the production host's private provider configuration.
+
+| Parameter | Mainnet value |
+| --- | --- |
+| Configuration label | `arc` |
+| Chain / x402 network | `5042` / `eip155:5042` |
+| ERC-20 USDC | `0x3600000000000000000000000000000000000000` — 6 decimals |
+| Native USDC gas | 18 decimals |
+| Gateway Wallet | `0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE` |
+| Gateway Minter | `0x2222222d7164433c4C09B0b0D809a9b52C04C205` |
+| Default RPC | `https://rpc.blockdaemon.mainnet.arc.io` |
+| Explorer | `https://explorer.arc.io` |
+| Circle Gateway API | `https://gateway-api.circle.com` |
+| CCTP domain | `26` |
+| Production SourceRegistry V3, health October 16; first recorded October 12 | [`0x2217250019ab614dae7391d346d05c3fc4d71ae1`](https://explorer.arc.io/address/0x2217250019ab614dae7391d346d05c3fc4d71ae1) |
+| V3 deploy block / runtime code hash | `25564218` / `0xc915aed2667848d7a52af54c6202940116145dca6f7dbb8a9c58ce8335740fb9` |
+| Retained V1 authority, first health observation October 4 | [`0x42a64061b6cd84067bb660b2a9b8aa881fd225bb`](https://explorer.arc.io/address/0x42a64061b6cd84067bb660b2a9b8aa881fd225bb), deploy block `23910720` |
+
+Creator payout wallets, caller session signers and merchant payees are workflow-specific.
+Read their authoritative mainnet registry or current quote; an old testnet address
+must not stand in for a current payee. A contract address or health response alone
+does not prove a particular payment, delivery or withdrawal.
+
+## Configuration and retained history
+
+The 0.27.42 restoration candidate retains original public testnet records at their
+existing `/dispatch/{id}` URLs and adds `/history/testnet` for all recorded questions.
+Ledger, Proof and authenticated account history label this separate Arc testnet
+snapshot; its frozen payment states and test USDC never enter mainnet totals.
+The protected read-only reader, snapshot cutoff, receipt compatibility and release
+acceptance are described in [historical testnet archive](historical-testnet-archive.md).
+Exact-source CI and deployed URL/hash checks remain release gates for this candidate.
+
+Mainnet builds, servers and standalone payment callers use matched `KERYX_NETWORK=arc`
+and `NEXT_PUBLIC_KERYX_NETWORK=arc`. Application servers/browser builds additionally
+require matching nonzero registry address twins and fresh sealed mainnet storage;
+hosted signing roles require dedicated reviewed custody/policy. Browser signing
+captures the public profile at build time. Payment-only buyer CLI and stdio MCP use
+private network-scoped caller custody/journals without dummy registry configuration
+or server database enrollment. Setting a label cannot migrate state or authorize
+funding. See [server runtime](mainnet-server-runtime.md) and
+[operations and surface roles](mainnet-operations.md).
+
+The checked-in `.env.example` deliberately supplies an isolated **testnet development**
+configuration. Both network labels unset also retain the legacy testnet default in
+code. These compatibility defaults do not describe production. Faucet, TestMint,
+legacy cached-source backfill and destructive payment drills stay testnet-only.
+
+Historical testnet plans, receipts, balances, custody, grant evidence and demos retain
+their original network and dates. They are not mainnet revenue or current mainnet
+payout authority. Pre-launch checklists are historical preparation unless an item is
+explicitly carried forward as an unresolved quality, security or operational gate.
+
+## Delivery and evidence limits
+
+The October 4 hosted release observation is [v0.26.8](https://github.com/tang-vu/keryx/releases/tag/v0.26.8)
+at `1297d43f7c1a8356ceccac061b1cba65b93d2819`. Its GitHub assets include MCP 0.4.3
+and Windows desktop 0.4.3; the public npm registry independently reported
+`keryx-mcp` 0.4.3 on October 4. Remote MCP protocol 0.2.0 and extension source 0.1.1
+have independent identities. Desktop remains a local task/receipt client with an
+explicit buyer handoff; extension and bots remain hosted research adapters.
+Publication does not establish that every installed client has updated. See
+[surface parity](surface-parity.md) for artifact and role-specific evidence.
+
+That October 4 health snapshot recorded zero payments and zero creator payouts in the current
+ledger. It does not establish mainnet paid adoption, profitability, external audit
+closure or complete useful synthesis. Hosted capacity is explicitly `not-probed`;
+the public Monthly quote returned HTTP 503 during this documentation check, so
+purchase readiness and its current merchant were not verified here. Preserve these
+unknowns instead of importing old testnet figures.
+
+At that documentation-only refresh, one runtime-copy follow-up remained:
+`research_monthly` tool metadata in `lib/monthly/mcp-discovery.ts` and the immutable
+MCP 0.4.3 package still says “Arc-testnet Monthly quote”. The selected payment
+profile/API determines the actual network; correcting distributed runtime metadata
+requires its own coordinated release. The October 5 **0.26.12 / MCP 0.4.4**
+candidate corrects that metadata and related Slack/API/discovery copy; exact-source
+publication and deployment remain separate gates. Its unpaid Monthly quote check
+returned mainnet successfully, superseding the earlier unavailable observation
+for current availability only. See [scope and open gates](engineering/mainnet-consistency-2026-10-05.md)
+and [surface parity](surface-parity.md).
+
+Routine changes follow [the post-mainnet update flow](mainnet-update-flow.md).
+Documentation-only changes require review and CI, without redeploying unchanged
+runtime code. New paid exercises, custody changes and schedules retain their own
+explicit authorization and finite limits.

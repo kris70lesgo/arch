@@ -1,0 +1,441 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { a2aRequestHash, legacyA2aRequestHash, type A2aOrder } from "./order";
+import { runClaimedA2aOrder, runNextA2aOrder } from "./run-order";
+import { a2aResearchPackage } from "./research-package";
+import { quoteA2aResearch } from "./pricing";
+import { ARC_MAINNET_PROFILE } from "../arc-network-profile";
+import { ReasoningInputLimitError, ReasoningTransportError } from "../llm/reasoning-engine";
+
+const policy = vi.hoisted(() => ({
+  original: vi.fn(), paused: vi.fn(), reserved: vi.fn(), creator: vi.fn(), allowance: vi.fn(),
+}));
+vi.mock("../business-operator/canary-policy", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../business-operator/canary-policy")>(),
+  canaryOriginalClaim: policy.original, canaryExecutionPaused: policy.paused,
+  assertCanaryOriginalReserved: policy.reserved, assertCanaryCreatorPayment: policy.creator,
+}));
+vi.mock("../research/research-allowance", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../research/research-allowance")>(),
+  configuredResearchAllowance: policy.allowance,
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  policy.original.mockReturnValue(null);
+  policy.paused.mockReturnValue(false);
+  policy.allowance.mockReturnValue(null);
+});
+
+function claimedOrder(budget = 0.05): A2aOrder {
+  const quote = quoteA2aResearch(budget, "deep");
+  const request = { question: "What changed?", origin: "a2a" as const, model: "test-model", network: ARC_MAINNET_PROFILE.networkId };
+  const researchPackage = a2aResearchPackage("deep");
+  return {
+    id: "a2a_claimed",
+    queryId: "a2a_claimed",
+    authorizationId: "0xnonce",
+    requestHash: a2aRequestHash({
+      question: request.question,
+      creatorBudgetUsdc: quote.creatorBudgetUsdc,
+      serviceFeeUsdc: quote.serviceFeeUsdc,
+      researchMode: "deep",
+      researchPackage,
+      model: request.model,
+    }),
+    payer: "0x1111111111111111111111111111111111111111",
+    payee: "0x2222222222222222222222222222222222222222",
+    amountUsdc: quote.totalPriceUsdc,
+    creatorBudgetUsdc: quote.creatorBudgetUsdc,
+    serviceFeeUsdc: quote.serviceFeeUsdc,
+    researchMode: "deep",
+    researchPackage,
+    status: "running",
+    transaction: "circle-transfer",
+    request,
+    startedAt: "2026-09-01T00:00:00.000Z",
+    workerId: "worker",
+    executionJournalVersion: 1,
+    paymentStartedAt: null,
+    resultSavingAt: null,
+    response: null,
+    errorCode: null,
+    resolution: null,
+    createdAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: "2026-09-01T00:00:00.000Z",
+  };
+}
+
+describe("durable A2A worker", () => {
+  it("holds a retained failed canary before any ordinary order claim after selectors are removed", async () => {
+    policy.paused.mockReturnValue(true);
+    const db = { claimNextA2aOrder: vi.fn(), failA2aOrder: vi.fn() };
+    expect(await runNextA2aOrder(db as never, "synthetic-worker")).toBeNull();
+    expect(db.claimNextA2aOrder).not.toHaveBeenCalled();
+    expect(db.failA2aOrder).not.toHaveBeenCalled();
+  });
+
+  it("preserves ordinary atomic claim behavior when no finite admission is retained", async () => {
+    const db = { claimNextA2aOrder: vi.fn().mockResolvedValue(null) };
+    expect(await runNextA2aOrder(db as never, "synthetic-worker")).toBeNull();
+    expect(db.claimNextA2aOrder).toHaveBeenCalledWith("synthetic-worker", expect.any(String), null);
+  });
+  it.each([0.05, 0.01, 0.0157, 0.0314])("completes a quoted exact %s-USDC paid request despite binary multiplication noise", async (budget) => {
+    let current = claimedOrder(budget);
+    expect(current.creatorBudgetUsdc).toBe(budget);
+    const db = {
+      completeA2aOrder: vi.fn().mockResolvedValue(true),
+      getA2aOrder: vi.fn(async () => current),
+      getQueryRun: vi.fn().mockResolvedValue(null),
+      failA2aOrder: vi.fn().mockResolvedValue(true),
+      markA2aOrderPaymentStarted: vi.fn(async (_id, at) => {
+        current = { ...current, paymentStartedAt: at };
+        return true;
+      }),
+      markA2aOrderResultSaving: vi.fn(async (_id, at) => {
+        current = { ...current, resultSavingAt: at };
+        return true;
+      }),
+      listCreatorPaymentAttemptsByQuery: vi.fn().mockResolvedValue([]),
+    };
+    const collector = vi.fn(async (input) => {
+      await input.onCreatorPaymentBoundary?.();
+      await input.onQueryRunSaveBoundary?.();
+      return {
+        id: input.queryId!,
+        question: input.question,
+        budget: input.budget,
+        answer: "answer",
+        subClaims: [],
+        decisions: [],
+        citations: [],
+        evidence: [],
+        claimCoverage: [],
+        totalSpent: 0,
+        totalToCreators: 0,
+        trace: [],
+        createdAt: "2026-09-01T00:01:00.000Z",
+        durationMs: 60_000,
+        engine: "heuristic",
+        paymentMode: "real" as const,
+      };
+    });
+
+    const outcome = await runClaimedA2aOrder(db as never, current, {
+      collector: collector as never,
+      expectedPayee: "0x2222222222222222222222222222222222222222",
+    });
+
+    expect(outcome).toEqual({ id: "a2a_claimed", status: "completed" });
+    expect(collector).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fundingOwner: "treasury",
+        asker: current.payer,
+        provenance: { version: 1, surface: "agent-to-agent", ownershipMethod: "verified-payer" },
+        budget,
+        question: "What changed?",
+        executionLimits: { attentionLimit: 4, reevaluateRounds: 1 },
+      }),
+      expect.objectContaining({ onStep: expect.any(Function) }),
+    );
+    expect(db.completeA2aOrder).toHaveBeenCalledOnce();
+    expect(db.markA2aOrderPaymentStarted).toHaveBeenCalledOnce();
+    expect(db.markA2aOrderResultSaving).toHaveBeenCalledOnce();
+    expect(db.failA2aOrder).not.toHaveBeenCalled();
+  });
+
+  it("holds a changed retained payer before attribution or research", async () => {
+    const order = claimedOrder();
+    const db = { getA2aOrder: vi.fn().mockResolvedValue({ ...order, payer: `0x${"3".repeat(40)}` }),
+      getQueryRun: vi.fn(), failA2aOrder: vi.fn() };
+    const collector = vi.fn();
+    expect(await runClaimedA2aOrder(db as never, order, { collector })).toMatchObject({ status: "recovery_pending" });
+    expect(collector).not.toHaveBeenCalled(); expect(db.getQueryRun).not.toHaveBeenCalled();
+    expect(db.failA2aOrder).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { creatorBudgetUsdc: 0.0157001 },
+    { serviceFeeUsdc: 0.0500001 },
+    { amountUsdc: 0.1000001 },
+    { creatorBudgetUsdc: 0 },
+    { serviceFeeUsdc: -0.01 },
+    { amountUsdc: Number.NaN },
+    { creatorBudgetUsdc: (Number.MAX_SAFE_INTEGER + 1) / 1e6 },
+  ])("refuses fractional, nonfinite and unsafe stored amounts before research: %j", async (changed) => {
+    const order = { ...claimedOrder(), ...changed };
+    // A matching rounded request hash must not legitimize a fractional stored amount.
+    order.requestHash = a2aRequestHash({ question: order.request!.question,
+      creatorBudgetUsdc: order.creatorBudgetUsdc, serviceFeeUsdc: order.serviceFeeUsdc,
+      researchMode: order.researchMode, researchPackage: order.researchPackage, model: order.request!.model });
+    const db = { failA2aOrder: vi.fn().mockResolvedValue(true) };
+    const collector = vi.fn();
+    const outcome = await runClaimedA2aOrder(db as never, order, { collector });
+    expect(outcome).toMatchObject({ status: "failed", errorCode: "invalid_order_data" });
+    expect(collector).not.toHaveBeenCalled();
+  });
+
+  it("fails before creator spend when private input no longer matches its request hash", async () => {
+    const db = {
+      completeA2aOrder: vi.fn(),
+      getA2aOrder: vi.fn(),
+      failA2aOrder: vi.fn().mockResolvedValue(true),
+    };
+    const collector = vi.fn();
+    const order = claimedOrder();
+    order.request = { ...order.request!, question: "tampered" };
+
+    const outcome = await runClaimedA2aOrder(db as never, order, { collector });
+
+    expect(outcome).toEqual({
+      id: "a2a_claimed",
+      status: "failed",
+      errorCode: "invalid_order_data",
+    });
+    expect(collector).not.toHaveBeenCalled();
+    expect(db.failA2aOrder).toHaveBeenCalledWith(
+      order.id,
+      "invalid_order_data",
+      expect.any(String),
+    );
+  });
+
+  it("drains an already-paid legacy queued order without assigning package-v1 semantics", async () => {
+    let current = claimedOrder();
+    current = {
+      ...current,
+      researchPackage: null,
+      requestHash: legacyA2aRequestHash({
+        question: current.request!.question,
+        creatorBudgetUsdc: current.creatorBudgetUsdc,
+        serviceFeeUsdc: current.serviceFeeUsdc,
+        researchMode: current.researchMode,
+        model: current.request!.model,
+      }),
+    };
+    const db = {
+      completeA2aOrder: vi.fn().mockResolvedValue(true),
+      getA2aOrder: vi.fn(async () => current),
+      getQueryRun: vi.fn().mockResolvedValue(null),
+      failA2aOrder: vi.fn().mockResolvedValue(true),
+      markA2aOrderPaymentStarted: vi.fn().mockResolvedValue(true),
+      markA2aOrderResultSaving: vi.fn().mockResolvedValue(true),
+      listCreatorPaymentAttemptsByQuery: vi.fn().mockResolvedValue([]),
+    };
+    const collector = vi.fn(async (input) => ({
+      id: input.queryId!,
+      question: input.question,
+      budget: input.budget,
+      answer: "historical answer",
+      subClaims: [],
+      decisions: [],
+      citations: [],
+      evidence: [],
+      claimCoverage: [],
+      totalSpent: 0,
+      totalToCreators: 0,
+      trace: [],
+      createdAt: "2026-09-01T00:01:00.000Z",
+      durationMs: 60_000,
+      engine: "heuristic",
+      paymentMode: "real" as const,
+    }));
+
+    const outcome = await runClaimedA2aOrder(db as never, current, {
+      collector: collector as never,
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(collector.mock.calls[0]![0]).not.toHaveProperty("executionLimits");
+    expect(db.completeA2aOrder.mock.calls[0]![1]).not.toHaveProperty("researchPackage");
+    expect(db.completeA2aOrder.mock.calls[0]![1]).not.toHaveProperty("serviceReceipt");
+  });
+
+  it("fails before creator spend when the stored package no longer adds up exactly", async () => {
+    const db = {
+      completeA2aOrder: vi.fn(),
+      getA2aOrder: vi.fn(),
+      failA2aOrder: vi.fn().mockResolvedValue(true),
+    };
+    const collector = vi.fn();
+    const order = { ...claimedOrder(), amountUsdc: 0.11 };
+
+    const outcome = await runClaimedA2aOrder(db as never, order, { collector });
+
+    expect(outcome).toMatchObject({ status: "failed", errorCode: "invalid_order_data" });
+    expect(collector).not.toHaveBeenCalled();
+  });
+
+  it("fails before creator spend when the versioned execution package is tampered", async () => {
+    const db = {
+      completeA2aOrder: vi.fn(),
+      getA2aOrder: vi.fn(),
+      failA2aOrder: vi.fn().mockResolvedValue(true),
+    };
+    const collector = vi.fn();
+    const original = claimedOrder();
+    const order = {
+      ...original,
+      researchPackage: {
+        ...original.researchPackage!,
+        execution: { attentionLimit: 8, reevaluateRounds: 1 },
+      },
+    };
+    const outcome = await runClaimedA2aOrder(db as never, order, { collector });
+    expect(outcome).toMatchObject({ status: "failed", errorCode: "invalid_order_data" });
+    expect(collector).not.toHaveBeenCalled();
+  });
+
+  it("leaves a saved paid run repairable when the final order completion write fails", async () => {
+    const order = claimedOrder();
+    const db = {
+      completeA2aOrder: vi.fn().mockRejectedValue(new Error("database timeout")),
+      getA2aOrder: vi.fn().mockResolvedValueOnce(order).mockRejectedValue(new Error("database timeout")),
+      getQueryRun: vi.fn().mockResolvedValue(null),
+      failA2aOrder: vi.fn().mockResolvedValue(true),
+    };
+    const collector = vi.fn(async (input) => ({
+      id: input.queryId!,
+      answer: "durable answer",
+      citations: [],
+      evidence: [],
+      claimCoverage: [],
+      totalToCreators: 0.02,
+      engine: "heuristic",
+      paymentMode: "real" as const,
+    }));
+
+    const outcome = await runClaimedA2aOrder(db as never, order, {
+      collector: collector as never,
+    });
+
+    expect(outcome).toEqual({ id: "a2a_claimed", status: "recovery_pending" });
+    expect(db.failA2aOrder).not.toHaveBeenCalled();
+    expect(collector).toHaveBeenCalledOnce();
+  });
+
+  it.each(["completed", "failed"] as const)("does not mutate or execute a %s original passed directly", async (status) => {
+    const order = { ...claimedOrder(), status, request: null };
+    const db = { failA2aOrder: vi.fn(), completeA2aOrder: vi.fn(), getA2aOrder: vi.fn(), getQueryRun: vi.fn() };
+    const collector = vi.fn();
+    expect(await runClaimedA2aOrder(db as never, order, { collector })).toEqual({ id: order.id, status });
+    expect(collector).not.toHaveBeenCalled();
+    for (const operation of Object.values(db)) expect(operation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { startedAt: null, workerId: null },
+    { resultSavingAt: "2026-09-01T00:01:00.000Z" },
+    { paymentStartedAt: "2026-09-01T00:01:00.000Z" },
+    { response: { privateAnswer: "must remain untouched" } },
+    { status: "queued" },
+  ])("holds an unclaimed or previously executing/saved original without mutation: %j", async (change) => {
+    const order = { ...claimedOrder(), ...change } as A2aOrder;
+    const db = { failA2aOrder: vi.fn(), completeA2aOrder: vi.fn(), getA2aOrder: vi.fn(), getQueryRun: vi.fn() };
+    const collector = vi.fn();
+    expect(await runClaimedA2aOrder(db as never, order, { collector })).toEqual({ id: order.id, status: "recovery_pending" });
+    expect(collector).not.toHaveBeenCalled();
+    for (const operation of Object.values(db)) expect(operation).not.toHaveBeenCalled();
+  });
+
+  it("refuses a null private request before the collector", async () => {
+    const db = { failA2aOrder: vi.fn().mockResolvedValue(true) };
+    const collector = vi.fn();
+    expect(await runClaimedA2aOrder(db as never, { ...claimedOrder(), request: null }, { collector }))
+      .toMatchObject({ status: "failed", errorCode: "invalid_order_data" });
+    expect(collector).not.toHaveBeenCalled();
+    expect(db.failA2aOrder).toHaveBeenCalledOnce();
+  });
+
+  it.each(["completed", "failed"] as const)("refuses a stale claimed object when current storage is %s", async (status) => {
+    const order = claimedOrder();
+    const db = { getA2aOrder: vi.fn().mockResolvedValue({ ...order, status }), getQueryRun: vi.fn(), failA2aOrder: vi.fn() };
+    const collector = vi.fn();
+    expect(await runClaimedA2aOrder(db as never, order, { collector })).toEqual({ id: order.id, status });
+    expect(collector).not.toHaveBeenCalled();
+    expect(db.getQueryRun).not.toHaveBeenCalled();
+    expect(db.failA2aOrder).not.toHaveBeenCalled();
+  });
+
+  it.each(["saved", "read-failure", "foreign-claim"])("holds before research when original readback is %s", async (mode) => {
+    const order = claimedOrder();
+    const db = {
+      getA2aOrder: vi.fn().mockResolvedValue(mode === "foreign-claim" ? { ...order, workerId: "other-worker" } : order),
+      getQueryRun: mode === "read-failure" ? vi.fn().mockRejectedValue(Error("PRIVATE_STORAGE_SECRET")) :
+        vi.fn().mockResolvedValue(mode === "saved" ? { id: order.queryId, answer: "PRIVATE_ANSWER" } : null),
+      failA2aOrder: vi.fn(), completeA2aOrder: vi.fn(),
+    };
+    const collector = vi.fn();
+    expect(await runClaimedA2aOrder(db as never, order, { collector })).toEqual({ id: order.id, status: "recovery_pending" });
+    expect(collector).not.toHaveBeenCalled();
+    expect(db.failA2aOrder).not.toHaveBeenCalled();
+    expect(db.completeA2aOrder).not.toHaveBeenCalled();
+  });
+
+  it.each(["false", "rejected", "thrown"])("retains a recovery hold and bounded last-stage failure when the fail write is %s, without rerunning", async (mode) => {
+    const order = claimedOrder();
+    const db = {
+      getA2aOrder: vi.fn().mockResolvedValue(order), getQueryRun: vi.fn().mockResolvedValue(null),
+      failA2aOrder: mode === "false" ? vi.fn().mockResolvedValue(false) : mode === "rejected" ?
+        vi.fn().mockRejectedValue(Error("PRIVATE_DB_KEY")) : vi.fn(() => { throw Error("PRIVATE_DB_KEY"); }),
+      completeA2aOrder: vi.fn(),
+    };
+    const collector = vi.fn(async (_input, options) => {
+      options?.onStep?.({ phase: "discover", message: "PRIVATE_QUESTION", detail: { url: "https://secret.invalid?key=PRIVATE_KEY" } });
+      options?.onStep?.({ phase: "decide", message: "PRIVATE_PROMPT", detail: { sourceIds: ["private-source"] } });
+      const error = new ReasoningInputLimitError("PRIVATE_PROVIDER_BODY");
+      error.stack = "PRIVATE_STACK";
+      throw error;
+    });
+    const outcome = await runClaimedA2aOrder(db as never, order, { collector: collector as never });
+    expect(outcome).toEqual({ id: order.id, status: "recovery_pending", errorCode: "research_failed",
+      diagnostic: { stage: "decide", category: "input_limit" } });
+    expect(JSON.stringify(outcome)).not.toMatch(/PRIVATE_|secret\.invalid|private-source/);
+    expect(collector).toHaveBeenCalledOnce();
+    expect(db.failA2aOrder).toHaveBeenCalledOnce();
+    expect(db.getA2aOrder).toHaveBeenCalledTimes(2);
+    expect(db.completeA2aOrder).not.toHaveBeenCalled();
+  });
+
+  it("reports failed after a lost committed write response only when one readback proves the same failed original", async () => {
+    const order = claimedOrder();
+    const db = {
+      getA2aOrder: vi.fn().mockResolvedValueOnce(order).mockResolvedValueOnce({ ...order, status: "failed", errorCode: "research_failed" }),
+      getQueryRun: vi.fn().mockResolvedValue(null), failA2aOrder: vi.fn().mockRejectedValue(Error("PRIVATE_LOST_RESPONSE")),
+    };
+    const collector = vi.fn(async () => { throw new ReasoningTransportError("network"); });
+    expect(await runClaimedA2aOrder(db as never, order, { collector })).toEqual({
+      id: order.id, status: "failed", errorCode: "research_failed", diagnostic: { stage: "unknown", category: "provider_network" },
+    });
+    expect(db.getA2aOrder).toHaveBeenCalledTimes(2);
+    expect(db.failA2aOrder).toHaveBeenCalledOnce();
+    expect(collector).toHaveBeenCalledOnce();
+  });
+
+  it.each(["unavailable", "foreign"])("keeps ambiguous failure recovery pending when readback is %s", async (mode) => {
+    const order = claimedOrder();
+    const readback = mode === "unavailable" ? vi.fn().mockRejectedValue(Error("PRIVATE_READBACK_KEY")) :
+      vi.fn().mockResolvedValue({ ...order, id: "foreign-order", status: "failed" });
+    const db = {
+      getA2aOrder: vi.fn().mockResolvedValueOnce(order).mockImplementation(readback),
+      getQueryRun: vi.fn().mockResolvedValue(null), failA2aOrder: vi.fn().mockResolvedValue(false),
+    };
+    const collector = vi.fn(async () => { throw Error("PRIVATE_FAILURE_BODY"); });
+    expect(await runClaimedA2aOrder(db as never, order, { collector })).toEqual({
+      id: order.id, status: "recovery_pending", errorCode: "research_failed", diagnostic: { stage: "unknown", category: "unknown" },
+    });
+    expect(db.getA2aOrder).toHaveBeenCalledTimes(2);
+    expect(db.failA2aOrder).toHaveBeenCalledOnce();
+    expect(collector).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an injected collector without step instrumentation compatible and stage unknown", async () => {
+    const order = claimedOrder();
+    const db = { getA2aOrder: vi.fn().mockResolvedValue(order), getQueryRun: vi.fn().mockResolvedValue(null),
+      failA2aOrder: vi.fn().mockResolvedValue(true) };
+    const collector = vi.fn(async () => { throw new ReasoningTransportError("timeout"); });
+    expect(await runClaimedA2aOrder(db as never, order, { collector })).toMatchObject({
+      errorCode: "research_failed", diagnostic: { stage: "unknown", category: "provider_timeout" },
+    });
+    expect(collector).toHaveBeenCalledOnce();
+  });
+});

@@ -1,0 +1,72 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "lib/i18n/messages.ts",
+  "sourceSha256": "f3d85eef26e994ae7defeb90a5a1c21f47e98cb93ec04a938f7046f71138acaf",
+  "entries": {
+    "researchEntry.ask": {
+      "source": "Ask Keryx",
+      "text": "Keryx에 질문"
+    },
+    "researchEntry.question": {
+      "source": "What do you want to know?",
+      "text": "무엇을 알고 싶으신가요?"
+    },
+    "researchEntry.placeholder": {
+      "source": "Ask a question worth reading for...",
+      "text": "조사할 가치가 있는 질문을 입력하세요..."
+    },
+    "researchEntry.depth": {
+      "source": "Research depth",
+      "text": "조사 깊이"
+    },
+    "researchEntry.quick": {
+      "source": "quick",
+      "text": "빠르게"
+    },
+    "researchEntry.deep": {
+      "source": "deep",
+      "text": "심층"
+    },
+    "researchEntry.researching": {
+      "source": "Researching...",
+      "text": "조사 중..."
+    },
+    "researchEntry.moreOptions": {
+      "source": "More options",
+      "text": "추가 옵션"
+    },
+    "researchEntry.model": {
+      "source": "AI model",
+      "text": "AI 모델"
+    },
+    "researchEntry.savedReports": {
+      "source": "My saved reports",
+      "text": "내 저장된 보고서"
+    },
+    "researchEntry.keyboardHint": {
+      "source": "Enter for a new line · Ctrl/⌘ + Enter to ask",
+      "text": "Enter로 줄바꿈 · Ctrl/⌘ + Enter로 질문"
+    },
+    "researchEntry.metadataLookup": {
+      "source": "Look up free paper metadata",
+      "text": "무료로 논문 메타데이터 조회"
+    },
+    "researchEntry.metadataLookupLabel": {
+      "source": "Look up free paper metadata: title, authors or DOI",
+      "text": "무료로 논문 메타데이터 조회: 제목, 저자 또는 DOI"
+    },
+    "researchEntry.quickHint": {
+      "source": "Quick: up to 2 focused reads.",
+      "text": "빠른 조사: 질문에 집중한 자료를 최대 2개 읽습니다."
+    },
+    "researchEntry.deepHint": {
+      "source": "Deep: up to 4 reads, including marketplace discovery and a coverage check.",
+      "text": "심층 조사: 자료를 최대 4개 읽고, 마켓플레이스에서 자료를 검색하며 조사 범위를 확인합니다."
+    },
+    "researchEntry.examplesLabel": {
+      "source": "Example questions",
+      "text": "질문 예시"
+    }
+  }
+}

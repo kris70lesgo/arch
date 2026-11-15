@@ -1,0 +1,164 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "locales/en/research-flow.ts",
+  "sourceSha256": "08624b2d69b1e55478bca2ec23697acc8155b21698c9019762c07581a9487014",
+  "entries": {
+    "researchTour.open": {
+      "source": "How it works",
+      "text": "Como funciona"
+    },
+    "researchTour.label": {
+      "source": "How Keryx works",
+      "text": "Como o Keryx funciona"
+    },
+    "researchTour.questionTitle": {
+      "source": "Ask a question",
+      "text": "Faça uma pergunta"
+    },
+    "researchTour.questionBody": {
+      "source": "Enter the research question you want answered. You can inspect decisions as the answer streams.",
+      "text": "Digite a pergunta de pesquisa que você quer responder. Você pode examinar as decisões enquanto a resposta é gerada."
+    },
+    "researchTour.startTitle": {
+      "source": "Start research",
+      "text": "Iniciar pesquisa"
+    },
+    "researchTour.closeLabel": {
+      "source": "Close tour",
+      "text": "Fechar guia"
+    },
+    "researchTour.close": {
+      "source": "Close",
+      "text": "Fechar"
+    },
+    "researchTour.back": {
+      "source": "Back",
+      "text": "Voltar"
+    },
+    "researchTour.done": {
+      "source": "Done",
+      "text": "Concluir"
+    },
+    "researchTour.next": {
+      "source": "Next",
+      "text": "Avançar"
+    },
+    "researchTour.step": {
+      "source": "Step {number} of {total}",
+      "text": "Etapa {number} de {total}"
+    },
+    "decisionLog.jumpToLatest": {
+      "source": "Jump to latest",
+      "text": "Ir para os passos mais recentes"
+    },
+    "decisionLog.followingLatest": {
+      "source": "Following latest steps",
+      "text": "Acompanhando os passos mais recentes"
+    },
+    "decisionLog.readingEarlier": {
+      "source": "Reading earlier steps",
+      "text": "Lendo passos anteriores"
+    },
+    "decisionLog.scrollHint": {
+      "source": "Scroll inside the log to read earlier steps. Jump to latest to follow new steps.",
+      "text": "Role dentro do registro para ler passos anteriores. Vá para os mais recentes para acompanhar os novos passos."
+    },
+    "decisionLog.title": {
+      "source": "The decision",
+      "text": "A decisão"
+    },
+    "decisionLog.label": {
+      "source": "Decision log",
+      "text": "Registro de decisões"
+    },
+    "researchChat.label": {
+      "source": "Research conversation",
+      "text": "Conversa de pesquisa"
+    },
+    "researchChat.kicker": {
+      "source": "Research with Keryx",
+      "text": "Pesquise com Keryx"
+    },
+    "researchChat.title": {
+      "source": "Ask Keryx",
+      "text": "Perguntar ao Keryx"
+    },
+    "researchChat.introduction": {
+      "source": "Get a cited answer. Inspect source decisions.",
+      "text": "Obtenha uma resposta com citações. Examine as decisões sobre as fontes."
+    },
+    "researchChat.turnsLabel": {
+      "source": "Conversation turns",
+      "text": "Etapas da conversa"
+    },
+    "researchChat.followUpContext": {
+      "source": "Follow-ups use the previous question only, not its answer or the full chat. Include the details you want researched.",
+      "text": "As perguntas de acompanhamento usam apenas a pergunta anterior, não a resposta nem toda a conversa. Inclua os detalhes que você quer pesquisar."
+    },
+    "researchChat.newResearch": {
+      "source": "New research",
+      "text": "Nova pesquisa"
+    },
+    "researchChat.stopResearch": {
+      "source": "Stop research",
+      "text": "Parar pesquisa"
+    },
+    "researchChat.toolsLabel": {
+      "source": "Research tools",
+      "text": "Ferramentas de pesquisa"
+    },
+    "researchChat.savedReports": {
+      "source": "My saved reports",
+      "text": "Meus relatórios salvos"
+    },
+    "researchTurn.inProgress": {
+      "source": "Keryx · Research in progress",
+      "text": "Keryx · Pesquisa em andamento"
+    },
+    "researchTurn.findingSources": {
+      "source": "Finding sources worth reading…",
+      "text": "Buscando fontes que valem a leitura…"
+    },
+    "decisionLog.deciding": {
+      "source": "deciding",
+      "text": "decidindo"
+    },
+    "decisionLog.connecting": {
+      "source": "Waiting for research updates…",
+      "text": "Aguardando atualizações da pesquisa…"
+    },
+    "decisionLog.newSteps.one": {
+      "source": "{count} new step",
+      "text": "{count} nova etapa"
+    },
+    "decisionLog.newSteps.other": {
+      "source": "{count} new steps",
+      "text": "{count} novas etapas"
+    },
+    "decisionLog.steps.one": {
+      "source": "{count} steps",
+      "text": "{count} etapa"
+    },
+    "decisionLog.steps.other": {
+      "source": "{count} steps",
+      "text": "{count} etapas"
+    },
+    "followUp.title": {
+      "source": "Ask a follow-up",
+      "text": "Fazer uma pergunta de acompanhamento"
+    },
+    "followUp.questionLabel": {
+      "source": "Your follow-up question",
+      "text": "Sua pergunta de acompanhamento"
+    },
+    "followUp.placeholder": {
+      "source": "How does that compare to…?",
+      "text": "Como isso se compara a…?"
+    },
+    "followUp.submit": {
+      "source": "Dispatch follow-up",
+      "text": "Enviar pergunta de acompanhamento"
+    }
+  }
+}

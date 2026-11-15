@@ -1,0 +1,93 @@
+import type { GatheredContent, ProposedEvidence } from "./reasoning-engine";
+import type { QuoteOption } from "./quote-options";
+import { isCompleteEvidenceSpan } from "./evidence-span";
+import { EVIDENCE_REVIEW_GUIDANCE, MAX_REVIEWED_EVIDENCE, STATEMENT_LANGUAGE_REVIEW_GUIDANCE } from "./evidence-review";
+import type { SupplementalSpanCapability } from "./supplemental-span-capability";
+import { ORDINARY_SCOPE_REVIEW_GUIDANCE, ordinaryScopeReviewSchema } from "./ordinary-evidence-review";
+import { isWellFormedUtf16 } from "./well-formed-utf16";
+
+export const MAX_EVIDENCE_REVIEW_INPUT_BYTES = 32_000;
+// Bound both authored messages and reserve framing space; provider transport
+// policies remain separate and may impose a smaller cap. Never raise those caps.
+const REVIEW_FRAMING_BYTES = 1024;
+const legacySchema = '{"reviews":[{"index":number,"supportedFact":string,"support":number(0..1),"statementSupport":number(0..1) when the row has a statement}]}';
+const languageSchema = '{"reviews":[{"index":number,"supportedFact":string,"support":number(0..1),"statementSupport":number(0..1) when the row has a statement,"statementLanguage":"en"|"vi"|"pt"|"es"|"fr"|"zh-Hans"|"de"|"ja"|"ko"|"hi"|"id"|"ru"|"ar"|"UNKNOWN" when the row has a statement}]}';
+
+/** Build the private verifier input. Unbound/over-budget rows never gain review authority. */
+export function buildEvidenceReviewInput(input: {
+  proposals: ProposedEvidence[];
+  options: QuoteOption[];
+  gathered: GatheredContent[];
+  subClaims: string[];
+  supplementalCapability?: SupplementalSpanCapability;
+  /** Trusted ordinary producer opt-in. Retained/private review prompts stay exact. */
+  observeLanguage?: boolean;
+  /** Selected ordinary engines only; private/finite originals retain legacy bytes. */
+  ordinaryScope?: boolean;
+  /** Unchanged authorized request passed to synthesis, including admitted context.
+   * Required for ordinary scope review; ignored by legacy/private producers. */
+  originalQuestion?: string;
+}): { json: string; reviewedIndexes: ReadonlySet<number> } {
+  const schema = input.ordinaryScope ? ordinaryScopeReviewSchema(Boolean(input.observeLanguage)) : input.observeLanguage ? languageSchema : legacySchema;
+  const guidance = EVIDENCE_REVIEW_GUIDANCE + (input.ordinaryScope ? ORDINARY_SCOPE_REVIEW_GUIDANCE : "") +
+    (input.observeLanguage ? STATEMENT_LANGUAGE_REVIEW_GUIDANCE : "");
+  const sources = new Map(input.gathered.map(source => [source.marker, source]));
+  const ids = new Set(input.options.map(option => option.quoteId));
+  if (sources.size !== input.gathered.length || ids.size !== input.options.length) {
+    throw new Error("Ambiguous evidence review binding");
+  }
+  const evidence: object[] = [];
+  const reviewedIndexes = new Set<number>();
+  const packet = (rows: object[]) => ({
+    ...(input.ordinaryScope ? { originalQuestion: input.originalQuestion } : {}),
+    evidence: rows, schema,
+  });
+  const fits = (rows: object[]) => Buffer.byteLength(JSON.stringify(packet(rows)), "utf8") +
+    Buffer.byteLength(guidance, "utf8") + REVIEW_FRAMING_BYTES <= MAX_EVIDENCE_REVIEW_INPUT_BYTES;
+  // A decomposed target cannot replace missing caller conditions. Do not clip the
+  // request or send a partial context when its complete packet cannot fit.
+  if (input.ordinaryScope && (typeof input.originalQuestion !== "string" ||
+      !input.originalQuestion.trim() || !isWellFormedUtf16(input.originalQuestion) || !fits([])))
+    return { json: JSON.stringify({ evidence: [], schema }), reviewedIndexes };
+  for (const [index, proposal] of input.proposals.slice(0, MAX_REVIEWED_EVIDENCE).entries()) {
+    const source = sources.get(proposal.marker);
+    const target = input.subClaims[proposal.claimIndex];
+    if (!source || !Number.isInteger(proposal.claimIndex) || typeof target !== "string" ||
+        !isCompleteEvidenceSpan(source, proposal.quote, proposal.quoteSpan, input.supplementalCapability)) continue;
+    const matches = input.options.filter(option => option.marker === proposal.marker &&
+      option.start === proposal.quoteSpan!.start && option.end === proposal.quoteSpan!.end);
+    if (matches.length !== 1) continue;
+    const option = matches[0];
+    if (option.sourceId !== source.sourceId || option.itemUrl !== source.itemUrl ||
+        option.contentVersion !== source.contentVersion || option.text !== proposal.quote ||
+        !Number.isSafeInteger(option.contextStart) || !Number.isSafeInteger(option.contextEnd) ||
+        option.contextStart < 0 || option.contextEnd > Math.min(source.text.length, 200_000) ||
+        option.contextStart > option.start || option.contextEnd < option.end ||
+        option.contextEnd - option.contextStart > 1200 ||
+        source.text.slice(option.contextStart, option.contextEnd) !== option.context ||
+        option.prefixOmitted !== (option.contextStart > 0) || option.suffixOmitted !== (option.contextEnd < source.text.length)) continue;
+    const entry = {
+      index, question: target, quote: proposal.quote, quoteId: option.quoteId,
+      ...(proposal.statement ? { statement: proposal.statement } : {}),
+      source: { marker: source.marker, sourceId: source.sourceId, name: source.sourceName,
+        itemUrl: source.itemUrl, contentVersion: source.contentVersion,
+        ...(input.ordinaryScope && source.itemTitle ? { itemTitle: source.itemTitle } : {}),
+        sourceKind: source.sourceKind ?? "creator",
+        deliveryKind: source.publicDeliveryKind ?? source.contentReceipt?.deliveryKind ?? "unknown",
+        ...(source.webProvenance ? { webProvenance: {
+          normalizedBodyHash: source.webProvenance.normalizedBodyHash,
+          retrievedAt: source.webProvenance.retrievedAt,
+          extraction: source.webProvenance.extraction,
+          truncated: source.webProvenance.truncated,
+        } } : {}),
+      },
+      quoteSpan: proposal.quoteSpan,
+      context: { start: option.contextStart, end: option.contextEnd, text: option.context,
+        prefixOmitted: option.prefixOmitted, suffixOmitted: option.suffixOmitted },
+    };
+    if (!fits([...evidence, entry])) continue;
+    evidence.push(entry);
+    reviewedIndexes.add(index);
+  }
+  return { json: JSON.stringify(packet(evidence)), reviewedIndexes };
+}

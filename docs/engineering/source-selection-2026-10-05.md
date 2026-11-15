@@ -1,0 +1,262 @@
+# Source-selection validation and failure diagnostics
+
+The closed ordinary-Chrome round on v0.26.17 / `8cc6b90a` passed planning for the
+SQLite question but stopped before original reads with an invalid target-link
+selection. The retained UI reports eight targets, two supplied SQLite URLs and
+ten public leads. Neither the target text nor the provider's decision payload
+was retained. Missing, empty, wrong-type and out-of-range targets are therefore
+historical hypotheses, not established causes. See [#172](https://github.com/tang-vu/keryx/issues/172).
+
+The full new round remains **0/3 useful, 1/3 completed report**: Next.js failed
+at its first model call, systemd produced a Low excerpt-only report, and SQLite
+failed at selection. The conservative held-attempt ceiling was **$0.217940**,
+not an invoice. All three submissions and failed/unknown holds remain closed.
+Q1/Q3 have no completed research or complete payment receipt. This repair does
+not revise those originals or establish a successful live retest.
+
+## Decision contract
+
+The selector receives the unchanged question, indexed research targets, an
+explicit allowed-index list and exact candidate IDs. Examples distinguish free
+public-page read proposals from cache hits and verified evidence. A supplied
+original can be proposed for predicted relevance while its contents are still
+unknown; it is neither forced into a read nor certified by its preview.
+
+Validation checks an actionable proposal's whole target list. It never supplies
+a missing link, converts string/one-based indexes, or filters an invalid list
+into a valid subset. A malformed proposal for an exact known candidate becomes
+an explicit validator-withheld SKIP with zero expected value/confidence and no
+targets. Every duplicate group for a candidate is withheld rather than choosing
+one of its conflicting proposals. Independently valid distinct-candidate rows
+can continue through the existing preview, portfolio, source, budget and payment
+gates. The research plan is retained in full and unsupported targets stay gaps.
+
+A genuine all-SKIP response remains a valid frugal choice. If invalid proposals
+leave no valid actionable selection, or no response rows name an input
+candidate, the request ends with `ResearchSelectionError` /
+`research_source_selection_invalid`. Malformed/truncated completed output is
+classified separately from an empty decision list. These are terminal local
+contract refusals: no paid retry/tier, heuristic substitute, circuit failure,
+success/reset or hidden completed report. Transport/input-limit handling keeps
+its existing categories. Completed supplier call/token records remain retained;
+rejected application output does not establish zero compute cost.
+
+## Inspectable evidence
+
+`keryx-source-selection-v1` diagnostics contain an opaque local UUID, timestamp,
+stage/outcome, bounded counts and up to sixteen allowlisted reason/index records.
+They omit question text, provider values/bodies, source identities/URLs, wallet
+data and credentials. A browser-safe parser explicitly copies allowed fields
+and rejects invalid types, bounds, IDs, times and accessors. Metadata is a
+validator observation, not evidence of source relevance or financial settlement.
+
+Mixed selections retain diagnostics in the completed run's trace and fixed
+withheld-source rationales in decisions/receipts. Terminal selections emit a
+trace refusal and caller error without saving an empty `QueryRun` as a completed
+answer. Web/chat and embed offer an explicit **Download failure diagnostic** JSON
+file. It is a caller-local artifact, labeled as a failure rather than a report
+or payment receipt; download does not resubmit the question. No server failure
+database or automatic browser-history retention is introduced. Retention across
+browser closure requires the caller to save the artifact.
+
+The OpenAI-compatible non-streaming API returns HTTP 422 with the code and
+`error.selectionDiagnostic`; a started stream retains HTTP 200, error text and
+`keryx_error` metadata, without completion metadata/`[DONE]`. Remote MCP retains
+`isError` and adds diagnostic JSON as text, without a successful structured
+result. The buyer CLI exits one and writes refusal guidance and diagnostic JSON
+to stderr.
+
+## Validation and release gates
+
+The offline fixture uses the exact frozen SQLite question/hash with eight
+**representative** qualified targets and synthetic provider/page responses.
+Its targets and response are not a replay of missing historical payloads.
+Tests must show that both exact originals reach actual reader adapters when
+their proposals are valid, invalid distractor rows never read/pay, all-invalid
+selection preserves token usage and stops before reads/payments, and the frozen
+question/plan remain intact. Duplicate/unknown/malformed rows, immutable bounded
+diagnostics, caller surfaces and real React/hook/Chromium downloads are gates.
+
+The change uses shared research on web/API/remote MCP and their bots/adapters.
+Desktop/Operator, stdio buyer MCP and extensions keep their existing task,
+custody and reader roles. A2A/private failures retain their existing failed-order
+and payment-history behavior; a diagnostic never converts them into completion.
+No new financial/storage schema, funding, schedules or custody is required.
+Distribution identities and deployed commit require separate readback.
+
+The candidate also integrates separately merged [PR #173](https://github.com/tang-vu/keryx/pull/173),
+which bounds daily sponsorship, expires paid cache reads, excludes the asking
+wallet's sources from sponsored runs and retains dispatches after observed
+creator payments. Its planning/context/attention/search expansion trial was
+withdrawn. This source-selection repair preserves those accepted behaviors;
+the combined runtime requires its own CI/review and deployed-source verification.
+Separately merged PR #176 withdraws per-payer cache keys because the enrolled
+store never evicts, reuses fresh cache during gap expansion, corrects unread
+reservation release and counts IPv6 callers by /64. The candidate retains those
+corrections; the cache remains shared within its existing reuse window.
+
+Combined review found two payment-boundary gaps in that update. Sponsored source
+exclusion now uses current registry toll/citation recipients, with DB author
+fallback only without registry citation authority. A trusted per-payment denied
+recipient travels through fetch, gap expansion and citation adapters; resolved
+payees, challenges and signed payloads are checked before authorization/admission
+or paid submission. Browser-funded self-payment retains its existing consent.
+
+The web route retains a dispatch from the trusted pre-gateway payment boundary,
+before ledger/cache persistence can suspend. This conservative retention is not
+settlement evidence. Browser signing still cancels on disconnect, and subsequent
+creator payment boundaries refuse new attempts; pending receipts remain pending.
+Early cancellation before a boundary does not create a completed dispatch.
+Shared agent/adapters cover web/API/MCP/CLI/bots; disconnect retention specifically
+belongs to the web SSE connection, including embed. Custody, spend limits, nonce
+authority, source-owned payout authority and schema remain unchanged.
+
+The combined candidate also retains separately merged PR #175's shared five-minute
+Google authentication continuation fix. Application version advances to 0.26.20
+without changing its vendor/storage authentication policy. Its separate deployment
+must restore before this release starts its own serialized maintenance.
+
+Local candidate validation passed 218 focused tests across selection/parser,
+resilience, orchestrator and caller surfaces; both TypeScript graphs, production
+build and lint passed (five existing warnings). The complete hermetic research
+browser suite passed, including actual hook/React failure downloads at 320/1366
+pixels, without model/search/payment calls. Stdio's 31 canonical Git runtime
+inputs and Operator helper's 46, renderer and bridge inputs remain unchanged
+against `2a2ba75e`; renderer/bridge graph inspection externalized Tauri package
+imports. Exact committed-head CI/review, deployment and public package/installer
+readback remain release gates.
+
+After integrating PR #173, 196 focused agent/cache/admission/economics/surface
+tests and both TypeScript graphs plus a fresh production build passed. Three
+former CI expectations of selection fallback were replaced with terminal
+refusal/usage checks while preserving generic non-selection fallback coverage;
+the additional two-file set passed 33 tests. The original failing CI evidence
+remains retained rather than being reclassified as a passing run.
+
+Useful supported comparisons/checklists, actual ordinary-client exports,
+independent legitimate Arc settlement and user evidence remain open under
+#172/#128. #158's initial model-call failure also remains unexplained by
+this source-selection repair. Richer synthesis stays disabled under D-300.
+
+## Original-caller recovery guidance — October 11, 2026
+
+The shared selection failure message now explains that a read proposal must name
+an offered source and link to nonempty integer indexes in the existing plan. It
+shows the diagnostic's bounded target range and asks the caller to inspect or
+save the diagnostic while retaining the original question, requested URLs and
+comparison dimensions. The refusal grants neither an automatic retry nor a
+completed report. This is guidance after validation; it does not repair links,
+change planning, add a provider attempt or release consumed allowance holds.
+
+The existing exact frozen Vietnamese SQLite question/hash and representative
+eight-target pipeline now exercise missing, empty, wrong-type, non-integer and
+out-of-range links both beside valid originals and in all-invalid selections.
+Valid proposals still reach the two exact reader adapters; invalid distractors
+never read or pay. Terminal cases retain the two original synthetic call/token
+records and export the existing bounded failure artifact without source URLs,
+provider values or a fabricated report/receipt. Existing systemd planning tests
+retain seven distinct behavior/risk/precheck targets and source qualifications.
+These are synthetic responses, not the missing historical provider payloads or
+a guarantee of SQLite consistency, restoration or useful live synthesis.
+
+Web/SSE, OpenAI JSON/streams, hosted remote MCP and repository CLI share
+`researchFailureMessage`; their diagnostic and error contracts remain unchanged.
+Bots retain their existing generic failure messages and shared strict engine
+behavior. Stdio MCP, native desktop/Operator and extensions retain their hosted
+handoff and custody boundaries. No client package, schema or activation change
+is required for this shared message. Source review, applicable hosted CI
+and root-owned delivery remain separate gates. Original #172 remains open for
+its explicit separately authorized finite live usefulness or actual-source-
+limitation acceptance; the exhausted allowance does not authorize that retest.
+Original #169 requires its exact-case planning/refinement proof and root-owned
+delivery decision, without an additional mandatory live or paid trial. Earlier
+observations and failed holds are unchanged.
+
+### Exact original Systemd refinement control — October 12, 2026
+
+The planning regression now binds the complete historical Systemd question to
+SHA256 `05f8ce09b6cea622818d605f213c298fdab43ce4f6988f47e179150f3d57136d`,
+matching the retained original intent and run. The old genuine eight-target
+plan reached discovery and a low-confidence excerpt-only report; its last
+target bundled `SendSIGKILL=no` behavior, deployment risk and prechecks. That
+historical result and the recorded 0/3 useful observations remain unchanged.
+
+The controlled provider proposes nine distinct setting/dimension pairs from
+the exact question. Local validation retains the eight-target ceiling and
+returns typed `expanded_output` refinement. It does not establish that a
+complete plan with shared checks could never fit, or reproduce an unknown
+historical provider cause. The narrow caller-choice helper now preserves a
+short colon-introduced dimension list as separate focused excerpts with its
+shared comparison context and trailing qualifications; previously the first
+three comma fragments could omit deployment risk and prechecks. For this exact
+question all three settings and the no-completed-worker/no-paid-source
+qualification remain in every choice. The source restriction stays in the
+unaltered original question and the existing instruction to retain its source
+conditions. No targets, answers or retries are inferred from these excerpts.
+
+One synthetic response follows the existing provider/orchestrator abstraction,
+retaining its declared synthetic usage counters and one returned-call record.
+Refinement stops before discovery, source/payment admission or another provider
+attempt. This is bounded offline refinement proof, not a useful source answer,
+an invoice, settlement or issue closure; root owns peer/CI/delivery acceptance.
+
+### Caller-bound comparison construction — October 12, 2026
+
+The same single `JsonChatEngine.decompose` response can now supply a private
+comparison proposal instead of final opaque claims. Its ordered text parts
+must concatenate to the exact complete caller question. Parts distinguish
+named subjects, common per-subject dimensions, explicitly shared needs,
+source/condition scope, and presentation/connective framing. Local construction
+returns the existing `string[]`: one question per subject/dimension and one per
+shared need naming all subjects. Every declared scope fragment qualifies every
+constructed question. Documentation URLs must be source scope, never extra
+subjects or discarded framing. The validated legacy claims path remains for
+other requests; no public protocol, provider, output ceiling or retry changes.
+
+Malformed/foreign/missing spans, absent dimensions, mixed opaque output,
+ambiguous duplicate labels and excessive parts refuse locally. A complete
+caller-bound map exceeding eight needs returns `needs_refinement`; expanded
+opaque model claims remain `expanded_output`. The constructor never slices,
+bundles all declared dimensions per subject, or relabels one as shared to fit
+the ceiling. An
+assembled question that exceeds the existing 600-character bound also refuses.
+There is no second model call or heuristic repair after a completed response.
+
+Exact05f construction controls map behavior and deployment risk separately for
+all three settings, plus one common pre-replacement check naming all three.
+Every question retains their stopping interaction, official-source restriction,
+unfinished-worker condition and no-paid-source restriction. Exact733b controls
+map consistency, operational checklist and concurrent-write/locking conditions
+for both backup methods, plus their common pre-restore verification. WAL/live
+write context, no service stop, both supplied original URLs, supported versus
+unverified steps and no paid sources remain scope. These are semantic maps of
+the original requests; table cells and document count do not determine need
+count. Supplied/unsupplied variants, reordered/renamed subjects and an unrelated
+finite comparison exercise the generic constructor in the existing harness.
+
+All planning responses are injected synthetic caller-span proposals, not final
+good target arrays. The actual parser, constructor, provider abstraction and
+agent reach normal discovery with one declared synthetic planning call. Refusal
+controls retain usage and stop before discovery, source reads or payment. Role
+classification remains the model's semantic proposal: exact text provenance
+alone cannot certify arbitrary classification quality. The original dimension
+maps and negative controls provide bounded source evidence, not a live model
+evaluation, technical source answer, useful report or historical-cause proof.
+
+This increment leaves canonical study bytes untouched; its source pins require
+root's reserved final-source offline convergence. Independent review, actual
+full applicable CI and combined delivery remain gates for root's #169 decision,
+without adding a paid/live or full-report criterion. #172 remains open for its
+separate explicitly authorized finite live usefulness/source-limitation gate;
+the exhausted allowance grants no new trial. Shared web/API/CLI/remote-MCP
+planning contracts remain `string[]` or the existing private caller refinement;
+bots and stdio/desktop/Operator/extensions retain their established role bounds.
+
+The URL-boundary correction scans HTTP(S) tokens in the complete caller question
+with the requested-source token grammar. Every occurrence must fit wholly within
+one scope part; splitting a scheme, host or path across scope or other roles
+refuses locally before discovery. This prevents dropped references and spaces
+inserted inside URLs by scope assembly. Intact reference spelling is preserved;
+the existing bounded semantic constructor and model-role qualification remain.
+Focused synthetic original-SQLite boundary controls establish this mechanical
+correction, not source-answer usefulness or an unknown historical live cause.

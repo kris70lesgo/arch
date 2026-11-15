@@ -1,0 +1,420 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "locales/en/get-started.ts",
+  "sourceSha256": "9450616cf1959d638de574cbeec2f3a445dbdea9d93bc8dcd67301299373e2fa",
+  "entries": {
+    "navigation.start": {
+      "source": "Get started",
+      "text": "शुरू करें"
+    },
+    "navigation.download": {
+      "source": "Download",
+      "text": "डाउनलोड"
+    },
+    "navigation.integrations": {
+      "source": "Integrations",
+      "text": "एकीकरण"
+    },
+    "navigation.label": {
+      "source": "Ways to use Keryx",
+      "text": "Keryx इस्तेमाल करने के तरीके"
+    },
+    "navigation.downloadAction": {
+      "source": "Get the app or extension",
+      "text": "ऐप या एक्सटेंशन प्राप्त करें"
+    },
+    "navigation.connectAction": {
+      "source": "Connect MCP, API or CLI",
+      "text": "MCP, API या CLI जोड़ें"
+    },
+    "start.title": {
+      "source": "Your research. Wherever you work.",
+      "text": "आपका शोध, आपके काम की जगह पर।"
+    },
+    "start.body": {
+      "source": "Ask in your browser, research a page you are reading, connect your AI assistant, or build Keryx into your own workflow. Pick a starting point below.",
+      "text": "ब्राउज़र में प्रश्न पूछें, पढ़े जा रहे पृष्ठ पर शोध करें, अपना AI सहायक जोड़ें या Keryx को अपने उपकरणों में शामिल करें। शुरुआत का तरीका चुनें।"
+    },
+    "start.try": {
+      "source": "Try Keryx in the browser",
+      "text": "ब्राउज़र में Keryx आज़माएँ"
+    },
+    "start.browse": {
+      "source": "Browse downloads",
+      "text": "डाउनलोड देखें"
+    },
+    "start.firstTitle": {
+      "source": "Your first cited answer",
+      "text": "स्रोत संदर्भों वाला आपका पहला उत्तर"
+    },
+    "start.choose": {
+      "source": "Choose how you use Keryx",
+      "text": "Keryx इस्तेमाल करने का तरीका चुनें"
+    },
+    "common.steps": {
+      "source": "Get set up",
+      "text": "सेटअप करें"
+    },
+    "common.requirements": {
+      "source": "What you need",
+      "text": "आपको क्या चाहिए"
+    },
+    "common.help": {
+      "source": "Need a hand?",
+      "text": "मदद चाहिए?"
+    },
+    "common.support": {
+      "source": "Contact support",
+      "text": "सहायता से संपर्क करें"
+    },
+    "common.docs": {
+      "source": "Read the full guide",
+      "text": "पूरी मार्गदर्शिका पढ़ें"
+    },
+    "common.copy": {
+      "source": "Copy",
+      "text": "कॉपी करें"
+    },
+    "common.copied": {
+      "source": "Copied",
+      "text": "कॉपी हो गया"
+    },
+    "navigation.entryBody": {
+      "source": "Use Keryx in your browser, on Windows, from an AI assistant or inside your own tools. Find the right setup and see what each option supports.",
+      "text": "Keryx को अपने ब्राउज़र, Windows, AI सहायक या अपने बनाए टूल में इस्तेमाल करें। सही सेटअप चुनें और जानें कि हर विकल्प में क्या उपलब्ध है।"
+    },
+    "common.status": {
+      "source": "Service status",
+      "text": "सेवा की स्थिति"
+    },
+    "common.version": {
+      "source": "Version",
+      "text": "संस्करण"
+    },
+    "common.release": {
+      "source": "Release notes & checksums",
+      "text": "रिलीज़ नोट्स और चेकसम"
+    },
+    "start.accountTitle": {
+      "source": "An account is optional for the trial",
+      "text": "परीक्षण के लिए खाता बनाना वैकल्पिक है"
+    },
+    "start.accountAction": {
+      "source": "Sign in & account setup",
+      "text": "साइन इन और खाता सेटअप"
+    },
+    "start.faqTitle": {
+      "source": "Before you install",
+      "text": "इंस्टॉल करने से पहले"
+    },
+    "start.faq.0.question": {
+      "source": "Which option should I choose?",
+      "text": "मुझे कौन-सा विकल्प चुनना चाहिए?"
+    },
+    "start.faq.2.question": {
+      "source": "Can I use Keryx on my phone, Mac or Linux?",
+      "text": "क्या मैं अपने फ़ोन, Mac या Linux पर Keryx इस्तेमाल कर सकता हूँ?"
+    },
+    "start.faq.2.answer": {
+      "source": "Use the web app in a supported browser. The downloadable Operator alpha currently supports Windows x64. There are no Keryx mobile, macOS or Linux installers offered here; compatible MCP and API clients have their own platform requirements.",
+      "text": "समर्थित ब्राउज़र में वेब ऐप इस्तेमाल करें। डाउनलोड करने योग्य Operator का अल्फ़ा संस्करण अभी Windows x64 पर चलता है। यहाँ मोबाइल, macOS या Linux के लिए Keryx इंस्टॉलर उपलब्ध नहीं हैं; संगत MCP और API क्लाइंट की अपनी प्लेटफ़ॉर्म आवश्यकताएँ होती हैं।"
+    },
+    "surfaces.0.title": {
+      "source": "Web app",
+      "text": "वेब ऐप"
+    },
+    "surfaces.0.tag": {
+      "source": "No install",
+      "text": "इंस्टॉल करने की ज़रूरत नहीं"
+    },
+    "surfaces.0.body": {
+      "source": "Ask a shareable question, inspect source choices and reopen a cited report.",
+      "text": "ऐसा सवाल पूछें जिसे आप साझा कर सकें, स्रोतों का चयन देखें और उद्धरणों वाली रिपोर्ट फिर से खोलें।"
+    },
+    "surfaces.0.action": {
+      "source": "Open the web app",
+      "text": "वेब ऐप खोलें"
+    },
+    "surfaces.1.title": {
+      "source": "Windows desktop",
+      "text": "Windows डेस्कटॉप"
+    },
+    "surfaces.1.tag": {
+      "source": "Operator alpha",
+      "text": "Operator alpha"
+    },
+    "surfaces.1.action": {
+      "source": "Download & install",
+      "text": "डाउनलोड और इंस्टॉल करें"
+    },
+    "surfaces.2.title": {
+      "source": "Browser extension",
+      "text": "ब्राउज़र एक्सटेंशन"
+    },
+    "surfaces.2.tag": {
+      "source": "Manual install",
+      "text": "मैन्युअल इंस्टॉलेशन"
+    },
+    "surfaces.2.body": {
+      "source": "Highlight text, ask from your toolbar and keep the original source links close by.",
+      "text": "टेक्स्ट चुनें, टूलबार से सवाल पूछें और मूल स्रोतों के लिंक पास रखें।"
+    },
+    "surfaces.2.action": {
+      "source": "Install the extension",
+      "text": "एक्सटेंशन इंस्टॉल करें"
+    },
+    "surfaces.3.title": {
+      "source": "MCP for AI assistants",
+      "text": "AI सहायकों के लिए MCP"
+    },
+    "surfaces.3.tag": {
+      "source": "Remote or local",
+      "text": "रिमोट या स्थानीय"
+    },
+    "surfaces.3.body": {
+      "source": "Bring Keryx tools into Codex, Claude Code, Cursor or a compatible MCP client.",
+      "text": "Codex, Claude Code, Cursor या किसी संगत MCP क्लाइंट में Keryx के टूल जोड़ें।"
+    },
+    "surfaces.3.action": {
+      "source": "Choose an MCP connection",
+      "text": "MCP कनेक्शन चुनें"
+    },
+    "surfaces.4.title": {
+      "source": "API for developers",
+      "text": "डेवलपर के लिए API"
+    },
+    "surfaces.4.tag": {
+      "source": "OpenAI compatible",
+      "text": "OpenAI के साथ संगत"
+    },
+    "surfaces.4.body": {
+      "source": "Integrate cited research and streamed source decisions into your own application.",
+      "text": "उद्धरणों वाली रिसर्च और स्रोतों के बारे में लगातार आने वाले निर्णय अपने ऐप में जोड़ें।"
+    },
+    "surfaces.4.action": {
+      "source": "Explore the API",
+      "text": "API देखें"
+    },
+    "surfaces.5.title": {
+      "source": "Command line",
+      "text": "कमांड लाइन"
+    },
+    "surfaces.5.tag": {
+      "source": "From source",
+      "text": "सोर्स कोड से"
+    },
+    "surfaces.5.body": {
+      "source": "Inspect Operator tasks or use the documented research and buyer commands.",
+      "text": "Operator के कार्य जाँचें या दस्तावेज़ों में दिए गए रिसर्च और खरीद कमांड इस्तेमाल करें।"
+    },
+    "surfaces.5.action": {
+      "source": "Set up the CLI",
+      "text": "CLI सेट करें"
+    },
+    "surfaces.6.title": {
+      "source": "Chat bots",
+      "text": "चैट बॉट"
+    },
+    "surfaces.6.tag": {
+      "source": "Telegram · Discord · Slack",
+      "text": "Telegram · Discord · Slack"
+    },
+    "surfaces.6.body": {
+      "source": "Ask Keryx from a chat or a community workspace.",
+      "text": "चैट या किसी समुदाय के कार्यक्षेत्र से Keryx से सवाल पूछें।"
+    },
+    "surfaces.6.action": {
+      "source": "Find your chat app",
+      "text": "अपना चैट ऐप खोजें"
+    },
+    "download.title": {
+      "source": "Bring Keryx to your workflow.",
+      "text": "Keryx को अपने काम के तरीके में जोड़ें।"
+    },
+    "download.desktopTitle": {
+      "source": "Keryx Operator for Windows",
+      "text": "Windows के लिए Keryx Operator"
+    },
+    "download.desktopTag": {
+      "source": "Windows x64 · Alpha",
+      "text": "Windows x64 · अल्फ़ा"
+    },
+    "download.desktopRequirements": {
+      "source": "Windows x64 and Microsoft Edge WebView2 Runtime. Node is bundled; a separate Node installation is not required. Updates are manual in this alpha.",
+      "text": "Windows x64 और Microsoft Edge WebView2 Runtime की ज़रूरत है। Node साथ में शामिल है; उसे अलग से इंस्टॉल करने की ज़रूरत नहीं है। इस अल्फ़ा संस्करण में अपडेट मैन्युअल हैं।"
+    },
+    "download.installer": {
+      "source": "Choose Windows installer",
+      "text": "Windows इंस्टॉलर चुनें"
+    },
+    "download.portable": {
+      "source": "Choose portable ZIP",
+      "text": "पोर्टेबल ZIP चुनें"
+    },
+    "download.manifest": {
+      "source": "Release manifest and checksums",
+      "text": "रिलीज़ मैनिफ़ेस्ट और चेकसम"
+    },
+    "download.webview": {
+      "source": "Get WebView2 Runtime",
+      "text": "WebView2 Runtime प्राप्त करें"
+    },
+    "download.desktopSteps.0": {
+      "source": "Open the release assets and choose the -setup.exe installer or -win32-x64.zip portable build. Review the matching -release.json manifest and -SHA256SUMS.txt checksums.",
+      "text": "रिलीज़ की फ़ाइलें खोलें और -setup.exe इंस्टॉलर या -win32-x64.zip पोर्टेबल संस्करण चुनें। संबंधित -release.json मैनिफ़ेस्ट और -SHA256SUMS.txt चेकसम जाँचें।"
+    },
+    "download.desktopSteps.1": {
+      "source": "Run the installer in your normal Windows user session. Install WebView2 Runtime if it is missing. For the portable build, extract and keep the whole folder together.",
+      "text": "अपने सामान्य Windows उपयोगकर्ता सत्र में इंस्टॉलर चलाएँ। WebView2 Runtime मौजूद न हो तो उसे इंस्टॉल करें। पोर्टेबल संस्करण के लिए फ़ाइलें निकालें और पूरा फ़ोल्डर एक साथ रखें।"
+    },
+    "download.extensionTitle": {
+      "source": "Keryx in your browser",
+      "text": "आपके ब्राउज़र में Keryx"
+    },
+    "download.extensionTag": {
+      "source": "Chromium · Manual install",
+      "text": "Chromium · मैन्युअल इंस्टॉल"
+    },
+    "download.extensionBody": {
+      "source": "Ask about selected text from the toolbar or right-click menu. Inspect the research trace, open cited sources and export recorded references from a completed report.",
+      "text": "टूलबार या राइट-क्लिक मेनू से चुने हुए टेक्स्ट के बारे में सवाल पूछें। रिसर्च की प्रक्रिया देखें, उद्धृत स्रोत खोलें और पूरी हो चुकी रिपोर्ट में दर्ज संदर्भ एक्सपोर्ट करें।"
+    },
+    "download.extensionDownload": {
+      "source": "Download extension ZIP",
+      "text": "एक्सटेंशन ZIP डाउनलोड करें"
+    },
+    "download.extensionRequirements": {
+      "source": "Use Chrome or Edge on desktop, or another compatible Chromium browser. For the ZIP, follow the unpacked-install steps below and enable Developer mode. The public Chrome Web Store listing is also available; check its displayed version before installing.",
+      "text": "कंप्यूटर पर Chrome या Edge, या कोई अन्य संगत Chromium ब्राउज़र इस्तेमाल करें। ZIP के लिए नीचे दिए गए अनपैक्ड इंस्टॉल के चरण अपनाएँ और डेवलपर मोड (Developer mode) चालू करें। Chrome Web Store की सार्वजनिक लिस्टिंग भी उपलब्ध है; इंस्टॉल करने से पहले उसमें दिखाया गया संस्करण जाँचें।"
+    },
+    "download.extensionSteps.0": {
+      "source": "Download and extract the extension ZIP. The extracted directory contains manifest.json directly.",
+      "text": "एक्सटेंशन ZIP डाउनलोड करें और उसकी फ़ाइलें निकालें। निकाले गए फ़ोल्डर के ठीक अंदर manifest.json मौजूद है।"
+    },
+    "download.extensionSteps.1": {
+      "source": "Open chrome://extensions in Chrome or edge://extensions in Edge, then turn on Developer mode.",
+      "text": "Chrome में chrome://extensions या Edge में edge://extensions खोलें, फिर डेवलपर मोड (Developer mode) चालू करें।"
+    },
+    "download.extensionSteps.2": {
+      "source": "Choose Load unpacked and select the extracted directory containing manifest.json. Pin Keryx to your toolbar.",
+      "text": "अनपैक किया गया लोड करें (Load unpacked) चुनें और manifest.json वाला निकाला गया फ़ोल्डर चुनें। Keryx को अपने टूलबार पर पिन करें।"
+    },
+    "download.alternativeTitle": {
+      "source": "Use Keryx without a download",
+      "text": "बिना डाउनलोड किए Keryx इस्तेमाल करें"
+    },
+    "download.alternativeBody": {
+      "source": "The web app works on desktop and mobile browsers. AI assistants can connect through remote MCP; developers can use the hosted API.",
+      "text": "वेब ऐप कंप्यूटर और मोबाइल ब्राउज़र में काम करता है। AI सहायक रिमोट MCP के ज़रिए जुड़ सकते हैं; डेवलपर होस्टेड API इस्तेमाल कर सकते हैं।"
+    },
+    "integrations.title": {
+      "source": "Keryx, connected.",
+      "text": "Keryx को जोड़ें।"
+    },
+    "integrations.mcpTitle": {
+      "source": "Connect an AI assistant with MCP",
+      "text": "MCP से AI सहायक जोड़ें"
+    },
+    "integrations.remoteTitle": {
+      "source": "Remote MCP",
+      "text": "रिमोट MCP"
+    },
+    "integrations.remoteAction": {
+      "source": "Open remote MCP setup",
+      "text": "रिमोट MCP का सेटअप खोलें"
+    },
+    "integrations.remoteEndpoint": {
+      "source": "Hosted MCP endpoint",
+      "text": "होस्टेड MCP एंडपॉइंट"
+    },
+    "integrations.stdioTitle": {
+      "source": "Local stdio MCP",
+      "text": "स्थानीय stdio MCP"
+    },
+    "integrations.stdioConfig": {
+      "source": "Stdio client configuration",
+      "text": "Stdio क्लाइंट का कॉन्फ़िगरेशन"
+    },
+    "integrations.apiTitle": {
+      "source": "Build with the API",
+      "text": "API से बनाएँ"
+    },
+    "integrations.apiBase": {
+      "source": "Chat Completions base URL",
+      "text": "Chat Completions का बेस URL"
+    },
+    "integrations.apiModel": {
+      "source": "Model",
+      "text": "मॉडल"
+    },
+    "integrations.apiConfigTitle": {
+      "source": "Connect an OpenAI-compatible client",
+      "text": "OpenAI-संगत क्लाइंट जोड़ें"
+    },
+    "integrations.apiReadOnly": {
+      "source": "Check available models (Bash, read-only)",
+      "text": "उपलब्ध मॉडल देखें (Bash, केवल पढ़ने के लिए)"
+    },
+    "integrations.apiReference": {
+      "source": "OpenAPI reference",
+      "text": "OpenAPI संदर्भ"
+    },
+    "integrations.apiRecipes": {
+      "source": "SDK examples & streaming guide",
+      "text": "SDK उदाहरण और स्ट्रीमिंग मार्गदर्शिका"
+    },
+    "integrations.cliTitle": {
+      "source": "Work from the command line",
+      "text": "कमांड लाइन से काम करें"
+    },
+    "integrations.cliBody": {
+      "source": "The source checkout includes Operator, research and buyer commands. The CLI is currently distributed with the repository; keryx-mcp is the separate npm MCP package.",
+      "text": "सोर्स कोड में Operator, रिसर्च और खरीदार के कमांड शामिल हैं। CLI फ़िलहाल रिपॉज़िटरी के साथ वितरित होती है; keryx-mcp एक अलग npm MCP पैकेज है।"
+    },
+    "integrations.cliRequirements": {
+      "source": "Git, Node 22.19+ or 24+, and the pinned npm 11.19.0 installer. Clone the project and install dependencies before running commands.",
+      "text": "Git, Node 22.19+ या 24+, और निर्धारित npm 11.19.0 चाहिए। कमांड चलाने से पहले प्रोजेक्ट क्लोन करें और उसकी निर्भरताएँ इंस्टॉल करें।"
+    },
+    "integrations.cliSetup": {
+      "source": "Install from source & inspect help",
+      "text": "सोर्स से इंस्टॉल करें और सहायता देखें"
+    },
+    "integrations.cliGuide": {
+      "source": "CLI commands & configuration",
+      "text": "CLI कमांड और कॉन्फ़िगरेशन"
+    },
+    "integrations.botsTitle": {
+      "source": "Ask from your chat app",
+      "text": "अपने चैट ऐप से पूछें"
+    },
+    "integrations.telegramBody": {
+      "source": "Open the Keryx bot and send a question. In a group, use /ask followed by your question.",
+      "text": "Keryx बॉट खोलें और सवाल भेजें। समूह में /ask के बाद अपना सवाल लिखें।"
+    },
+    "integrations.telegramAction": {
+      "source": "Open Telegram bot",
+      "text": "Telegram बॉट खोलें"
+    },
+    "integrations.discordAction": {
+      "source": "Add to Discord",
+      "text": "Discord में जोड़ें"
+    },
+    "integrations.slackAction": {
+      "source": "Slack administrator setup",
+      "text": "Slack एडमिन के लिए सेटअप"
+    },
+    "integrations.selfHost": {
+      "source": "Self-hosting guide",
+      "text": "खुद होस्ट करने की मार्गदर्शिका"
+    },
+    "integrations.discordBody": {
+      "source": "Add the Keryx application to a server you manage, then use /ask with your question. Review Discord's requested permissions before installing.",
+      "text": "जिस सर्वर को आप प्रबंधित करते हैं, उसमें Keryx ऐप जोड़ें। फिर /ask के बाद अपना सवाल लिखें। इंस्टॉल करने से पहले Discord द्वारा माँगी गई अनुमतियाँ जाँचें।"
+    },
+    "integrations.slackBody": {
+      "source": "A workspace administrator creates the Slack app from Keryx's documented manifest and configures /keryx. A public one-click OAuth installer is not offered here.",
+      "text": "वर्कस्पेस एडमिन Keryx के दस्तावेज़ में दिए गए मैनिफ़ेस्ट से Slack ऐप बनाता है और /keryx कॉन्फ़िगर करता है। यहाँ सार्वजनिक, एक-क्लिक OAuth इंस्टॉलर उपलब्ध नहीं है।"
+    }
+  }
+}

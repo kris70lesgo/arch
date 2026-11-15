@@ -1,0 +1,156 @@
+"use client";
+
+/**
+ * Creator cash-outs panel: creators pulling accrued Gateway earnings on-chain via Gateway withdraw.
+ * The point of this panel — unlike the payments feed, whose Circle settlement IDs are batched UUIDs
+ * that do NOT open at /tx/ — every row here links a REAL EVM mint hash that resolves on ArcScan. It
+ * is the dashboard's hard per-tx on-chain proof that the rewards are real, withdrawable USDC.
+ */
+
+import { ArrowUpRight } from "lucide-react";
+import type { WithdrawalRecord } from "@/lib/types";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { fmtUsdc, shortAddr } from "./phase-style";
+import { DisplayTime } from "./display-time";
+import { recordedArcTransactionUrl,recordedArcLabel } from "@/lib/arc-network-display";
+
+
+import { useUiMessages, useUiRichMessages } from "@/lib/i18n/ui-copy";
+
+
+
+
+
+
+function timeAgo(iso: string) {
+  return <DisplayTime value={iso} relative />;
+}
+
+export function CreatorCashoutsPanel({
+  withdrawals,
+  compact = false,
+}: {
+  withdrawals: WithdrawalRecord[];
+  compact?: boolean;
+}) {
+  const message = useUiMessages();
+  const richMessage = useUiRichMessages();
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between space-y-0 pb-4">
+        <CardTitle className="font-serif text-lg font-normal">
+          {message("cashouts.title")}
+        </CardTitle>
+        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.1em] text-paid">
+          <span className="h-1.5 w-1.5 rounded-full bg-paid" />
+          {message("cashouts.onchain")}
+        </span>
+      </CardHeader>
+      {compact ? (
+        <CardContent className="space-y-2">
+          {withdrawals.length === 0 && (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              {message("cashouts.compactEmpty")}
+            </p>
+          )}
+          {withdrawals.map((w) => (
+            <div
+              key={w.txHash}
+              className="flex items-center gap-3 border-b border-line py-2 last:border-0"
+            >
+              <div className="min-w-0 flex-1">
+                <p
+                  className="truncate text-sm font-medium text-ink"
+                  title={w.sourceName ?? w.label}
+                >
+                  {w.sourceName ?? w.label}
+                </p>
+                <p className="font-mono text-[10px] text-ink-3">
+                  {richMessage("cashouts.recordedObservation", { time: timeAgo(w.createdAt), network: recordedArcLabel(w.network) })}
+                </p>
+              </div>
+              <a
+                href={recordedArcTransactionUrl(w.network,w.txHash)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 font-mono text-sm font-semibold text-paid hover:underline"
+                title={message("cashouts.viewTransaction", { hash: w.txHash })}
+              >
+                ${fmtUsdc(w.amountUsdc)}{" "}
+                <ArrowUpRight className="inline h-3 w-3" />
+              </a>
+            </div>
+          ))}
+        </CardContent>
+      ) : (
+        <CardContent className="px-0">
+          <p className="px-6 pb-3 font-mono text-[10px] leading-relaxed text-muted-foreground">
+            {richMessage("cashouts.evidenceExplanation", { gap: " ", transactionPath: <span className="text-ink-2">/tx/</span> })}
+          </p>
+          {withdrawals.length === 0 ? (
+            <p className="px-6 py-6 text-center font-mono text-[11px] text-muted-foreground">
+              {message("cashouts.empty")}
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-6 font-mono text-[10px] uppercase tracking-[0.1em]">
+                    {message("cashouts.when")}
+                  </TableHead>
+                  <TableHead className="font-mono text-[10px] uppercase tracking-[0.1em]">
+                    {message("cashouts.creator")}
+                  </TableHead>
+                  <TableHead className="text-right font-mono text-[10px] uppercase tracking-[0.1em]">
+                    {message("cashouts.amount")}
+                  </TableHead>
+                  <TableHead className="pr-6 text-right font-mono text-[10px] uppercase tracking-[0.1em]">
+                    {message("cashouts.onchainColumn")}
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {withdrawals.map((w) => (
+                  <TableRow key={w.txHash}>
+                    <TableCell className="pl-6 font-mono text-[11px] text-muted-foreground">
+                      {timeAgo(w.createdAt)}
+                    </TableCell>
+                    <TableCell
+                      className="max-w-[180px] truncate text-sm"
+                      title={w.sourceName ?? w.label}
+                    >
+                      {w.sourceName ?? w.label}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-[12px] text-paid">
+                      ${fmtUsdc(w.amountUsdc)}
+                    </TableCell>
+                    <TableCell className="pr-6 text-right">
+                      <a
+                        href={recordedArcTransactionUrl(w.network,w.txHash)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-paid hover:underline"
+                        title={message("cashouts.viewMint", { amount: fmtUsdc(w.amountUsdc), recipient: w.recipient })}
+                      >
+                        {shortAddr(w.txHash)}
+                        <ArrowUpRight className="h-3 w-3" />
+                      </a>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}

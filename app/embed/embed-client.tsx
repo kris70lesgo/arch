@@ -1,0 +1,243 @@
+"use client";
+import { useResearchVisibility } from "@/lib/hooks/use-research-visibility";
+import { ResearchVisibilityPicker } from "@/components/keryx/research-visibility-picker";
+
+/**
+ * Compact ask UI meant to live inside a ~380px iframe on a creator's own site
+ * (injected by public/widget.js). Visitors ask with no wallet and no sign-up —
+ * the run settles from Keryx's treasury on the anonymous path, IP rate-limited
+ * server-side. If the herald cites the host creator, they are paid from their
+ * own audience's questions — that is the whole point of the widget.
+ *
+ * `?source=<id>` names the hosting creator so the surface can say whose desk
+ * the visitor is asking from. It does NOT bias the agent: sources win citations
+ * only on merit, same as every other dispatch.
+ */
+
+
+
+
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { ExternalLink } from "lucide-react";
+import { KeryxGlyph } from "@/components/keryx/keryx-mark";
+import { TraceRow } from "@/components/keryx/trace-row";
+import { AnswerMarkdown } from "@/components/keryx/answer-markdown";
+import { fmtUsdc } from "@/components/keryx/phase-style";
+import { useAskStream } from "@/lib/hooks/use-ask-stream";
+import { useResearchAvailability } from "@/lib/hooks/use-research-availability";
+import { RESEARCH_AVAILABILITY_UNKNOWN, RESEARCH_PAUSED_MESSAGE } from "@/lib/research/availability-contract";
+import { SelectionFailureDownload } from "@/components/keryx/selection-failure-download";
+import { useBrowserOrigin } from "@/lib/hooks/use-browser-origin";
+import { useUiMessages, useUiRichMessages } from "@/lib/i18n/ui-copy";
+
+
+
+
+
+
+const CANONICAL = "https://keryx.cc";
+
+export function EmbedClient() {
+  const message = useUiMessages();
+  const richMessage = useUiRichMessages();
+  const params = useSearchParams();
+  const sourceId = params.get("source");
+
+  // Host origin for outbound links — refined on mount so localhost previews work.
+  const origin = useBrowserOrigin(CANONICAL);
+
+  // Resolve the hosting source's name from the public listing (best-effort).
+  const [sourceName, setSourceName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!sourceId) return;
+    fetch("/api/sources")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: { sources?: Array<{ id?: string; name?: string }> }) => {
+        const hit = (data.sources ?? []).find((s) => s.id === sourceId);
+        if (hit?.name) setSourceName(hit.name);
+      })
+      .catch(() => {}); // cosmetic only — the ask works without it
+  }, [sourceId]);
+
+  const { state, ask } = useAskStream();
+  const visibility = useResearchVisibility();
+  const publicReady = visibility.ready && visibility.visibility === "public";
+  const { availability, checking, refresh } = useResearchAvailability();
+  const [question, setQuestion] = useState("");
+  const [dismissedPause, setDismissedPause] = useState(false);
+  const researchPaused = availability?.state === "paused" || (state.errorKind === "research-paused" && !dismissedPause);
+  const checkAvailability = async () => {
+    const reviewingRejection = state.errorKind === "research-paused" && state.status !== "streaming";
+    const observed = await refresh();
+    if (reviewingRejection && observed?.state === "not-paused") setDismissedPause(true);
+  };
+  const streaming = state.status === "streaming";
+  const started = state.status !== "idle";
+
+  // Keep the newest trace line in view as the dispatch streams.
+  const traceRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    traceRef.current?.scrollTo({ top: traceRef.current.scrollHeight });
+  }, [state.steps.length]);
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = question.trim();
+    // budget 0 → the server applies its default, clamped to the anonymous cap
+    const publication = visibility.getSelection();
+    if (q && !streaming && !checking && !researchPaused && publication?.visibility === "public") {
+      setDismissedPause(false); void ask(q, 0, undefined, undefined, undefined, undefined, undefined, undefined, publication);
+    }
+  };
+
+  return (
+    <div className="flex h-dvh flex-col bg-paper-2">
+      {/* Masthead */}
+      <header className="flex items-center justify-between border-b border-ink bg-paper px-3.5 py-2.5">
+        <a
+          href={`${origin}/`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2"
+        >
+          <KeryxGlyph size={22} reeded={false} />
+          <span className="font-display text-[15px] font-semibold tracking-tight text-ink">
+            Keryx
+          </span>
+          <span className="hidden font-mono text-[9px] uppercase tracking-[0.16em] text-ink-3 sm:inline">
+            {message("embedResearch.tagline")}
+          </span>
+        </a>
+        <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-3">
+          <span className="h-[5px] w-[5px] rounded-full bg-paid" />
+          {message("embedResearch.trial")}
+        </span>
+      </header>
+
+      {/* Body */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3.5">
+        {sourceName && (
+          <p className="font-serif text-[12.5px] leading-snug text-ink-2">
+            {richMessage("embedResearch.sourceDesk", { source: <span className="font-semibold text-ink">{sourceName}</span> })}
+          </p>
+        )}
+
+        <div role="status" className="text-sm text-ink-2">
+          <p>{checking ? message("embedResearch.checking") : researchPaused ? RESEARCH_PAUSED_MESSAGE : availability?.message ?? RESEARCH_AVAILABILITY_UNKNOWN}</p>
+          <a href={`${origin}/me/asks`} target="_blank" rel="noopener noreferrer" className="mr-3 underline">{message("embedResearch.savedReports")}</a>
+          <button type="button" onClick={() => void checkAvailability()} disabled={checking} className="min-h-11 underline">{message("embedResearch.checkAvailability")}</button>
+        </div>
+        <ResearchVisibilityPicker preference={visibility} disabled={streaming} allowedVisibilities={["public"]} />
+        <p className="text-xs text-ink-2">{message("researchVisibility.embedNotice")} <a href={`${origin}/research`} target="_blank" rel="noopener noreferrer" className="underline">{message("researchVisibility.openResearch")}</a></p>
+        <form onSubmit={submit} className="flex gap-2">
+          <input
+            value={publicReady ? question : ""}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder={message("embedResearch.placeholder")}
+            disabled={streaming || !publicReady}
+            className="min-w-0 flex-1 border border-ink bg-paper px-3 py-2 font-serif text-[14px] text-ink placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-seal disabled:opacity-60"
+          />
+          <button
+            type="submit"
+            disabled={streaming || checking || researchPaused || !publicReady || !question.trim()}
+            className="shrink-0 border border-ink bg-ink px-3.5 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-paper transition-opacity disabled:opacity-50"
+          >
+            {streaming ? "…" : message("embedResearch.submit")}
+          </button>
+        </form>
+
+        {state.status === "error" &&
+          (state.errorKind === "rate-limit" ? (
+            <div className="border border-ink bg-paper px-3 py-2.5">
+              <div className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-seal">
+                {message("embedResearch.limitReached")}
+              </div>
+              <p className="mt-1 font-serif text-[12.5px] leading-snug text-ink-2">
+                {state.retryAfter && state.retryAfter > 0
+                  ? richMessage("embedResearch.retryAfter", { seconds: state.retryAfter, continueLink: <a
+                  href={`${origin}/`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline decoration-seal underline-offset-2"
+                >
+                  {message("embedResearch.continueWithWallet")}
+                </a> })
+                  : richMessage("embedResearch.retryShortly", { continueLink: <a href={`${origin}/`} target="_blank" rel="noopener noreferrer" className="underline decoration-seal underline-offset-2">{message("embedResearch.continueWithWallet")}</a> })}
+              </p>
+            </div>
+          ) : (
+            <div className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
+              {state.error ?? message("embedResearch.failed")}
+              <SelectionFailureDownload diagnostic={state.selectionDiagnostic} />
+            </div>
+          ))}
+
+        {/* Live reasoning trace */}
+        {started && state.steps.length > 0 && (
+          <div
+            ref={traceRef}
+            className="max-h-56 overflow-y-auto border border-line bg-paper px-3 py-1"
+          >
+            {state.steps.map((step, i) => (
+              <TraceRow key={i} step={step} />
+            ))}
+          </div>
+        )}
+
+        {/* The answer + who got paid */}
+        {state.run && (
+          <div className="border-2 border-ink bg-paper p-1">
+            <div className="border border-ink p-3">
+              <AnswerMarkdown
+                text={state.run.answer}
+                citations={state.run.citations}
+                className="font-serif text-[13.5px] leading-[1.55] text-ink"
+              />
+              {state.run.citations.length > 0 && (
+                <div className="mt-3 border-t border-line pt-2">
+                  <div className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-ink-3">
+                    {message("embedResearch.recordedRewards", { amount: fmtUsdc(state.run.totalToCreators), mode: state.run.paymentMode ?? "legacy" })}
+                  </div>
+                  <ul className="mt-1 space-y-0.5">
+                    {state.run.citations.map((c) => (
+                      <li
+                        key={c.sourceId}
+                        className="flex items-baseline justify-between gap-2 font-serif text-[12px] text-ink-2"
+                      >
+                        <span className="truncate">{c.sourceName}</span>
+                        <span className="shrink-0 font-mono text-[10.5px] text-paid">
+                          ${fmtUsdc(c.reward)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <a
+                href={`${origin}/dispatch/${state.run.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2.5 inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.12em] text-seal hover:underline"
+              >
+                {message("embedResearch.fullDispatch")} <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Colophon */}
+      <footer className="border-t border-line bg-paper px-3.5 py-1.5">
+        <a
+          href={`${origin}/register`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-3 hover:text-ink"
+        >
+          {message("embedResearch.footer")}
+        </a>
+      </footer>
+    </div>
+  );
+}

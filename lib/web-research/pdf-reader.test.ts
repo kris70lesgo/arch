@@ -1,0 +1,118 @@
+import { describe, expect, it } from "vitest";
+import { extractPdfText } from "./pdf-reader";
+import { pdfFixture } from "../../test-support/pdf-fixture";
+import { unicodePdfFixture } from "../../test-support/unicode-pdf-fixture";
+import { isWellFormedUtf16 } from "../llm/well-formed-utf16";
+
+// A real uncompressed PDF with correct object offsets; no binary fixture needed.
+function pdf(pages: string[], actions = false): Uint8Array {
+  const objects = [
+    `<< /Type /Catalog /Pages 2 0 R ${actions ? '/OpenAction << /S /JavaScript /JS (fetch("https://invalid.example/execute")) >>' : ""} >>`,
+    `<< /Type /Pages /Count ${pages.length} /Kids [${pages.map((_, i) => `${4 + i * 2} 0 R`).join(" ")}] >>`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  for (let i = 0; i < pages.length; i++) {
+    const stream = `BT /F1 12 Tf 72 720 Td (${pages[i].replace(/[\\()]/g, "\\$&")}) Tj ET`;
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${5 + i * 2} 0 R >>`);
+    objects.push(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
+  }
+  let body = "%PDF-1.7\n";
+  const offsets = [0];
+  objects.forEach((object, i) => {
+    offsets.push(Buffer.byteLength(body));
+    body += `${i + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(body);
+  body += `xref\n0 ${offsets.length}\n0000000000 65535 f \n`;
+  body += offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
+  body += `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new Uint8Array(Buffer.from(body));
+}
+
+const options = { maxPages: 4, maxChars: 2000, timeoutMs: 10_000 };
+
+describe("contained PDF text extraction", () => {
+  it("extracts real PDF text without executing document JavaScript", async () => {
+    const value = await extractPdfText(pdf(["Actual source text"], true), options);
+    expect(value).toEqual({ text: "Actual source text", pagesRead: 1, totalPages: 1, truncated: false, pagesWithoutText: [], textLimitReached: false });
+  });
+
+  it("bounds actual pages and text and reports truncation", async () => {
+    const pages = await extractPdfText(pdf(["First page", "Second page"]), { ...options, maxPages: 1 });
+    expect(pages).toEqual({ text: "First page", pagesRead: 1, totalPages: 2, truncated: true, pagesWithoutText: [], textLimitReached: false });
+    const chars = await extractPdfText(pdf(["Long source text"]), { ...options, maxChars: 4 });
+    expect(chars.text).toBe("Long");
+    expect(chars.truncated).toBe(true);
+    expect(chars.textLimitReached).toBe(true);
+  });
+
+  it("clips actual non-BMP PDF text inward without manufacturing a lone surrogate", async () => {
+    const bytes = unicodePdfFixture("AAA🧾ZZ");
+    const whole = await extractPdfText(bytes, options);
+    expect(whole.text).toBe("AAA🧾ZZ");
+    const clipped = await extractPdfText(bytes, { ...options, maxChars: 4 });
+    expect(clipped).toMatchObject({ text: "AAA", pagesRead: 1, totalPages: 1, truncated: true, textLimitReached: true });
+    expect(isWellFormedUtf16(clipped.text)).toBe(true);
+    const exact = await extractPdfText(bytes, { ...options, maxChars: 5 });
+    expect(exact.text).toBe("AAA🧾");
+    expect(exact.textLimitReached).toBe(true);
+  });
+
+  it("keeps readable text while marking the actual textless image page as incomplete coverage", async () => {
+    const value = await extractPdfText(pdfFixture(["Readable first page.", null, "Readable last page."]), options);
+    expect(value).toEqual({ text: "Readable first page. Readable last page.", pagesRead: 3, totalPages: 3,
+      truncated: false, pagesWithoutText: [2], textLimitReached: false });
+  });
+
+  it("does not call a blank page a scan or invent text from an image-only document", async () => {
+    const value = await extractPdfText(pdfFixture(["", "Observed text."]), options);
+    expect(value).toMatchObject({ text: "Observed text.", pagesRead: 2, pagesWithoutText: [1], truncated: false });
+    await expect(extractPdfText(pdfFixture([null, null]), options)).rejects.toThrow("PDF text extraction failed");
+    expect((await extractPdfText(pdfFixture(["Recovered after image-only refusal."]), options)).pagesWithoutText).toEqual([]);
+  });
+
+  it("records only visited textless pages and separates a character cutoff from a complete page", async () => {
+    const value = await extractPdfText(pdfFixture([null, "Long observed text.", null]), { ...options, maxChars: 4 });
+    expect(value).toMatchObject({ text: "Long", pagesRead: 2, totalPages: 3, pagesWithoutText: [1], textLimitReached: true, truncated: true });
+    const pageLimit = await extractPdfText(pdfFixture(["Observed text.", null]), { ...options, maxPages: 1 });
+    expect(pageLimit).toMatchObject({ pagesRead: 1, totalPages: 2, pagesWithoutText: [], textLimitReached: false, truncated: true });
+  });
+
+  it("rejects malformed, empty-text and oversized input with sanitized errors", async () => {
+    for (const bytes of [new Uint8Array(Buffer.from("secret malformed content")), pdf([""]), new Uint8Array(2 * 1024 * 1024 + 1)]) {
+      await expect(extractPdfText(bytes, options)).rejects.toThrow("PDF text extraction failed");
+    }
+  });
+
+  it("refuses encrypted input without a password or fallback text", async () => {
+    const original = Buffer.from(pdf(["Restricted source"])).toString("utf8");
+    const encrypted = original
+      .replace("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        `<< /Filter /Standard /V 1 /R 2 /Length 40 /O <${"00".repeat(32)}> /U <${"00".repeat(32)}> /P -4 >>`)
+      .replace("/Root 1 0 R >>", "/Root 1 0 R /Encrypt 3 0 R /ID [<0000000000000000><0000000000000000>] >>");
+    await expect(extractPdfText(new Uint8Array(Buffer.from(encrypted)), options)).rejects.toThrow("PDF text extraction failed");
+  });
+
+  it("kills a real child on deadline then permits another extraction", async () => {
+    await expect(extractPdfText(pdf(["Deadline"]), { ...options, timeoutMs: 1 })).rejects.toMatchObject({ name: "Error" });
+    expect((await extractPdfText(pdf(["Recovered"]), options)).text).toBe("Recovered");
+  });
+
+  it("kills a real child on caller cancellation and handles already cancelled callers", async () => {
+    const controller = new AbortController();
+    const pending = extractPdfText(pdf(["Cancelled"]), { ...options, signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await expect(extractPdfText(pdf(["Cancelled"]), { ...options, signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect((await extractPdfText(pdf(["Recovered"]), options)).text).toBe("Recovered");
+  });
+
+  it("rejects overlapping parser work instead of creating another child", async () => {
+    const controller = new AbortController();
+    const active = extractPdfText(pdf(["Active"]), { ...options, signal: controller.signal });
+    await expect(extractPdfText(pdf(["Overloaded"]), options)).rejects.toThrow("PDF text extraction failed");
+    controller.abort();
+    await expect(active).rejects.toMatchObject({ name: "AbortError" });
+    expect((await extractPdfText(pdf(["Recovered"]), options)).text).toBe("Recovered");
+  });
+});

@@ -1,0 +1,240 @@
+"use client";
+
+/**
+ * Instant filter over an archive list.
+ *
+ * The cards stay server-rendered — they are the corpus a crawler comes for, and re-rendering them
+ * on the client would hide them from anyone (or anything) that doesn't run JS. So this component
+ * takes the finished cards as `children` and, alongside them, one match string per card:
+ * filtering is then a pure render, with no DOM reads and nothing to keep in sync.
+ *
+ * `others` is what keeps the filter honest once the archive is paginated. Only one page of cards is
+ * rendered, but a reader typing "settlement" means the whole archive, not the sixty answers that
+ * happen to be on screen. So every entry beyond this page comes down as a question and an id — a
+ * fraction of a card's weight — and matches surface as compact links below the cards, with
+ * navigation through every matching result. Search words can appear in any order.
+ *
+ * With JavaScript off the box does nothing and the full page stays visible — the archive reads
+ * exactly as it did before this existed.
+ */
+import { Children, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import Link from "next/link";
+import { ArrowUpRight, SearchLg as Search, X } from "@untitledui/icons";
+import { Button } from "@/components/base/buttons/button";
+import { Input } from "@/components/base/input/input";
+import { useUiCopy, useUiMessages } from "@/lib/i18n/ui-copy";
+import { literatureSearchCopy } from "@/locales/en/literature-search";
+import { archiveSearchWords, matchesArchiveSearch, normalizeArchiveSearch } from "@/lib/archive-search";
+
+/** One entry that exists in the archive but isn't rendered as a card on this page. */
+export interface ArchiveSearchEntry {
+  id: string;
+  question: string;
+  /** The sources it cited, joined — the other half of what a card is searchable by. */
+  sources: string;
+}
+
+const OTHERS_SHOWN = 25;
+const SEARCH_LOCATION_EVENT = "keryx:archive-search-location";
+
+function subscribeToSearchLocation(notify: () => void) {
+  window.addEventListener("popstate", notify);
+  window.addEventListener(SEARCH_LOCATION_EVENT, notify);
+  return () => {
+    window.removeEventListener("popstate", notify);
+    window.removeEventListener(SEARCH_LOCATION_EVENT, notify);
+  };
+}
+
+const searchLocationSnapshot = () => window.location.search;
+const serverSearchLocationSnapshot = () => "";
+
+function readSearchLocation(search: string) {
+  const params = new URLSearchParams(search);
+  const rawPage = params.get("searchPage") ?? "";
+  return { query: params.get("q") ?? "", page: /^[1-9]\d{0,5}$/.test(rawPage) ? Number(rawPage) - 1 : 0 };
+}
+
+function writeSearchLocation(query: string, page: number, push = false) {
+  const url = new URL(window.location.href);
+  const searching = archiveSearchWords(query).length > 0;
+  if (searching) url.searchParams.set("q", query);
+  else url.searchParams.delete("q");
+  if (searching && page > 0) url.searchParams.set("searchPage", String(page + 1));
+  else url.searchParams.delete("searchPage");
+  if (url.href === window.location.href) return;
+  try {
+    // Next copies its router metadata into external writes. Passing its own marker
+    // back would bypass that integration; preserve other state without the markers.
+    const state = { ...window.history.state };
+    delete state.__NA;
+    delete state._N;
+    window.history[push ? "pushState" : "replaceState"](state, "", url.href);
+  } catch {
+    // Browser restrictions must never make the local filter unusable.
+  }
+}
+
+export function ArchiveSearch({
+  terms,
+  children,
+  filters,
+  others = [],
+  placeholder,
+}: {
+  /** Searchable text per card, in the same order as `children`. */
+  terms: string[];
+  children: ReactNode;
+  /** Server-rendered navigation shown between the search input and result cards. */
+  filters?: ReactNode;
+  /** The rest of the archive, searchable but not rendered as cards. */
+  others?: ArchiveSearchEntry[];
+  placeholder?: string;
+}) {
+  const copy = useUiMessages();
+  const searchCopy = useUiCopy("literature-search", literatureSearchCopy);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const pageJumpPendingRef = useRef(false);
+  const resultsId = useId();
+  const locationSearch = useSyncExternalStore(subscribeToSearchLocation, searchLocationSnapshot, serverSearchLocationSnapshot);
+  // Keep local input usable if history writes are refused, and retain typed whitespace.
+  // A new URL (including a reused Next route) invalidates this local projection.
+  const [draft, setDraft] = useState<{ search: string; query: string; page: number } | null>(null);
+  const { query, page: resultPage } = draft?.search === locationSearch ? draft : readSearchLocation(locationSearch);
+  const saveSearch = (nextQuery: string, nextPage: number, push = false) => {
+    writeSearchLocation(nextQuery, nextPage, push);
+    setDraft({ search: window.location.search, query: nextQuery, page: nextPage });
+    window.dispatchEvent(new Event(SEARCH_LOCATION_EVENT));
+  };
+  const editQuery = (next: string) => {
+    pageJumpPendingRef.current = false;
+    // Save before navigation/reload can start; replacing adds no typing history.
+    saveSearch(next, 0);
+  };
+  const words = archiveSearchWords(query);
+  const searching = words.length > 0;
+  const cards = Children.toArray(children);
+  const cardTerms = useMemo(() => terms.map(normalizeArchiveSearch), [terms]);
+  const matches = cards.map((_, i) => matchesArchiveSearch(cardTerms[i] ?? "", words));
+  const visible = matches.filter(Boolean).length;
+  // Match text is derived here rather than shipped: the server already sends each question, and
+  // sending a lowercase copy of it alongside would double the weight of the whole off-page index.
+  const otherTerms = useMemo(
+    () => others.map((o) => normalizeArchiveSearch(`${o.question} ${o.sources}`)),
+    [others],
+  );
+  // Only searched once the reader types — with an empty box this page shows its own cards, in order.
+  const otherMatches = searching ? others.filter((_, i) => matchesArchiveSearch(otherTerms[i]!, words)) : [];
+  const total = searching ? visible + otherMatches.length : cards.length;
+  const lastPage = Math.max(0, Math.ceil(otherMatches.length / OTHERS_SHOWN) - 1);
+  const page = Math.min(resultPage, lastPage);
+  const shownOthers = otherMatches.slice(page * OTHERS_SHOWN, (page + 1) * OTHERS_SHOWN);
+  const goToPage = (next: number) => {
+    if (next === page) return;
+    pageJumpPendingRef.current = true;
+    saveSearch(query, next, true);
+  };
+  useLayoutEffect(() => {
+    if (!pageJumpPendingRef.current) return;
+    pageJumpPendingRef.current = false;
+    headingRef.current?.focus({ preventScroll: true });
+    headingRef.current?.scrollIntoView({ block: "start", behavior: "instant" });
+  }, [page]);
+  const clearSearch = () => {
+    pageJumpPendingRef.current = false;
+    saveSearch("", 0);
+    inputRef.current?.focus();
+  };
+
+  return (
+    <div className="mt-10 min-w-0 [overflow-wrap:anywhere]">
+      <p id={`${resultsId}-hint`} className="sr-only">{copy("archiveFilter.searchHint")}</p>
+      <div className="flex min-w-0 items-center gap-2">
+        <Input
+          type="search"
+          ref={inputRef}
+          value={query}
+          onChange={editQuery}
+          onKeyDown={event => { if (!event.nativeEvent.isComposing && event.key === "Escape" && searching) { event.preventDefault(); clearSearch(); } }}
+          placeholder={placeholder ?? copy("archiveFilter.placeholder")}
+          aria-label={copy("archiveFilter.label")}
+          aria-describedby={`${resultsId}-hint`}
+          icon={Search}
+          className="min-w-0 flex-1"
+          wrapperClassName="rounded-xl border border-line bg-panel shadow-xs transition-colors focus-within:border-seal/70 focus-within:ring-2 focus-within:ring-seal/15"
+          inputClassName="min-h-11 font-sans text-sm text-ink placeholder:text-ink-3 [&::-webkit-search-cancel-button]:appearance-none"
+        />
+        {searching && <Button type="button" onPress={clearSearch} aria-label={searchCopy.clear} color="tertiary" size="md" iconLeading={X}
+          className="shrink-0 rounded-lg p-2 text-ink-3" />}
+      </div>
+      <p role="status" aria-atomic="true" className="mt-2 min-h-4 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-3">
+        {searching && copy(total === 1 ? "archiveFilter.found.one" : "archiveFilter.found.other", { count: total })}
+      </p>
+
+      {searching && <dl className="mt-4 grid min-w-0 grid-cols-2 gap-4 border-y border-line py-3">
+        <div className="min-w-0"><dt className="font-mono text-[11px] leading-relaxed text-ink-3">{copy("archiveFilter.onThisPage")}</dt><dd className="mt-1 font-mono text-xl tabular-nums text-ink">{visible}</dd></div>
+        <div className="min-w-0"><dt className="font-mono text-[11px] leading-relaxed text-ink-3">{copy("archiveFilter.elsewhereLabel")}</dt><dd className="mt-1 font-mono text-xl tabular-nums text-ink">{otherMatches.length}</dd></div>
+      </dl>}
+
+      {filters}
+
+      <div className="mt-4 flex flex-col gap-4">
+        {cards.map((card, i) => (
+          <div key={i} hidden={!matches[i]}>
+            {card}
+          </div>
+        ))}
+      </div>
+
+      {otherMatches.length > 0 && (
+        <section aria-labelledby={`${resultsId}-heading`} className="mt-8 min-w-0">
+          <h2 ref={headingRef} id={`${resultsId}-heading`} tabIndex={-1} aria-describedby={`${resultsId}-range`} className="scroll-mt-[83px] border-b border-line pb-3 font-display text-xl leading-snug text-ink focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-seal">
+            {copy(otherMatches.length === 1 ? "archiveFilter.elsewhere.one" : "archiveFilter.elsewhere.other", { count: otherMatches.length })}
+          </h2>
+          {/* Keep navigation below the shared 66px shell and its 1px bottom rule. */}
+          <div className="sticky top-[67px] z-10 my-3 border border-line bg-paper px-3 py-3 shadow-[0_8px_16px_-16px_rgba(27,23,18,0.5)]">
+          <p id={`${resultsId}-range`} className="font-mono text-[11px] leading-relaxed tabular-nums text-ink-3">{copy("archiveFilter.resultRange", { start: page * OTHERS_SHOWN + 1, end: Math.min((page + 1) * OTHERS_SHOWN, otherMatches.length), total: otherMatches.length })}</p>
+          {lastPage > 0 && (
+            <nav aria-label={copy(otherMatches.length === 1 ? "archiveFilter.elsewhere.one" : "archiveFilter.elsewhere.other", { count: otherMatches.length })}
+              className="mt-3 flex flex-wrap gap-3 font-mono text-[11px]">
+              <button type="button" aria-controls={resultsId} disabled={page === 0}
+                onClick={() => goToPage(page - 1)}
+                className="min-h-[44px] min-w-0 max-w-full border border-line px-4 py-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-seal disabled:opacity-40">
+                {copy("archivePages.newer")}
+              </button>
+              <button type="button" aria-controls={resultsId} disabled={page === lastPage}
+                onClick={() => goToPage(page + 1)}
+                className="min-h-[44px] min-w-0 max-w-full border border-line px-4 py-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-seal disabled:opacity-40">
+                {copy("archivePages.older")}
+              </button>
+            </nav>
+          )}
+          </div>
+          <ul key={page} id={resultsId} className="space-y-2.5 motion-safe:animate-[kxUp_220ms_cubic-bezier(.16,1,.3,1)_both]">
+            {shownOthers.map((o) => (
+              <li key={o.id}>
+                <Link
+                  href={`/dispatch/${o.id}`}
+                  className="group flex min-h-[44px] min-w-0 scroll-mt-[calc(67px_+_9rem)] items-start justify-between gap-4 border-b border-line py-3 font-serif text-base leading-relaxed text-ink-2 transition-colors hover:text-seal focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-seal motion-reduce:transition-none"
+                >
+                  <span lang="und" className="min-w-0 break-words">{o.question}</span>
+                  <ArrowUpRight aria-hidden="true" className="mt-1 size-4 shrink-0 text-brass transition-transform motion-safe:group-hover:-translate-y-0.5 motion-safe:group-hover:translate-x-0.5" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {searching && total === 0 && (
+        <div className="mt-6 border border-dashed border-line bg-paper p-5 text-center sm:p-6">
+          <Search aria-hidden="true" className="mx-auto mb-3 size-5 text-brass" />
+          <p className="font-serif text-[15px] leading-relaxed text-ink-2">{copy("archiveFilter.empty", { query: query.trim() })}</p>
+          <p className="mt-3 font-serif text-sm leading-relaxed text-ink-3">{copy("archiveFilter.emptyHint")}</p>
+          <button type="button" onClick={clearSearch} className="mt-4 inline-flex min-h-[44px] max-w-full items-center justify-center border border-ink bg-ink px-4 py-2 font-mono text-xs text-paper transition-colors duration-180 hover:bg-paper hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-seal motion-reduce:transition-none">{copy("archiveFilter.showPage")}</button>
+        </div>
+      )}
+    </div>
+  );
+}

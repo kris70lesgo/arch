@@ -1,0 +1,960 @@
+name: CI
+
+# Secret-free acceptance for the merged PR tree and exact main source.
+# See docs/development-workflow.md for scope, batching and release gates.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Main validation cancels per lane; the aggregate cannot hold a shared workflow lock.
+jobs:
+  scope:
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-scope-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.changes.outputs.scope }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+      - name: Check scope and aggregate failure handling
+        run: node --test scripts/ci-scope.test.mjs scripts/ci-browser-apt.test.mjs scripts/ci-browser-dns.test.mjs
+      - name: Classify PR merged-tree changes (main and unknown mean full)
+        id: changes
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: node scripts/ci-scope.mjs
+
+  checks:
+    needs: scope
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-checks-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+          cache: npm
+
+      - name: Pin project npm installer
+        run: npm install --global npm@11.19.0 --no-audit --no-fund
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: CI scope and merge gate regression checks
+        run: node --test scripts/ci-scope.test.mjs
+
+      - name: Public deployment observer (synthetic anonymous GETs only)
+        run: node --test scripts/public-deployment-probe.test.mjs
+
+      - name: Payment glossary consistency and review bindings (offline)
+        run: |
+          node --test scripts/check-payment-glossaries.test.mjs
+          node scripts/check-payment-glossaries.mjs
+
+      - name: UI copy regression guard (source parsing only)
+        run: |
+          node --test scripts/check-ui-copy.test.mjs
+          node scripts/check-ui-copy.mjs
+
+      - name: Adversarial report lifecycle and source binding (offline)
+        run: node --test scripts/source-money-adversarial-report.test.mjs
+
+      - name: Circle/Arc integration ledger (offline paths and proof links)
+        run: |
+          node --test scripts/circle-arc-integration-ledger.test.mjs
+          node scripts/circle-arc-integration-ledger.mjs
+
+      - name: Typecheck (tsc)
+        if: needs.scope.outputs.scope == 'full'
+        run: npm run typecheck
+
+      - name: Private profiles PostgreSQL ownership, collision and privacy acceptance
+        if: needs.scope.outputs.scope == 'full'
+        run: node --import tsx scripts/test-private-profiles-postgres.mts
+
+      - name: Personal history PostgreSQL ownership, filters, keyset and refusal
+        if: needs.scope.outputs.scope == 'full'
+        run: node --import tsx scripts/test-personal-history-postgres.mts
+      - name: Run privacy PostgreSQL visibility, erasure and financial retention (synthetic)
+        if: needs.scope.outputs.scope == 'full'
+        run: node --import tsx scripts/test-run-privacy-postgres.mts --acceptance
+      - name: Public researcher profile PostgreSQL publication races (isolated PG17)
+        if: needs.scope.outputs.scope == 'full'
+        timeout-minutes: 3
+        run: |
+          mkdir -p .artifacts/profile264-postgres "$RUNNER_TEMP/profile264-pg-home"
+          # Reuse the official PG17 image already admitted by the preceding fixtures.
+          # The profile fixture requires --pull=never and never accepts a DB endpoint.
+          docker image inspect postgres:17-alpine > .artifacts/profile264-postgres/image.json
+          set +e
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP/profile264-pg-home" node scripts/test-public-profiles-postgres.mts --acceptance > .artifacts/profile264-postgres/stdout.txt 2> .artifacts/profile264-postgres/stderr.txt
+          status=$?
+          printf '%s\n' "$status" > .artifacts/profile264-postgres/exit-code.txt
+          cat .artifacts/profile264-postgres/stdout.txt .artifacts/profile264-postgres/stderr.txt
+          exit "$status"
+      - name: Retain isolated public profile PostgreSQL result
+        if: always() && needs.scope.outputs.scope == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-profile-postgres-${{ github.sha }}
+          path: |
+            .artifacts/profile264-postgres/image.json
+            .artifacts/profile264-postgres/stdout.txt
+            .artifacts/profile264-postgres/stderr.txt
+            .artifacts/profile264-postgres/exit-code.txt
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: true
+      - name: Prepaid A2A acceptance PostgreSQL atomic choices and active authority (synthetic)
+        if: needs.scope.outputs.scope == 'full'
+        run: node --import tsx scripts/test-deliverable-acceptance-postgres.mts
+      - name: Private verified identities PostgreSQL lineage, ownership and ACL acceptance
+        if: needs.scope.outputs.scope == 'full'
+        run: node --import tsx scripts/test-profile-identities-postgres.mts
+
+      - name: Engineering feed integrity (no settlement)
+        run: node --import tsx scripts/build-engineering-feed.mts --check
+
+      - name: Pack allowlisted browser extension and verify canonical formatter
+        if: needs.scope.outputs.scope == 'full'
+        run: npm run pack:extension
+
+      - name: Retain exact-source browser extension candidate
+        if: needs.scope.outputs.scope == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: keryx-extension-${{ github.sha }}
+          path: keryx-extension-v*.zip
+          if-no-files-found: error
+
+      - name: Compile contracts
+        if: needs.scope.outputs.scope == 'full'
+        run: npx hardhat compile
+
+      - name: Contract tests (SourceRegistry)
+        # ts-node needs the CommonJS tsconfig; the app tsconfig uses bundler/esnext.
+        if: needs.scope.outputs.scope == 'full'
+        run: npx hardhat --tsconfig tsconfig.hardhat.json test
+
+      - name: Production dependency audit (high gate)
+        if: needs.scope.outputs.scope == 'full'
+        run: |
+          node --test scripts/security-dependencies.test.mjs scripts/sharp-security.test.mjs
+          npm audit --omit=dev --audit-level=high
+
+      - name: All locked dependency graphs (high gate, isolated metadata)
+        if: needs.scope.outputs.scope == 'full'
+        run: |
+          npm ci --prefix mcp --ignore-scripts --no-audit --no-fund
+          npm ci --prefix cloudflare/ops-monitor --ignore-scripts --no-audit --no-fund
+          npm ci --prefix cloudflare/source-upkeep --ignore-scripts --no-audit --no-fund
+          node scripts/patch-legacy-zod.mjs
+          npx tsc --noEmit --project tsconfig.ops-scripts.json
+          node --test scripts/security-dependency-graphs.test.mjs
+          node scripts/audit-dependency-graphs.mjs --npm-cli "$(npm root -g)/npm/bin/npm-cli.js" --out .artifacts/dependency-audits
+
+      - name: Retain locked dependency audit originals
+        if: always() && needs.scope.outputs.scope == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: locked-dependency-audits-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .artifacts/dependency-audits/**/audit.json
+            .artifacts/dependency-audits/**/audit.stderr.txt
+            .artifacts/dependency-audits/**/summary.json
+            .artifacts/dependency-audits/**/package.json
+            .artifacts/dependency-audits/**/package-lock.json
+          if-no-files-found: error
+          include-hidden-files: true
+
+  unit-tests:
+    name: Unit tests (${{ matrix.shard }}/3)
+    needs: scope
+    if: needs.scope.outputs.scope == 'full'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-unit-tests-${{ matrix.shard }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+          cache: npm
+
+      - name: Pin project npm installer
+        run: npm install --global npm@11.19.0 --no-audit --no-fund
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Browser runner APT setup tests (no system changes)
+        run: node --test scripts/ci-browser-apt.test.mjs
+
+      - name: Prepare official Ubuntu HTTPS mirrors for browser dependencies
+        run: node scripts/ci-browser-apt.mjs
+
+      - name: Install Chromium for unit and browser checks
+        timeout-minutes: 5
+        run: npx playwright install --with-deps chromium
+
+      - name: Unit tests (economic invariants)
+        env:
+          KERYX_NATIVE_GUIDANCE_SCREENSHOT_DIR: ${{ runner.temp }}/native-guidance-screenshots
+        run: npm test -- --shard=${{ matrix.shard }}/3
+
+      - name: Retain native first-use guidance frames from the existing test shard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-guidance-${{ matrix.shard }}-${{ github.sha }}
+          path: ${{ runner.temp }}/native-guidance-screenshots/
+          # Two fixture files are distributed across three independent shards.
+          if-no-files-found: ignore
+
+  integration:
+    needs: scope
+    if: needs.scope.outputs.scope == 'full'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-integration-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+          cache: npm
+
+      - name: Pin project npm installer
+        run: npm install --global npm@11.19.0 --no-audit --no-fund
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Tailwind authored source scope (synthetic retained builds)
+        run: node scripts/test-tailwind-source-scope.mjs
+
+      - name: Public-origin Next server (pinned Next fixture, loopback only)
+        run: node --test scripts/next-public-server.test.mjs
+
+      - name: Scheduled source upkeep Worker (isolated Free worker, no deployment)
+        run: |
+          npm ci --prefix cloudflare/source-upkeep --no-audit --no-fund
+          npx tsc -p cloudflare/source-upkeep/tsconfig.json
+          npm run build --prefix cloudflare/source-upkeep
+          npm run test:runtime --prefix cloudflare/source-upkeep
+
+      - name: Deployment dependency-state checks (no install or network)
+        run: |
+          bash scripts/private-worker-deploy.check.sh
+          bash scripts/withdrawal-cycle-deploy.check.sh
+          bash scripts/redeploy-vps.check.sh
+          node --test scripts/redeploy-reviewed-roles.test.mjs
+          node --test scripts/redeploy-economic-migration.test.mjs
+          node --test scripts/redeploy.test.mjs
+          node --test scripts/dependency-state.check.mjs
+          node --test scripts/release-ops-preflight.test.mjs
+          node --test scripts/immutable-release-staging.test.mjs
+          node --test scripts/prepare-immutable-release.test.mjs
+          node --test scripts/immutable-release-public-profile.test.mjs
+          node --test scripts/prepare-hosted-immutable-release.test.mjs
+          node --test scripts/rehearse-prepared-release.test.mjs
+          node scripts/rehearse-immutable-release.mjs
+          node scripts/dependency-state.mjs record
+          node scripts/dependency-state.mjs check
+
+      - name: Buyer CLI startup (no wallet or network)
+        run: node --import tsx scripts/buyer-agent.mts --help
+
+      - name: Finite Operator canary CLI startup (no environment, wallet or network)
+        run: node --import tsx scripts/operator-canary.mts --help
+
+      - name: Retained original continuation CLI startup (no environment, wallet or network)
+        run: node --import tsx scripts/continue-canary-original.mts --help
+
+      - name: Private economics CLI startup (no environment or database)
+        run: node --import tsx scripts/economics-private-report.mts --help
+
+      - name: Specialist preparation and private cohort CLI startup (no environment or services)
+        run: |
+          npm run research:brief -- --help
+          npm run research:pilot -- --help
+
+      - name: Creator owner cash-out CLI startup (no environment, wallet or network)
+        run: |
+          node --import tsx scripts/creator-cashout-batch.mts --help
+          node --import tsx scripts/creator-cashout-batch-sign.mts --help
+          node --import tsx scripts/creator-cashout-batch-funding.mts --help
+
+      - name: Synthetic research provenance (isolated PostgreSQL 17, synthetic data)
+        run: |
+          docker pull postgres:17-alpine
+          node --import tsx scripts/test-synthetic-provenance-postgres.mts
+
+      - name: Decision review owner admission (isolated PostgreSQL17, no payments)
+        run: node --import tsx scripts/test-decision-reviews-postgres.mts
+
+      - name: Business Operator whole inventory (isolated PostgreSQL 17, no payments)
+        run: node --import tsx scripts/test-operator-business-postgres.mts
+
+      - name: Exact paid original claim (isolated PostgreSQL 17, no payments)
+        run: node --import tsx scripts/test-a2a-original-claim-postgres.mts
+      - name: Prepaid A2A acceptance SQLite competing processes and session expiry (synthetic)
+        run: node --import tsx scripts/test-deliverable-acceptance-sqlite.mts
+
+      - name: Stdio MCP original paid-job polling (hermetic, no settlement)
+        run: npx vitest run --config mcp/vitest.config.mts
+
+      - name: Private economics report (Linux CLI, synthetic database, no network)
+        run: node --import tsx --no-warnings scripts/test-private-economics-report.mts
+
+      - name: Private worker Linux shutdown and crash (synthetic payments, network blocked)
+        run: node --import tsx scripts/test-private-worker-drain.mts
+
+      - name: Creator withdrawal admission (isolated PostgreSQL, synthetic data)
+        run: node --import tsx scripts/test-creator-withdrawal-postgres.mts
+
+      - name: Research Monthly admission (isolated PostgreSQL, synthetic data)
+        run: node --import tsx scripts/test-research-monthly-postgres.mts
+
+      - name: Withdrawal backup and recovered copy (Linux CLI, synthetic data)
+        run: node --import tsx --no-warnings scripts/test-withdrawal-backup-restore.mts
+
+      - name: Built stdio Monthly and bibliography discovery (hermetic, no settlement)
+        run: |
+          node --test scripts/mcp-registry-release.test.mjs
+          npm --prefix mcp run build
+          node --import tsx scripts/test-sponsored-mcp-package.mts
+          node --import tsx scripts/test-monthly-mcp-package.mts
+          node --import tsx scripts/test-paper-lookup-mcp-package.mts
+          node --import tsx scripts/test-literature-export-mcp-package.mts
+          node --import tsx scripts/test-private-profiles-mcp-package.mts
+          node --import tsx scripts/test-evidence-drafts-mcp-package.mts
+          node --import tsx scripts/test-personal-history-mcp-package.mts
+          node --import tsx scripts/test-operator-obligations-transports.mts
+          node --import tsx scripts/test-public-job-ledger-mcp-package.mts
+          npm run test:actual-read-package
+          node --import tsx scripts/test-deliverable-acceptance-transports.mts
+          node --import tsx scripts/test-purchase-outcomes-transports.mts
+
+      - name: Packed stdio research diagnostics, signing and recovery (synthetic)
+        working-directory: mcp
+        run: |
+          mkdir -p "$RUNNER_TEMP/keryx-mcp-acceptance"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/keryx-mcp-acceptance"
+          node scripts/test-packed.mjs "$(find "$RUNNER_TEMP/keryx-mcp-acceptance" -name '*.tgz' -type f)" "$(npm root -g)/npm/bin/npm-cli.js"
+
+      - name: Agent quality regression (hermetic, no settlement)
+        run: |
+          npm run eval:agent:ci
+          npm run eval:paying-source-study -- --check
+          node --import tsx scripts/eval-research-boundary-corpus.mts --check
+          npm run eval:workload:research -- --capture --fixtures
+          npm run eval:workload:research -- --replay --fixtures
+          npm run eval:workload:commerce
+
+  browser-source:
+    needs: scope
+    if: needs.scope.outputs.scope == 'full'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-browser-source-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+          cache: npm
+
+      - name: Pin project npm installer
+        run: npm install --global npm@11.19.0 --no-audit --no-fund
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Browser runner APT setup tests (no system changes)
+        run: node --test scripts/ci-browser-apt.test.mjs
+
+      - name: Prepare official Ubuntu HTTPS mirrors for browser dependencies
+        run: node scripts/ci-browser-apt.mjs
+
+      - name: Install Chromium for unit and browser checks
+        timeout-minutes: 5
+        run: npx playwright install --with-deps chromium
+
+      - name: Research decision replay browser WebCrypto parity (offline corpus)
+        run: node --import tsx scripts/test-research-audit-browser.mts
+      - name: Actual ordinary READ report offline verification
+        run: npm run test:actual-read-browser
+
+      - name: Decision Lab and signed export verification (offline)
+        run: npm run test:decision-lab-browser
+
+      - name: Unpacked MV3 extension (synthetic HTTP, no research or payments)
+        run: npm run test:browser-extension
+
+      - name: Zotero RIS parser compatibility (pinned source, synthetic metadata)
+        run: |
+          mkdir -p .artifacts/reference-export
+          curl --fail --silent --show-error --max-time 30 https://raw.githubusercontent.com/zotero/translators/c7551c1a4d5b9623273119c7fbadf8735731dc92/RIS.js -o .artifacts/reference-export/zotero-RIS.js
+          node --import tsx scripts/test-zotero-ris.mts .artifacts/reference-export/zotero-RIS.js
+
+      - name: Browser authorization admission (isolated PostgreSQL, synthetic data)
+        run: node --import tsx scripts/test-browser-authorization-postgres.mts
+
+      - name: Browser buyer recovery (hermetic, no settlement)
+        run: npm run test:browser-buyer
+
+      - name: Creator listing and onboarding on both profiles (synthetic wallet, no real signing)
+        run: |
+          node --import tsx scripts/test-browser-creator-listing.mts
+          node --import tsx scripts/test-browser-creator-registration.mts
+          node --import tsx scripts/test-browser-creator-onboarding.mts
+          node --import tsx scripts/test-browser-registration-sponsor.mts
+
+      - name: Scholarly creator rights (hermetic wallet and HTTP, no settlement)
+        run: npm run test:browser-scholarly-rights
+
+      - name: Research-paper library (hermetic metadata, mobile and desktop)
+        run: |
+          npm run papers -- --q retrieval
+          npm run papers:collect -- --help
+          npm run test:browser-paper-library
+          npm run test:browser-literature
+
+      - name: Saved paper references through pinned Zotero RIS parser (synthetic metadata)
+        run: node --import tsx scripts/test-paper-ris-import.mts .artifacts/reference-export/zotero-RIS.js
+
+      - name: Public source claims (both profiles, mobile/desktop, hermetic wallet and HTTP)
+        run: npm run test:browser-public-source-claim
+
+      - name: Browser checkout UI (hermetic, no settlement)
+        run: npm run test:browser-checkout
+
+      - name: Monthly browser recovery (hermetic, no settlement)
+        run: npm run test:browser-monthly
+
+      - name: Funding replacement recovery (synthetic RPC, no signing)
+        run: node --import tsx scripts/test-browser-funding-replacement.mts
+
+      - name: Arc card onramp panel (real kit and popup, synthetic HTTP, no vendor call)
+        run: node --import tsx scripts/test-browser-arc-card-onramp.mts
+
+      - name: Browser sign-out (hermetic, no signing)
+        run: npm run test:browser-auth
+
+      - name: Circle Google SDK and OAuth return (synthetic vendor transport, no wallet or funds)
+        run: npm run test:browser-circle-wallet
+
+      - name: Session revoke and concurrent recovery (synthetic custody, no funds)
+        run: node --import tsx scripts/test-browser-session-revoke.mts
+
+      - name: Browser clock skew (synthetic login, no payment)
+        run: node --import tsx scripts/test-browser-clock-skew.mts
+
+      - name: Private history and result UI (hermetic, read-only)
+        run: npm run test:browser-private-history
+
+      - name: Private request commitment (hermetic, no signing)
+        run: node --import tsx scripts/test-browser-private-commitment.mts
+
+      - name: Isolated session worker and IndexedDB (synthetic, no funds)
+        run: npm run test:browser-isolated-session
+
+      - name: Private browser journal (hermetic, no settlement)
+        run: npm run test:browser-private-journal
+
+      - name: Creator withdrawal journal (hermetic, no settlement)
+        run: npm run test:browser-withdrawal-journal
+
+      - name: Creator account history (intercepted HTTP, no settlement)
+        run: node --import tsx scripts/test-browser-withdrawal-history.mts
+
+      - name: Private browser checkout (hermetic, no settlement)
+        run: npm run test:browser-private-checkout
+
+      - name: Business calculator UI (local arithmetic, no settlement)
+        run: npm run test:business-calculator
+
+      - name: Public transfer ledger WebCrypto and exports (hermetic, no storage or settlement)
+        run: node --import tsx scripts/test-browser-public-job-ledger.mts
+
+  production:
+    needs: scope
+    if: needs.scope.outputs.scope == 'full'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-production-${{ matrix.lane }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 30
+    # Every original check still runs. Each member builds from its own checkout;
+    # a failure cannot cancel another member or satisfy the aggregate gate.
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [routes, ui, product]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+          cache: npm
+
+      - name: Pin project npm installer
+        run: npm install --global npm@11.19.0 --no-audit --no-fund
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Browser runner APT setup tests (no system changes)
+        run: node --test scripts/ci-browser-apt.test.mjs
+
+      - name: Prepare official Ubuntu HTTPS mirrors for browser dependencies
+        run: node scripts/ci-browser-apt.mjs
+
+      - name: Install Chromium for unit and browser checks
+        timeout-minutes: 5
+        run: npx playwright install --with-deps chromium
+
+      - name: Normal mainnet production worker and CSP (synthetic, no funds)
+        if: matrix.lane == 'routes'
+        run: npm run test:browser-mainnet-normal-built
+
+      - name: Mobile header touch and portaled wallet selection (synthetic, no funds)
+        if: matrix.lane == 'routes'
+        run: |
+          npx playwright install --with-deps webkit
+          npm run test:browser-mobile-header
+          npm run test:browser-mobile-header -- --webkit
+
+      - name: Build (Next.js)
+        env:
+          KERYX_NETWORK: arcTestnet
+          NEXT_PUBLIC_KERYX_NETWORK: arcTestnet
+          KERYX_FORCE_OFFLINE: "1"
+          KERYX_COMMIT: ${{ github.sha }}
+        run: npm run build
+
+      - name: Saved report comparison (real WebCrypto, local files and downloads)
+        if: matrix.lane == 'ui'
+        run: node --import tsx scripts/test-browser-report-comparison.mts --built
+
+      - name: Immutable cohort actual Next restart (reuse build, offline testnet)
+        if: matrix.lane == 'routes'
+        env:
+          KERYX_RELEASE_REHEARSAL_RESULT: ${{ runner.temp }}/immutable-release-rehearsal.json
+        run: node scripts/rehearse-built-release.mjs
+
+      - name: iPhone route prefetch and delayed navigation (built, offline GET only)
+        if: matrix.lane == 'routes'
+        run: node --import tsx scripts/test-browser-mobile-navigation-built.mts --webkit
+
+      - name: Dynamic page navigation (built, offline GET only)
+        if: matrix.lane == 'routes'
+        run: |
+          node --import tsx scripts/test-browser-navigation-latency.mts
+          node --import tsx scripts/test-browser-navigation-latency.mts --webkit
+          node --import tsx scripts/test-browser-header-feedback.mts
+          node --import tsx scripts/test-browser-header-feedback.mts --webkit
+
+      - name: Product discovery, pricing and support (built, offline, no research or payment)
+        if: matrix.lane == 'product'
+        env:
+          KERYX_NETWORK: arcTestnet
+          NEXT_PUBLIC_KERYX_NETWORK: arcTestnet
+          KERYX_FORCE_OFFLINE: "1"
+          KERYX_PRODUCT_SCREENSHOT_DIR: .artifacts/product-guide-browser
+        run: npm run test:browser-product-guide
+
+      - name: Retain product and language preview phone/desktop screenshots
+        if: always() && matrix.lane == 'product'
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-language-preview-${{ github.sha }}
+          path: .artifacts/product-guide-browser/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Decision Lab compiled route and mobile layout (offline)
+        if: matrix.lane == 'routes'
+        run: npm run test:decision-lab-built
+
+      - name: Specialist brief preparation (built, offline, no research or payment)
+        if: matrix.lane == 'routes'
+        run: npm run test:browser-specialist-briefs
+      - name: Reviewed claim costs and decision receipt audit (built, local data only)
+        if: matrix.lane == 'routes'
+        run: node --import tsx scripts/test-browser-research-evidence-audit.mts
+
+      - name: Retain immutable cohort rehearsal result
+        if: always() && matrix.lane == 'routes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: immutable-release-rehearsal-${{ github.sha }}
+          path: ${{ runner.temp }}/immutable-release-rehearsal.json
+          if-no-files-found: ignore
+
+      - name: Private claim initial document and one-shot web handoff (built, synthetic)
+        if: matrix.lane == 'routes'
+        env:
+          KERYX_PRIVATE_WEB_RESULT: ${{ runner.temp }}/private-run-claim-built.json
+        run: node --import tsx scripts/test-run-claims-private-web-built.mts
+
+      - name: Retain private claim built-browser acceptance
+        if: always() && matrix.lane == 'routes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-run-claim-built-${{ github.sha }}
+          path: ${{ runner.temp }}/private-run-claim-built.json
+          if-no-files-found: ignore
+
+      - name: Completed private history (compiled, isolated synthetic originals)
+        if: matrix.lane == 'routes'
+        run: |
+          owned="$PWD/output/private-history268-built"
+          mkdir -p "$owned/temp" "$owned/tsx-cache"
+          env -i PATH="$PATH" HOME="$HOME" TEMP="$owned/temp" TMP="$owned/temp" TMPDIR="$owned/temp" TSX_CACHE_DIR="$owned/tsx-cache" KERYX_NETWORK=arcTestnet NEXT_PUBLIC_KERYX_NETWORK=arcTestnet KERYX_FORCE_OFFLINE=1 node --import tsx scripts/test-browser-private-history268-built.mts --dist="$PWD/.next" --output="$owned"
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFile } from "node:fs/promises";
+          const base = "output/private-history268-built/run/";
+          const evidence = JSON.parse(await readFile(base + "synthetic-evidence.json", "utf8"));
+          const closed = JSON.parse(await readFile(base + "natural-close.json", "utf8"));
+          const cases = ["normal-json-ack-and-two-tab-stale-fences", "local-workspace-unmount-has-no-peer-authority", "real-15s-abort-is-not-a-normal-ack", "vanished-publisher-real-20s-lease-and-fresh-epoch"];
+          assert.equal(evidence.results.length, 6);
+          for (const name of cases) assert.equal(evidence.results.filter(row => row.case === name && row.passed === true).length, 1);
+          for (const name of ["logout-abort", "receiver-lease"]) assert.equal(evidence.results.filter(row => row.observation === name).length, 1);
+          assert.equal(evidence.privateOriginalsUnchanged, true); assert.equal(evidence.externalAttempts, 0);
+          assert.equal(closed.mainFailureObserved, false); assert.equal(closed.cleanupFailureCount, 0);
+          for (const flag of ["listenerClosed", "browserCloseCompleted", "instrumentationClosed", "appClosed", "tracesFlushed"]) assert.equal(closed[flag], true);
+          NODE
+
+      - name: Retain compiled private history acceptance
+        if: always() && matrix.lane == 'routes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-history268-built-${{ github.sha }}
+          path: |
+            output/private-history268-built/run/synthetic-evidence.json
+            output/private-history268-built/run/natural-close.json
+          if-no-files-found: ignore
+
+      - name: Public transfer ledger (built API, sealed offline SQLite and production CSS)
+        if: matrix.lane == 'routes'
+        run: node --import tsx scripts/test-public-job-ledger-built.mts
+
+      - name: Public researcher profile built routes and phone CSS (isolated offline SQLite)
+        if: matrix.lane == 'routes'
+        timeout-minutes: 3
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" RUNNER_TEMP="$RUNNER_TEMP" KERYX_NETWORK=arcTestnet NEXT_PUBLIC_KERYX_NETWORK=arcTestnet KERYX_FORCE_OFFLINE=1 KERYX_EXTERNAL_DISCOVERY=0 KERYX_PUBLIC_PROFILES_ENABLED=true KERYX_RUN_PRIVACY_ENABLED=true node --import tsx scripts/test-public-profiles-built.mts --acceptance
+      - name: Retain actual built public profile route and phone result
+        if: always() && matrix.lane == 'routes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-profile-built-${{ github.sha }}
+          path: |
+            .artifacts/public-profile-built-*/acceptance.json
+            .artifacts/public-profile-built-*/stdout.txt
+            .artifacts/public-profile-built-*/stderr.txt
+            .artifacts/public-profile-built-*/profile-*.png
+          if-no-files-found: error
+          retention-days: 7
+          # Only these named evidence files; never data/keryx.sqlite or the .next link.
+          include-hidden-files: true
+
+      - name: Private bibliography snapshots (built routes, isolated SQLite and synthetic sessions)
+        if: matrix.lane == 'routes'
+        run: node --import tsx scripts/test-private-bibliography-built.mts
+      - name: Decision reviews (built owner routes and DOM, isolated SQLite and synthetic sessions)
+        if: matrix.lane == 'routes'
+        run: KERYX_NETWORK=arcTestnet NEXT_PUBLIC_KERYX_NETWORK=arcTestnet KERYX_FORCE_OFFLINE=1 node --import tsx scripts/test-decision-reviews-built.mts
+
+      - name: Prepaid A2A acceptance built routes and owner UI (synthetic, no execution)
+        if: matrix.lane == 'routes'
+        run: node --import tsx scripts/test-deliverable-acceptance-built.mts
+      - name: Recorded purchase outcomes built public API and report (isolated replay, no spending)
+        if: matrix.lane == 'routes'
+        run: KERYX_NETWORK=arcTestnet NEXT_PUBLIC_KERYX_NETWORK=arcTestnet KERYX_FORCE_OFFLINE=1 node --import tsx scripts/test-purchase-outcomes-built.mts
+      - name: Private identity configured Origin behind Next proxy (built, synthetic pre-auth)
+        if: matrix.lane == 'routes'
+        run: node --import tsx scripts/test-server-profile-identities-origin.mts
+
+      - name: Private account page and API boundary (current build, isolated offline refusals)
+        if: matrix.lane == 'routes'
+        run: node --import tsx scripts/test-account-membership-private-built.mts
+
+      - name: Empty evidence (actual minified production orchestrator, no network)
+        if: matrix.lane == 'routes'
+        run: npm run test:built-empty-evidence
+
+      - name: Bounded research allowance (actual minified factory and orchestrator, synthetic providers)
+        if: matrix.lane == 'routes'
+        run: npm run test:built-research-allowance
+
+      - name: Bounded document readers (assembled production trace, no network)
+        if: matrix.lane == 'routes'
+        run: node scripts/test-web-readers-traced.mjs
+
+      - name: HTML evidence structure (actual minified reader and quote boundaries, no network)
+        if: matrix.lane == 'routes'
+        run: node scripts/test-built-html-evidence.cjs
+
+      - name: Ordinary answer presentation (production CSS, synthetic and retained replay, no spending)
+        if: matrix.lane == 'ui'
+        run: npm run test:answer-presentation
+
+      - name: Ordinary answer presentation screenshots
+        if: always() && matrix.lane == 'ui'
+        uses: actions/upload-artifact@v4
+        with:
+          name: answer-presentation-screenshots
+          path: .artifacts/answer-presentation-*.png
+          if-no-files-found: error
+          include-hidden-files: true
+
+      - name: Research reading UX (offline Chromium and responsive layout)
+        if: matrix.lane == 'ui'
+        env:
+          KERYX_FORCE_OFFLINE: "1"
+          KERYX_UX_SCREENSHOT_DIR: ${{ runner.temp }}/research-ux-screenshots
+        run: npm run test:browser-research-ux
+
+      - name: Business Operator production page (offline Chromium, synthetic status)
+        if: matrix.lane == 'ui'
+        run: node --import tsx scripts/test-browser-operator-business.mts
+
+      - name: Private profile UI (production CSS, synthetic owner sessions, no outbound requests)
+        if: matrix.lane == 'ui'
+        run: node --import tsx scripts/test-browser-private-profiles.mts
+
+      - name: Owned history UI (production CSS, synthetic privacy and owner races)
+        if: matrix.lane == 'ui'
+        run: node --import tsx scripts/test-browser-owned-history.mts
+
+      - name: Private verified identity UI (production CSS, synthetic consent and owner isolation)
+        if: matrix.lane == 'ui'
+        run: node --import tsx scripts/test-browser-profile-identities.mts
+
+      - name: Identity OAuth cross-site return (hermetic Chromium, genuine temporary sessions)
+        if: matrix.lane == 'ui'
+        env:
+          KERYX_NETWORK: arcTestnet
+          NEXT_PUBLIC_KERYX_NETWORK: arcTestnet
+          KERYX_FORCE_OFFLINE: "1"
+          KERYX_EXTERNAL_DISCOVERY: "0"
+        run: node --import tsx scripts/test-browser-identity-oauth-return.mts
+
+      - name: Report feedback confirmation and response races (built CSS, hermetic Chromium)
+        if: matrix.lane == 'ui'
+        env:
+          KERYX_FEEDBACK_SCREENSHOT_DIR: ${{ runner.temp }}/feedback-ux-screenshots
+        run: npm run test:browser-answer-feedback
+
+      - name: Report feedback screenshots
+        if: always() && matrix.lane == 'ui'
+        uses: actions/upload-artifact@v4
+        with:
+          name: feedback-ux-screenshots
+          path: ${{ runner.temp }}/feedback-ux-screenshots
+          if-no-files-found: ignore
+
+      - name: Original requester feedback and recorded job observations (built CSS, hermetic Chromium)
+        if: matrix.lane == 'ui'
+        env:
+          KERYX_FEEDBACK_SCREENSHOT_DIR: ${{ runner.temp }}/requester-feedback-screenshots
+        run: node --import tsx scripts/test-browser-requester-feedback.mts
+
+      - name: Original requester feedback screenshots
+        if: always() && matrix.lane == 'ui'
+        uses: actions/upload-artifact@v4
+        with:
+          name: requester-feedback-screenshots
+          path: ${{ runner.temp }}/requester-feedback-screenshots
+          if-no-files-found: ignore
+
+      - name: Literature workspace built navigation and responsive UI (offline, no research)
+        if: matrix.lane == 'ui'
+        env:
+          KERYX_LITERATURE_SCREENSHOT_DIR: ${{ runner.temp }}/literature-ux-screenshots
+        run: npm run test:browser-literature-built
+
+      - name: Private evidence drafts built interactions (offline, no research)
+        if: matrix.lane == 'ui'
+        run: node --import tsx scripts/test-browser-evidence-drafts.mts
+
+      - name: Evidence procurement request, signatures and restored reviews (offline, synthetic providers)
+        if: matrix.lane == 'ui'
+        run: node --import tsx scripts/test-browser-evidence-procurement.mts
+
+      - name: Stored excerpt readability (built CSS, hermetic Chromium)
+        if: matrix.lane == 'ui'
+        env:
+          KERYX_EVIDENCE_SCREENSHOT_DIR: ${{ runner.temp }}/evidence-readability
+        run: node --import tsx scripts/test-browser-evidence-readability.mts
+
+      - name: Stored excerpt readability screenshots
+        if: always() && matrix.lane == 'ui'
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-readability-screenshots
+          path: ${{ runner.temp }}/evidence-readability
+          if-no-files-found: ignore
+
+      - name: Model output-limit notice (built CSS, hermetic Chromium)
+        if: matrix.lane == 'ui'
+        env:
+          KERYX_OUTPUT_LIMIT_SCREENSHOT_DIR: ${{ runner.temp }}/output-limit-ux-screenshots
+        run: npm run test:browser-output-limit
+
+      - name: Model output-limit screenshots
+        if: always() && matrix.lane == 'ui'
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-limit-ux-screenshots
+          path: ${{ runner.temp }}/output-limit-ux-screenshots
+          if-no-files-found: ignore
+
+      - name: Literature workspace screenshots
+        if: always() && matrix.lane == 'ui'
+        uses: actions/upload-artifact@v4
+        with:
+          name: literature-ux-screenshots
+          path: ${{ runner.temp }}/literature-ux-screenshots
+          if-no-files-found: ignore
+
+      - name: Research reading UX screenshots
+        if: always() && matrix.lane == 'ui'
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-ux-screenshots
+          path: ${{ runner.temp }}/research-ux-screenshots
+          if-no-files-found: ignore
+
+      - name: Withdrawal production framework headers (loopback, no authentication or payment)
+        if: matrix.lane == 'ui'
+        env:
+          # This secret-free CI server must use explicit offline cache semantics.
+          # Real production startup correctly requires CONTENT_MASTER_KEY.
+          KERYX_FORCE_OFFLINE: "1"
+        run: node --import tsx scripts/test-withdrawal-framework-headers.mts
+
+      - name: Registration sponsor framework boundary (synthetic reverse proxy, no signing)
+        if: matrix.lane == 'ui'
+        run: node --import tsx scripts/test-registration-sponsor-framework.mts
+
+  lint:
+    name: Lint (informational, outside merge gate)
+    continue-on-error: true
+    needs: scope
+    if: needs.scope.outputs.scope == 'full'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-lint-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+          cache: npm
+
+      - name: Pin project npm installer
+        run: npm install --global npm@11.19.0 --no-audit --no-fund
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint (informational)
+        # Non-blocking: surfaces issues without failing CI on pre-existing debt.
+        run: npm run lint
+        continue-on-error: true
+
+  # Preserve the existing status name while refusing failed/missing required lanes.
+  build-and-test:
+    # Ungrouped: failure/cancellation evidence cannot lock out the newer PR run.
+    if: always()
+    needs: [scope, checks, unit-tests, integration, browser-source, production]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+      - name: Require every applicable lane
+        env:
+          CI_SCOPE: ${{ needs.scope.outputs.scope }}
+          CI_RESULTS: ${{ toJSON(needs) }}
+        run: node scripts/ci-gate.mjs
+      - name: Refuse whole-workflow cancellation
+        if: cancelled()
+        run: exit 1
+
+  publish-release:
+    name: Publish versioned GitHub release
+    if: github.event_name == 'push'
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve package version
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create missing tag and GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "$TAG already has a public GitHub release"
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "Keryx $TAG" --generate-notes --latest
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Keryx $TAG" --generate-notes --latest
+          fi

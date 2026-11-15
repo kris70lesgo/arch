@@ -1,0 +1,40 @@
+/**
+ * /me/sources — the creator's management desk: every source the signed-in wallet owns, with
+ * notify state at a glance and portfolio-wide email alerts. The public creator pages stay the
+ * per-source surface; this page exists so a bulk-imported portfolio is manageable in one place.
+ */
+
+import { createMessages } from "@/lib/i18n/messages";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { SiteHeader } from "@/components/keryx/site-header";
+import { MySourcesView } from "./my-sources-view";
+import { UiMessage } from "@/lib/i18n/ui-copy";
+
+
+
+const uiCopy = createMessages("en");
+
+export const metadata: Metadata = {
+  title: uiCopy("creatorPortfolio.metadataTitle"),
+  description: uiCopy("creatorPortfolio.description"),
+  robots: { index: false }, // wallet-personal surface — nothing here for a crawler
+};
+
+export default function MySourcesPage() {
+  return (
+    <>
+      <SiteHeader />
+      <main className="mx-auto max-w-[820px] px-4 py-10 sm:px-8">
+        <div className="mb-8 border-b border-line pb-6">
+          <h1 className="font-serif text-2xl text-ink"><UiMessage messageKey={"creatorPortfolio.title"} /></h1>
+          <p className="mt-1 font-mono text-xs text-ink-3">
+            <UiMessage messageKey={"creatorPortfolio.ownership"} />
+          </p>
+        </div>
+        <MySourcesView />
+        <Link href="/me/withdrawals" className="mt-6 inline-block text-sm underline"><UiMessage messageKey={"creatorPortfolio.withdrawals"} /></Link>
+      </main>
+    </>
+  );
+}

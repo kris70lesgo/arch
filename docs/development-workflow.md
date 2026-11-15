@@ -1,0 +1,179 @@
+# Proportionate validation and release workflow
+
+Owner-authorized October 8, 2026: reduce repeated PR/CI/release waits while
+preserving product quality, security, reliability and maintainability. This
+clarifies the standing release workflow; it grants no new payment, custody,
+scheduler or production activation authority.
+
+Owner-confirmed October 12, 2026: multiple concurrent Codex sessions use the
+[session coordination workflow](engineering/multi-session-coordination.md).
+Claim one outcome and its paths/resources before editing; use isolated worktrees,
+one merge queue and one release owner. Batch agreed outcomes into one accepted
+combined deployment, and reuse evidence only while its source and inputs apply.
+
+Owner-confirmed October 21, 2026: each outcome owner completes source review,
+fixes and validation for its own work. Multiple sessions coordinate path/resource
+ownership, serialized merges and batched releases. A separate or cross-session
+reviewer is optional; routine PRs do not wait for another session or agent to
+approve them. This supersedes older blanket independent-review wording. Required
+CI, security/payment checks and explicit external audit or financial/custody
+acceptance for their documented operations remain in force.
+
+## One PR per coherent outcome
+
+Keep related edits and review corrections on one focused branch and PR until
+the outcome is complete. A small intermediate fix is not a separate release.
+Commit checkpoints locally; push a reviewable candidate, then push again when
+review findings or changed acceptance evidence require it. Keep independently
+releasable work separate, and do not accumulate an unrelated large batch.
+
+Specify observable acceptance criteria, affected surfaces and required checks
+before release. Run focused local checks in proportion to risk. Reuse applicable
+results for unchanged source and inputs; repeat checks after relevant changes,
+failures or unresolved concerns. Local checks and hosted acceptance have distinct
+purposes, but do not rerun the complete suite locally just to duplicate an
+already accepted unchanged CI candidate.
+
+## CI acceptance
+
+| Change | Main CI acceptance |
+| --- | --- |
+| PR with only regular Markdown files in `docs/`, or root README, PLAN, DECISIONS or AGENTS | Scope/gate regressions and engineering-feed integrity; runtime lanes skipped |
+| UI, code, tests, configuration, dependencies, workflows, scripts, schemas, runtime assets, mixed or unknown changes | All existing main CI assertions, split across independent runner lanes |
+| Payment, auth, storage, contracts, shared/public interfaces and platform adapters | Full main acceptance plus applicable domain/platform workflows and outcome-owner source review |
+| Any push to main | Full exact-source acceptance, including prose-only changes, to preserve publication authority |
+
+Document changes still need direct accuracy/link inspection and any applicable
+domain-specific workflow. Feed inputs remain checked. Executable/symlink documents,
+renamed runtime files, missing diff evidence and empty diffs select full acceptance.
+PR classification checks the synthetic merged tree against its merge base,
+including deletions. Main always selects full acceptance. Its background runtime
+checks do not delay merging an accepted prose-only PR.
+
+The main workflow has independent checks, three Vitest file shards, integration,
+source-browser and production-build/browser lanes. Each has its own checkout and
+installation, so mutable databases, compiler outputs and loopback ports do not
+race across jobs. Browser and compiled-production checks retain their original
+assertions and settings. Sharding changes test allocation, not test isolation or
+selection. Within a lane, dependent steps remain sequential.
+
+The production job has three matrix members: `routes`, `ui` and `product`.
+The original serial workload first split into routes and UI after reaching its
+30-minute limit even without artifact service errors. Product discovery now has
+its own member: in two accepted runs, this browser check took 423 and 432 seconds
+in the UI member, ahead of research reading and private draft interactions.
+These are individual observations, not a guaranteed speedup.
+
+Each member has its own checkout, dependency installation and offline testnet
+Next build. The existing checks and artifact payloads run once in their assigned
+member; shared setup and the build run in all three. The extra installation/build
+is the cost of removing product discovery from the serial UI workload. Test
+commands, fixture settings, artifact names and retention policies keep their
+existing behavior. Only the product browser check and its screenshot retention
+move to the product member.
+
+All production members retain the 30-minute limit. Their PR cancellation keys
+include the member name, so they cannot cancel or serialize each other. Fail-fast
+is disabled: one failure does not discard the other member's evidence. The stable
+aggregate still requires the whole production matrix to succeed, alongside all
+other existing lanes. Main, manual and publication cancellation policy is unchanged;
+this introduces no build-artifact reuse or publication/version change.
+
+The stable `build-and-test` status is an ungrouped, always-running aggregate gate.
+Every applicable lane must succeed. Failed, cancelled, missing or unexpectedly skipped
+results refuse acceptance; docs-only skips are explicit. Applicable separate
+domain/platform statuses must also pass before merge. Informational lint is
+outside the merge gate, runs independently and remains visible. Publication
+jobs are post-merge delivery work, not PR acceptance. Require the aggregate's
+actual `success` conclusion; a skipped/cancelled aggregate is never merge evidence.
+A cancelled workflow has no publication authority. A final cancellation-only
+failure step refuses whole-workflow cancellation even if all prior lanes finished.
+
+Main CI cancels superseded validation per job/lane, with a distinct key for each
+unit shard. Its aggregate has no concurrency group and cannot hold a workflow
+lock ahead of the newer PR. Other PR workflows retain workflow-level cancellation.
+Only validation for the same PR and workflow is eligible for cancellation.
+Main, scheduled, manual, package and installer publication runs retain their
+existing authority and are not cancelled by this optimization.
+
+A newer docs-only PR skips runtime lanes, so those lane groups do not cancel an
+older full run. That obsolete work may finish; it is not acceptance of the new
+candidate and cannot block it through a workflow concurrency lock. Runner queue
+time still depends on the repository's available hosted capacity.
+
+UI and shared-library changes retain full coverage. A narrower UI fast lane
+requires demonstrated dependency/affected-surface coverage and failure tests;
+path names alone do not establish isolation. Existing domain-workflow path
+filters remain intact. Broader filter narrowing is a separate measured change.
+
+## Merge and delivery
+
+The outcome owner reviews the completed candidate, addresses findings and passes
+its required checks, then merges under the owner's standing authorization.
+Do not wait for informational lint to merge.
+
+Owner-confirmed October 25, 2026: with one active session, the outcome owner
+self-coordinates authorized source work and records its own serialized merge
+slots under the existing guard; it does not ask the user for another coordinator
+or repeat routine source-merge approval. See the
+[single-active-session rule](engineering/multi-session-coordination.md#single-active-session).
+Other owners' holds, the existing ROOT/Circle release authority and every
+required acceptance/payment/security/custody gate remain in force. Concurrent
+active sessions continue to use the shared coordinator and explicit handoffs.
+
+Owner-confirmed November 3, 2026: finish authorized development, review, checks,
+commits, PRs and serialized source merges autonomously. Only deployment and
+release/publication wait for the user's explicit command. A no-deploy/no-release
+instruction does not hold an accepted source merge. Inspect automatic delivery
+triggers before merging and keep release-version allocation for the later
+authorized release. Required checks, ownership and financial/custody gates remain.
+
+If main advances, reconcile and validate the combined candidate where required;
+old CI evidence cannot establish acceptance of new combined source.
+
+Main retains full exact-source acceptance for every push. Versioned release,
+MCP and desktop publication rely on that evidence and their existing provenance
+checks. Docs-only PR acceptance cannot establish main package publication
+authority; a successful main run includes all runtime lanes. Changing CI/docs
+alone does not require a
+runtime version bump, package/installer rebuild, production deployment or Arc
+Canteen product announcement.
+
+When the user explicitly requests deployment/release for a runtime update,
+perform one coordinated release of accepted merged source:
+deploy current accepted `origin/main` with the reviewed `npm run redeploy` flow,
+verify health commit/profile, verify applicable package/installer identity, then
+publish the authorized concise product update. Preserve all operational drains,
+backups, retained-original recovery and spending gates in
+[the mainnet update flow](mainnet-update-flow.md). A combined release is allowed
+only when its combined source and applicable gates are verified. Record accepted
+source awaiting the user's command; a source merge is not deployment or release
+authorization.
+
+## Evidence and supported surfaces
+
+Owner-confirmed October 10, 2026: each product update must compare applicable current
+web, desktop/app, CLI, API, remote/stdio MCP, extension and bot capabilities and update
+them together within their established roles. Keep the extension in that audit even
+when its previous version was unchanged. Record implemented behavior, deliberate
+handoffs, remaining work and actual source/deployed/published/installed identities.
+Follow the [extension capability and future-update checklist](browser-extension.md);
+version alignment alone does not satisfy the requirement.
+
+This increment changes development instructions and GitHub validation scheduling.
+Web/API, desktop, CLI, remote/stdio MCP, extensions and bots retain their runtime
+contracts and distribution versions. Their applicable platform/domain workflows
+retain their tests and triggers; PR cancellation is the only change outside the
+main workflow. Production and hosted release runs are preserved.
+
+Baseline observed October 8: a recent main PR CI run took 23m20s; another run's
+unit step took 8m41s while its ordinary Next build took 38s. These are individual
+observations, not typical rates. Record the new required-gate critical path and
+queue time from real CI. No fixed speedup or quality parity is claimed before
+runner acceptance. Compare equivalent workloads and include retries and fixes.
+
+References: [GitHub job dependencies](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idneeds),
+[matrix strategies](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations),
+[PR concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency),
+[cancellable failure handling](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#always),
+[Vitest sharding](https://vitest.dev/guide/cli.html#shard).

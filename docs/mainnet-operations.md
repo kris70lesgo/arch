@@ -1,0 +1,448 @@
+# Full public mainnet operations and distribution
+
+October 4, 2026: full ordinary mainnet Keryx is deployed on `keryx.cc`,
+including supported clients and creator payments. Earlier invited-pilot proposals
+are superseded. Their tests remain isolation evidence, not mainnet settlement.
+The owner confirmed the public mainnet launch. [Current status](mainnet-status.md)
+records the observed `arc`/`real` deployment, registry and distribution identities.
+The original October 2 setup/cutover procedure below is retained for operator
+reference, not a claim that production still awaits migration. Additional wallet
+transactions, funding and schedules need their applicable finite authorization.
+
+## Trusted deployment selection
+
+Set BOTH `KERYX_NETWORK=arc` and `NEXT_PUBLIC_KERYX_NETWORK=arc` for mainnet.
+Both unset retains testnet; both `arcTestnet` explicitly selects it. Partial or
+mismatched labels refuse payment startup. Mainnet requires equal, nonzero
+`KERYX_REGISTRY_ADDRESS` and `NEXT_PUBLIC_KERYX_REGISTRY_ADDRESS`, pointing to the
+fresh verified mainnet registry. Configure matching read-registry twins if used.
+The browser build captures its public label; rebuild after changing the pair.
+Apply the same pair to standalone CLI/MCP, workers, cron and monitoring commands.
+Seller challenges, saved journals and request fields cannot choose the rail.
+
+Canonical mainnet is chain 5042 (`eip155:5042`), ERC20 USDC has six decimals,
+and native gas has eighteen. The shared profile pins Gateway contracts and SDK
+endpoints. Read-only manifest/proxy evidence is documented in
+[the Arc probe](arc-mainnet-readonly-probe.md); it does not prove live settlement.
+Mainnet has no inferred WebSocket URL: the indexer uses its HTTP polling path.
+
+## Full supported-surface matrix
+
+| Surface | Ordinary mainnet role | Isolation and required release evidence |
+| --- | --- | --- |
+| Web research, login, wallet funding and session worker | Owner-authenticated session co-signing through the normal `/api/ask`, `/api/ask/sign` and `/api/session/grant` routes | Fresh owner/origin/network custody; separately signed grant consent; original nonce/cap reservations, uncertain settlement retention and cashout acceptance. Testnet session keys/ciphers are retained for recovery, never reused as mainnet grants. |
+| Creator web, source API and citation API | Creator-signed fresh registry registration; source-owned payout and exact weighted citation rewards | Fresh registry receipt/runtime/source verification, feed/content rights, fresh source cache/encryption and actual reward/withdrawal receipts. No testnet cache becomes mainnet payout authority. |
+| Research Monthly | Ordinary prepaid research and immutable slot redemption through web, API, CLI and remote/stdio MCP | Fresh sealed SQLite uses identity/profile-bound v2 purchases, submitted original claims and actual selected receipt network. Native handler/client acceptance covers checkout and original redemption recovery; optional PostgreSQL remains staged. Historical enrolled testnet adapters refuse this domain. Never relabel a testnet Monthly debit or remaining slots as mainnet. |
+| Public paid A2A and private buyer checkout | Existing caller-funded inbound toll and durable job/recovery contracts | Shared selected-profile challenge and signature binding, fresh orders/journals, exact original GET recovery and private checkout/logout acceptance. |
+| Buyer CLI, private CLI and Operator CLI | Deliberate caller-funded purchase, then inspection/recovery/export of original jobs | Both network labels; existing owner price/fee caps remain. New private state directory for mainnet. Historical testnet jobs remain identifiable and recoverable with their original profile; no ledger relabelling. |
+| Local stdio MCP | Caller-owned wallet, exact inbound x402 toll, bounded approval/deposit and original-attempt recovery | Published `keryx-mcp` 0.4.3 (October 4 observation). Default mainnet custody/journals live under `~/.keryx/arc`; testnet stays under `~/.keryx`. v2 journals bind network and payment origin; legacy unlabelled/v1 files mean testnet. Packed installed stdio acceptance covers both profiles, actual SDK signature verification, response-loss fencing and new-process keyless recovery; network responses are synthetic. npm publication is separately verified. |
+| Remote MCP `/mcp` and OpenAI action | Existing hosted API-key/server-budget research role; shared server payment paths | Hosted services use the same selected environment and fresh treasury state. Their independent protocol identity remains separate from the caller package version. No new caller key is sent to the server. |
+| Windows Tauri desktop | Local task creation, explicit buyer handoff, receipt inspection and exports | Desktop 0.4.3 retains explicit task-network selection and matched-label CLI handoff; it has no native wallet signer or autonomous scheduler. Preserve this role; verify the invoked buyer's selected labels and new state. Exact installer/build assets and standard-user handoff acceptance remain distribution gates. |
+| Chrome extension | Thin selected-text research/API adapter and creator-listing handoff | Existing ZIP source version 0.1.1 research calls the OpenAI-compatible hosted treasury/free-tier API; it does not hold a caller key. Creator listing opens the normal wallet registration page. Verify hosted sponsor admission, selected-network/payment-mode responses and listing handoff; repack exact source if adapter metadata changes. Store publication is separate. |
+| Telegram, Discord and Slack | Existing hosted bot-key and budget-limited research adapters | Shared server treasury policy and fresh environment, explicit real/offline/payment state and links to dispatch evidence. Do not add bot-held caller/session keys or imply bot messages independently approve treasury spending. |
+| Headless web driver | Owner-operated normal wallet/session flow, tagged self-generated engine activity | Shared normal custody/grant/signature contract migration and retained funding/payment barriers are required. Testnet faucet behavior cannot fund mainnet. Its runs do not establish external traction. |
+| Treasury/registry/dispatch/settlement/reconciliation monitors, workers and withdrawal relay | Selected-network operational reads or existing explicitly configured execution roles | Fresh state/custody, signer/chain attestation, required operator authorizations, private worker drain, held uncertain attempts and observed service environment. No scheduler or relay is enabled merely by code deployment. |
+| Historical testnet drills and grant media | Original-network recovery, synthetic acceptance and archived demo evidence | Keep the original chain labels and retained receipts. `register-onchain` cached-source backfill and TestMint are testnet-only; they refuse mainnet. They are not the new creator registration/import path. |
+
+## Fresh registry and creator catalog
+
+`npm run mainnet:unsigned-setup -- --help` reads no environment, key, database,
+artifact or RPC. The offline command emits unsigned JSON to stdout only; it never
+signs or broadcasts. Deploy mode binds the current full clean release commit,
+including nonignored untracked source, and checks a curated Solidity 0.8.24,
+Paris/optimizer-200 SourceRegistry artifact against the current LF-normalized
+contract source before emitting creation bytecode. This is reviewed release data,
+not an arbitrary local build artifact. Changed compiler/source/settings/bytecode
+require a newly reviewed pin.
+
+```sh
+npm run mainnet:unsigned-setup -- deploy PUBLIC_DEPLOYER_ADDRESS FULL_RELEASE_SHA
+npm run mainnet:unsigned-setup -- prepare PUBLIC_OPERATION_JSON FRESH_REGISTRY_ADDRESS FULL_RELEASE_SHA
+```
+
+A `register` operation contains `kind`, creator address, canonical HTTP(S) URL,
+payout wallet, 1–20 `{wallet,basisPoints}` authors summing exactly to 10000,
+`fetchPriceMicros` as a uint64 integer string, `contentCid` (128 bytes maximum)
+and `tags` (256 bytes maximum). There is no invite list, proposed pilot budget or
+pilot source-price ceiling. The actual deployment and registration must be signed
+by the respective owner; matching public addresses are declarations, not proof.
+
+A `fund` operation contains `kind`, owner address, distinct session signer and
+positive uint256 `amountMicros` string. It emits exact USDC `approve` and Gateway
+`depositFor(token,sessionSigner,value)` calldata. The owner must independently
+compare the normal worker's fresh network/origin/owner-scoped signer. Its amount
+is an operator declaration, not approval to spend. Native setup gas, fees/nonce
+and subsequent research/session caps are separate. Existing protocol/session and
+caller-configured limits continue to govern payments.
+
+Before configuring the registry twins, verify the deployment transaction and
+receipt on the fixed mainnet RPC, chain ID, exact deployed runtime-bytecode hash,
+block/hash stability and published compiler/source provenance. Then use ordinary
+creator registration, verify creator/payout/authors/price/active state and receipt,
+and index a fresh catalog only after source/feed rights and content encryption
+acceptance. Import public descriptions and creator-owned source identity through
+this verified path; never import testnet payment/settlement/grant records as mainnet.
+
+## Existing-host cutover, backup and rollback reference
+
+1. Freeze an exact reviewed release and inventory current private runtime files,
+   owner custodians, service names, selected environment and unresolved original
+   transactions. Record redacted fingerprints rather than secrets. Preserve the
+   existing `/root/keryx` checkout and owner-only backups outside it.
+2. Drain PM2 `keryx` and `keryx-a2a-worker`, systemd private worker, indexer,
+   reconciliation, withdrawal relay, scheduled engine and every cron writer.
+   Preserve locks and pending original hashes/nonces. Do not clear uncertainty to
+   create capacity. Make a consistent database snapshot plus encrypted content,
+   treasury/source custody, withdrawal/funding journals, private worker state and
+   environment/service configuration. Verify readable off-host backups privately.
+3. Provision fresh mainnet storage identity, database, source catalog, content
+   encryption and network-scoped treasury/funding/withdrawal journals using the
+   shared server's mainnet storage contract. Never enroll/adopt the historical
+   testnet database or copy its balances, signed headers or settlement records.
+   Preserve old custody and read/recovery tools separately. No script should print
+   or copy keys into release artifacts.
+4. After the separately approved deployment/funding transactions and receipts,
+   set the matched network/registry pair in the protected web, A2A, private worker,
+   reconciliation/withdrawal and cron environments. Verify each effective profile;
+   build and deploy the exact reviewed commit on the same `keryx.cc` domain.
+   Start writers only after schema/identity and old-writer drain checks. Update
+   outside-host health expectations for commit/network and confirm they observe
+   the new instance; do not silence settlement/registry alarms to pass readiness.
+5. Verify `/api/health` commit/network/database, normal SIWE/fresh grant and original
+   payment recovery, creator receipt/index authority, one actual paid delivery,
+   cited reward/reconciliation and withdrawal under the owner-approved budget.
+   Check web/A2A/private worker, HTTP indexer, monitors and relay individually.
+   Synthetic/native browser/packed package tests are transport and safety evidence,
+   never funded acceptance or revenue.
+6. Publish/read back the exact CLI/MCP tarball/npm and applicable desktop/extension
+   assets, recording versions and checksums; verify hosted APIs against that source.
+   A source version bump does not establish package or installer publication.
+   Publish a product update only after the coordinated deploy succeeds; use
+   settled figures only when real evidence supports them.
+
+Rollback first stops every new mainnet writer. Preserve the mainnet database,
+custody, pending attempts and recovery configuration; reconcile originals on
+mainnet instead of replaying them on testnet. Restore the prior testnet code,
+matched labels and historical testnet state only as an independent instance.
+Existing funded mainnet users require their recovery/cashout path even if new
+research admission is disabled. Changing a source SHA cannot undo external
+authorizations or Gateway deposits.
+
+## Current evidence and remaining gates
+
+The October 4 health observation confirms hosted commit `1297d43`, Arc mainnet,
+real settlement mode and registry `0x42a64061b6cd84067bb660b2a9b8aa881fd225bb`.
+Application v0.26.8 exposes MCP/desktop 0.4.3 assets and npm reports MCP 0.4.3;
+see [current status](mainnet-status.md). Recheck each role and distribution separately.
+Health does not prove prefunding, a completed paid/cited/withdrawal journey or
+independent security acceptance. Public Monthly checkout readiness was unavailable
+during the documentation check. Historical October 2 testnet deployment observations
+remain preparation evidence, not current network or revenue claims.
+
+## Private economics across retained networks
+
+The private economics command selects the sealed storage identity, with an
+explicit read-only enrolled adapter for mainnet. It never initializes storage or
+falls back to `data/keryx.sqlite` for mainnet. Recorded mainnet payment rows must
+carry their original network and settled rows their recorded settlement evidence;
+a report refuses conflicting rows instead of relabelling them. Mainnet exports
+use `keryx-private-economics-v3`, an explicit network and `ledger` aggregates.
+Historical testnet exports retain their exact v2 shape and `testnetLedger` field.
+
+Usage price intervals and hypothetical service fees remain estimates. Recorded
+settlement observations are not reconciled invoices or realized profit. Native
+SQLite read-only projection tests use synthetic evidence and preserve file bytes;
+they do not establish enrolled mainnet admission, funded settlement or native
+Supabase acceptance. Mainnet reporting uses the sealed SQLite authority described in
+[server runtime](mainnet-server-runtime.md); optional native Supabase mainnet remains staged, and the protected Linux publisher still needs its
+release-platform checks.
+
+## Normal authenticated headless web client
+
+`npm run web -- --help` is keyless. Both network labels select the entry point;
+legacy testnet wallet/faucet behavior remains in the explicitly testnet driver.
+Mainnet `prepare`, `status`, `recover` and `ask QUESTION BUDGET_MICROS CAP_MICROS`
+use dedicated `KERYX_HEADLESS_OWNER_PRIVATE_KEY`, `KERYX_HEADLESS_WRAPPING_KEY`
+and `KERYX_HEADLESS_STATE_DIRECTORY` in a protected environment file. Owner and
+wrapping keys must differ. The existing private state directory must be owned by
+the current user: Unix permissions exclude group/other access; Windows uses an
+actual owner-only protected DACL (current user, trusted SYSTEM/Administrators).
+Keys are never stored in the SQLite state. Keep its encrypted funded session
+ciphertext, exposure history and wrapping environment together in verified private
+backups. Lost wrapping custody can lose access to deposited funds; host owners,
+administrators and cloned state remain outside this local protection boundary.
+
+`prepare` retains the first encrypted signer and prints only public funding
+identity. `status` never creates missing custody. Owner funding is a separate exact
+approve plus Gateway `depositFor` transaction using the unsigned setup helper; the
+mainnet web driver sends no faucet, EOA gas-funding, approval or deposit transaction.
+The ordinary mainnet ask path signs SIWE and exact owner/session grant consent,
+then consumes the shared browser authenticated journal/registry/preview payment
+policy. It ignores SSE payment tuples and validates the original authenticated
+challenge instead. It durably commits unique nonce exposure before signing and an
+encrypted header before the paid POST. Nonces and cumulative exposure survive
+process restart and grant replacement. Configure the normal bot identity for
+operator-owned self-driven runs; do not count them as external product traction.
+
+Uncertain original attempts remain held. Read-only recovery uses the ordinary
+`/api/session/authorizations/{reqId}` endpoint and verifies original owner/session
+signatures, nonce, epoch, network, amount and cap. Expiry/revocation cannot erase
+this view. Only a recorded settled original with its settlement evidence receives
+a local terminal proof; this never deletes the nonce or restores lifetime capacity.
+Another ask remains refused while any original is uncertain. Per-ask client UUID
+and integer budget are atomically retained with lifetime sum and unique nonce in
+one SQLite transaction before signing; a larger grant cannot enlarge that question.
+The owner-supplied cap is absolute cumulative signer capacity, including history. Windows tests
+exercise actual native SQLite, DACL checks, WebCrypto and EOA signatures with
+hermetic API/registry responses; they prove neither live settlement nor host
+power-loss, distributed clone exclusion or installer acceptance.
+
+The retained headless state stores the detached authenticated original challenge and
+SHA256 of its canonical payment requirements in the same atomic reservation as the
+question budget, cumulative cap and nonce, before cryptography. Recovery requires the
+same original requirements, payer, payee, source and payment kind, plus both public grant
+signatures. A retained server journal with a transaction hash is recorded server evidence;
+this read is not an independently observed chain receipt. It grants no retry authority
+and never refunds local exposure. Older unreleased v1 headless files are refused in place
+with custody retained; the command never rotates their signer or adopts their ledger.
+
+Headless control requests use a 60-second deadline; the complete research SSE has
+a separate 10-minute deadline. A payment-leg refusal or lost sign acknowledgment
+retains its original exposure and encrypted header, emits a fixed concise stderr
+notice, and continues to the completed answer. It never signs that original again
+or clears uncertainty. Malformed SSE/protocol data still fails the run.
+
+
+## Cashout deployment policy
+
+The normal mainnet cashout worker captures
+`NEXT_PUBLIC_KERYX_WITHDRAWAL_MAX_AHEAD_BLOCKS` at build time. Its server admission
+requires the identical positive integer in `KERYX_WITHDRAWAL_MAX_AHEAD_BLOCKS`.
+Choose this exact block window from reviewed current chain/expiry evidence and the
+owner's withdrawal policy before deploying cashout; this runbook supplies no guessed
+Arc block-rate limit. Missing or mismatched values close cashout only. Changing the
+public value requires rebuilding the worker and checking the effective server twin.
+
+A prepared unsigned withdrawal remains cancellable only before native exposure,
+signed-request admission or claim. Native authorization marks exposure before
+cryptography. An exposed original can use the separate authenticated publication
+abort only when the local signer durably fences signing before publishing a signature
+and the server has no signed request/claim/outcome. Signed, submitted or unknown
+transfers remain retained and hold their barrier until exact observed completion;
+a timeout does not cancel them. The coordinated headless cashout consumes the same independently checked
+normal withdrawal policy; its native migration/journal acceptance is separate from
+actual real-funded withdrawal receipts.
+
+## Package publication boundary
+
+The October 2 13:56 UTC registry read reports `keryx-mcp` npm latest 0.3.2,
+independently published before this 0.4.0 source candidate; source version numbers
+alone do not prove publication. Current main's publishing workflow uses
+npm Trusted Publishing through GitHub OIDC and environment `npm`; local npm login
+or a token secret is not required by that workflow. An earlier relative tarball
+path failure is corrected by PR132, and that independent publication propagated successfully. The corrected workflow
+now waits for public registry readback; the final 0.4.0 candidate still needs its
+own exact tarball/integrity/clean-consumer evidence.
+
+Use the reviewed exact tarball, clean-consumer checks, registry integrity comparison
+and successful authorized workflow as npm publication evidence. Retain the immutable
+GitHub release tarball plus source commit/hash manifest as a supported distribution
+channel. Its `npmRegistryPublished` flag must match observed publication. Do not claim
+that installer, tarball and npm versions are synchronized from source numbers alone.
+
+## Owner wallet registry deployment handoff
+
+The owner uses their existing personal wallet. Public deployer:
+`0xca5b29b4f8bfbbd027ddc8516914a262f7ef6478`. No personal private key, recovery
+phrase or hardware-wallet secret is imported into Keryx, Remix or chat.
+
+From the exact clean reviewed release, prepare a fresh public folder:
+
+```text
+npm run mainnet:unsigned-setup -- workspace <public-deployer-address> <full-release-commit> <fresh-absolute-output-directory>
+npm run mainnet:unsigned-setup -- verify-compiled <public-compiler-output-json> <full-release-commit>
+```
+
+Import the folder into [Remix](https://remix.ethereum.org). Keep the exact
+`contracts/source-registry.sol` path, Solidity `0.8.24+commit.e11b9ed9`, optimizer
+enabled with 200 runs, and Paris EVM. The exported compiler result must match
+reviewed creation bytecode, deployed runtime, ABI, source hash and compiler settings
+before proceeding. The helper accepts standard solc output or Remix's exported
+contract artifact; it never connects a wallet, signs or broadcasts. Existing or
+redirected output directories and symlink/junction parents refuse.
+
+Use Browser Extension for the existing OKX Wallet extension, or WalletConnect
+for OKX mobile, preserving hardware-wallet confirmation where applicable. Run the
+verifier from a checkout of the exact pushed frozen source SHA in the packet; the
+public workspace contains compiler inputs, not the executable Keryx verifier. Both require an explicit wallet approval; see the [official connected-wallet
+workflow](https://remix-ide.readthedocs.io/en/latest/run.html). Verify account, chain
+5042, creation data and value zero against `registry-review.json`. A read-only
+chain/nonce/balance/gas observation supplies a separate time-bound proposed fee
+ceiling for owner review. Native gas and ERC20 balances are two encodings of the
+same user-facing USDC asset, not two funding pots. No deployment transaction can
+run from the currently observed zero balance.
+
+Stop before wallet approval until the exact native-USDC funding and maximum
+deployment charge are reviewed. After owner signing, retain transaction and final
+receipt, attest chain 5042 and exact deployed runtime, then pin the fresh registry
+in the coordinated release. Normal creator `/register` and bulk feed registration
+use each creator's connected wallet afterward. Source/feed rights and mainnet
+receipts remain required; old testnet catalog or payout caches are never relabelled.
+
+
+## Residual ordinary caller Gateway balance
+
+The ordinary CLI/stdio/API buyer deposits to its own EOA Gateway balance, not the
+web session's delegated signer. Retain that existing account and original-network
+payment/funding journals. Stop new purchases and inspect every submitted/unknown
+original before cashout; an uncertain seller response is not a spend release.
+
+For a buyer EOA controlled by the existing browser/hardware wallet, connect that
+**same account**, sign in on the selected deployment, and use `/me/withdrawals`.
+The ordinary owner route is not restricted to registered creators: mainnet
+`/api/me/withdrawals/prepare`, `/submit`, `/status` and `/complete` authenticate the
+EOA, use fresh sealed storage and preserve the original owner/nonce/network terms.
+The owner signs the original burn and, when exact attestation/finality permit, the
+wallet's mint transaction to itself; native gas is paid from the same USDC asset.
+Pending/unknown originals remain retained, and status never retries a burn. The
+mainnet owner flow uses no legacy testnet relay or new personal wallet.
+
+The stdio package does not currently provide a separate cashout tool for a key-only
+standalone wallet. Its supported cashout handoff is the same authenticated EOA
+wallet/API contract, using an existing wallet connector capable of signing for that
+account; another connected account cannot recover it. Never paste a key into chat
+or export custody to Keryx/Remix for this handoff. Preserve protected local custody
+and journals if the original account is unavailable. A delegated headless session
+uses the separate original session-cashout protocol, not this EOA route.
+
+
+## Hosted operating policy review inputs
+
+Public sponsored research/A2A/remote MCP/bots and private research use separate
+existing dedicated operator signers. They do not use the owner's personal registry
+deployer or inherit a legacy testnet key. Prepare these public policy declarations
+only after the final fresh sealed SQLite identity exists:
+
+```json
+{
+  "format": "keryx-hosted-treasury-policy-v1",
+  "network": "eip155:5042",
+  "storageIdentityDigest": "<SHA256 of exact fresh sealed full identity>",
+  "origin": "https://keryx.cc",
+  "signer": "<lowercase public dedicated operator signer>",
+  "lifetimeCapMicroUsdc": "<owner-reviewed positive integer micro-USDC>",
+  "queryCapMicroUsdc": "<owner-reviewed positive integer <= lifetime cap>",
+  "expiresAtSeconds": "<owner-reviewed Unix seconds; JSON integer>"
+}
+```
+
+The JSON above is a field template, not a valid admitted policy or proposed spending
+amount. The canonical artifact must use integer expiry and its exact canonical JSON
+SHA256. Public values use `KERYX_MAINNET_TREASURY_POLICY_JSON` and
+`KERYX_MAINNET_TREASURY_POLICY_DIGEST`; private values use
+`KERYX_MAINNET_PRIVATE_TREASURY_POLICY_JSON` and
+`KERYX_MAINNET_PRIVATE_TREASURY_POLICY_DIGEST`. Protect the separately named private
+key environment fields; the actual loader compares their derived public addresses
+to the admitted policy only after native authority checks. Do not place a key in
+this declaration, README, command argument or chat. Public/private signers must
+differ; policy renewal never resets original lifetime/query exposure.
+
+Owner review must state each signer, exact prefunding deposit, lifetime/query caps,
+expiry and native transaction fee ceilings. Offline `prepare` can emit exact
+approve/depositFor calldata for each public signer and owner amount, but these are
+not funding authorization. Operator operating funds are a separate budget purpose
+from SourceRegistry deployment gas, using the same USDC asset. Missing operating
+inputs keep the affected sponsor/private roles unavailable before buyer payment;
+caller-owned ordinary payments do not gain treasury authority from a policy file.
+
+
+## Delegated headless session cashout commands
+
+### Economic recovery storage upgrade
+
+The application schema adds one immutable publication-abort journal. Existing
+production stores need an explicit stopped-writer migration; normal startup never
+rewrites them. The storage identity, manifest, public/private treasury policies,
+signers and caps remain unchanged. Do not create a replacement enrollment.
+
+From the reviewed release, inspect only the explicitly selected mainnet manifest:
+
+```bash
+node --import tsx scripts/mainnet-economic-storage-migrate.mts inspect --manifest "$REVIEWED_MANIFEST"
+```
+
+Retain the returned canonical `manifestDigest` and `identityDigest`. They are not
+hashes of the manifest file's formatting. Build and verify the new release, stop
+all web, A2A, private and withdrawal writers, and positively verify process exit.
+Then use fresh protected backup and JSONL receipt destinations:
+
+```bash
+node --import tsx scripts/mainnet-economic-storage-migrate.mts migrate \
+  --manifest "$REVIEWED_MANIFEST" --expected-manifest "$MANIFEST_DIGEST" \
+  --expected-identity "$IDENTITY_DIGEST" --backup "$FRESH_BACKUP" \
+  --receipt "$FRESH_RECEIPT_JSONL" --writers-stopped
+```
+
+The tool creates and verifies a native backup, then rechecks the manifest, original
+snapshot and backup under the same exclusive lock before changing schema. It hashes
+every retained typed row, including original TEXT bytes, and verifies preservation
+afterward. It refuses an unknown schema, changed original, existing destination or
+missing drain assertion. The assertion is an operator prerequisite, not automatic
+process discovery. Preserve both `backup-verified` and `migration-verified` receipts.
+
+After an ambiguous response, keep writers stopped and inspect the original plus
+retained receipts. Do not overwrite the backup, repeat signing, restore a snapshot
+automatically or restart an old build: the old runtime refuses the new schema.
+Resume only the reviewed new runtime after exact migration and identity/policy
+readback, then verify `/api/health` against the pushed commit. Preserve previously
+held schedulers. The tool itself does not authorize signing or financial operations.
+
+### Retained headless custody
+
+Keep the **same** private state directory and wrapping environment. State v4
+adds immutable terminal-failure releases and signing-publication aborts without replacing
+the first funded cipher, original nonces, headers, question budgets or withdrawals.
+Existing v2/v3 state is refused by normal v4 commands until explicit `migrate`;
+it is never upgraded or adopted automatically. Migration preserves custody/history
+and fences archived old payment writers.
+Older v1/unrecognised files remain refused in place for owner recovery.
+
+```text
+npm run web -- migrate
+npm run web -- withdraw-prepare GRANT_EPOCH AMOUNT_MICROS MAX_FEE_MICROS
+npm run web -- withdraw-sign REQUEST_ID AMOUNT_MICROS MAX_FEE_MICROS
+npm run web -- withdraw-submit REQUEST_ID
+npm run web -- withdraw-status REQUEST_ID
+npm run web -- withdraw-mint REQUEST_ID
+npm run web -- withdraw-complete REQUEST_ID OWNER_MINT_TX_HASH
+npm run web -- withdraw-recover REQUEST_ID
+npm run web -- withdraw-cancel REQUEST_ID
+npm run web -- withdraw-abort REQUEST_ID
+```
+
+Amounts and maximum burn fee use exact integer micro-USDC. Preparation/signing
+checks the original owner/session dual proof, selected network, current balances,
+retained payment/withdrawal liabilities and reviewed block window. Local exposure
+and native server authorization precede cryptography. Withdrawal barriers block
+new payment authorization; an expired/revoked payment grant does not erase its
+original owner's cashout permission. Submission is claimed before HTTP delivery,
+so losing an acknowledgement never permits a second burn.
+
+`withdraw-mint` returns an **unsigned owner-wallet packet** with its original nonce,
+gas/fee ceilings and exact minter/calldata committed locally before display. Review
+and sign that packet only with the existing owner wallet. Repeated reads recover
+the same terms rather than authorizing another mint. Retain the resulting owner
+transaction hash with `withdraw-complete` before completion HTTP; uncertain
+completion is recovered by the same original ID/hash. These commands never sign or
+broadcast an owner transaction, export a personal key, or use the testnet relay.
+
+Exact unexposed cancellation, acknowledged original publication abort, or independently
+observed original completion releases the withdrawal barrier. `withdraw-abort` is
+only for interrupted signing before a signature was saved/published. Its local
+tombstone retains the barrier through response loss until exact server acknowledgement;
+signed/submitted/unknown transfers remain held. A timeout is not cancellation.
+Exact journal-verified terminal-failed payments release lifetime local capacity once,
+retaining their nonce/header and conservative original question cap. Keep private
+backups through completion. See [economic recovery](engineering/mainnet-economic-recovery.md).
+Native local acceptance is not a real funded receipt, distributed cloned-state
+exclusion or proof of Windows host power-loss durability.

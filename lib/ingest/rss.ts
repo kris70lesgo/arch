@@ -1,0 +1,110 @@
+/**
+ * RSS ingest — turn any feed (a blog, or an RSSHub-generated feed for almost any site)
+ * into purchasable Keryx content. Free preview = title + summary; paid content = full text.
+ */
+
+import Parser from "rss-parser";
+import type { SourceItem } from "../types";
+import { fetchPublicText } from "../net/public-fetch";
+
+const parser = new Parser({ timeout: 15000 });
+
+function stripHtml(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&[a-z]+;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Normalise a feed's date to ISO-8601, or drop it.
+ *
+ * `isoDate` is rss-parser's own parse of `pubDate` and is already ISO whenever the date was
+ * readable, so the raw `pubDate` fallback only fires on dates it could not read. Storing one of
+ * those verbatim would be worse than storing nothing: publication dates are compared as strings
+ * (ordering, and the freshness counts behind an archived answer), and an RFC-822 date sorts above
+ * every ISO string — one such row would read as newer than any dispatch, forever.
+ */
+function isoPublishedAt(isoDate?: string, pubDate?: string): string | undefined {
+  const raw = isoDate ?? pubDate;
+  if (!raw) return undefined;
+  const at = new Date(raw);
+  return Number.isNaN(at.getTime()) ? undefined : at.toISOString();
+}
+
+export interface IngestedFeed {
+  feedTitle: string;
+  feedDescription: string;
+  link: string;
+  items: Omit<SourceItem, "id" | "sourceId">[];
+}
+
+export async function ingestRss(rssUrl: string, max = 10): Promise<IngestedFeed> {
+  const xml = await fetchPublicText(rssUrl, {
+    timeoutMs: 15_000,
+    maxBytes: 5_000_000,
+    maxHops: 3,
+  });
+  return ingestRssXml(xml, rssUrl, max);
+}
+
+/**
+ * The same read, from XML already in hand.
+ *
+ * The public feed check fetches the file itself — it has to, because a URL a stranger typed needs
+ * every redirect hop vetted before the socket opens (`lib/net/public-fetch.ts`), which a parser
+ * that owns its own transport cannot do. Parsing is identical either way, so it lives in one place.
+ */
+export async function ingestRssXml(xml: string, rssUrl: string, max = 10): Promise<IngestedFeed> {
+  return toIngestedFeed(await parser.parseString(xml), rssUrl, max);
+}
+
+type ParsedFeed = Awaited<ReturnType<typeof parser.parseString>>;
+
+function toIngestedFeed(feed: ParsedFeed, rssUrl: string, max: number): IngestedFeed {
+  const items = (feed.items ?? []).slice(0, max).map((it) => {
+    const encoded = stripHtml(
+      (it as { "content:encoded"?: string })["content:encoded"] ?? "",
+    );
+    const atomContent = stripHtml(it.content ?? "");
+    const snippet = stripHtml(it.contentSnippet ?? "");
+    const full = stripHtml(
+      encoded || atomContent || snippet,
+    );
+    const summary = (snippet || atomContent).slice(0, 280);
+    // RSS has no universal "this is the complete article" bit. Treat a substantial
+    // content:encoded body as full text, a longer Atom body as an excerpt, and the usual short
+    // description/snippet as an abstract. Publishers can later replace any row with a signed
+    // full-text manifest; until then the market tells buyers exactly what it has.
+    const deliveryKind: SourceItem["deliveryKind"] = encoded.length >= 800
+      ? "full_text"
+      : full.length === 0
+        ? "metadata_only"
+        : full.length > Math.max(500, summary.length * 1.5)
+          ? "excerpt"
+          : "abstract";
+    return {
+      title: it.title?.trim() || "Untitled",
+      summary: summary || full.slice(0, 280),
+      content: full || summary,
+      deliveryKind,
+      link: it.link ?? "",
+      publishedAt: isoPublishedAt(it.isoDate, it.pubDate),
+    };
+  });
+  return {
+    feedTitle: feed.title?.trim() || rssUrl,
+    // A creator proves feed ownership by pasting `keryx-verify:<wallet>` into the feed, and the
+    // channel description is the obvious place to put it. It is a proof, not prose — verification
+    // re-fetches the live feed, so dropping it here costs nothing and keeps it off the public page.
+    feedDescription: stripVerificationToken(stripHtml(feed.description ?? "")).slice(0, 400),
+    link: feed.link ?? rssUrl,
+    items,
+  };
+}
+
+/** Remove any `keryx-verify:0x…` ownership token, and the whitespace it leaves behind. */
+export function stripVerificationToken(text: string): string {
+  return text.replace(/keryx-verify:0x[0-9a-f]{40}/gi, "").replace(/\s+/g, " ").trim();
+}

@@ -1,0 +1,49 @@
+/**
+ * Agent dependencies — wires the reasoning engine, datastore, and payment gateway.
+ * Injectable so the orchestrator can be tested with fakes and so the SSE route can
+ * inject a BrowserCoSignGateway without the selector needing an SSE controller.
+ */
+
+import { getDb, type KeryxDB } from "../db";
+import { getReasoningEngine, type ReasoningEngine } from "../llm";
+import { getPaymentGateway, type GatewayOpts, type PaymentGateway } from "../payments/payment-gateway";
+import type { SourceCandidate } from "../llm";
+import type { ResearchEffects } from "./research-effects";
+
+export interface AgentDeps {
+  /** Trusted optional observer; failure only makes checkpoint evidence unavailable. */
+  readCheckpointSink?: (record: import("../research-audit/actual-read-record").ActualReadRecord) => void;
+  /** Exact raw metadata reader. Separate from ordinary article/body evidence. */
+  readBibliographicOriginal?: import("../research/bibliographic-original").BibliographicOriginalReader;
+  discoverScholarly?: import("../scholarly/discovery").ScholarlyDiscover;
+  webSearch?: import("../web-research/search-provider").SearchProvider;
+  readWebArticle?: import("../web-research/article-reader").ArticleReader;
+  engine: ReasoningEngine;
+  db: KeryxDB;
+  gateway: PaymentGateway;
+  /** Injectable external discovery keeps tests/evals hermetic without changing production policy. */
+  discoverExternal?: (question: string, subClaims: string[]) => Promise<SourceCandidate[]>;
+  /** Complete trusted storage/disclosure strategy. Omitted means the historical public contract. */
+  effects?: ResearchEffects;
+}
+
+/**
+ * Build agent dependencies.
+ *
+ * opts.gateway — when already constructed by the caller (e.g. the SSE route
+ *   with a BrowserCoSignGateway), it is used directly and gateway opts are ignored.
+ * opts.gatewayOpts — forwarded to getPaymentGateway() when no pre-built gateway
+ *   is supplied (the common case for collectRun / A2A).
+ * opts.model — catalog model id the asker picked; unknown/unset → default engine.
+ *   Whatever the pick, the engine crosses configured providers before the heuristic.
+ */
+export async function getAgentDeps(opts?: {
+  gateway?: PaymentGateway;
+  gatewayOpts?: GatewayOpts;
+  model?: string;
+}): Promise<AgentDeps> {
+  const db = await getDb();
+  const gateway = opts?.gateway ?? (await getPaymentGateway(db, opts?.gatewayOpts));
+  const engine = getReasoningEngine(opts?.model);
+  return { engine, db, gateway };
+}

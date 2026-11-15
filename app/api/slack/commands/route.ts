@@ -1,0 +1,166 @@
+/**
+ * Slack slash-command endpoint — /keryx from any Slack workspace.
+ *
+ * Point a Slack app's slash command at this URL (see docs/slack-bot-setup.md); any workspace that
+ * installs the app can then ask Keryx in-channel. Keryx runs its full reasoning loop over paid
+ * sources and the reply lists every creator paid, with a link to the dispatch trace.
+ *
+ * Slack demands an HTTP response within 3 seconds, so the route acks immediately with an ephemeral
+ * "dispatching…" note and finishes the run in `after()` (the VPS Node process keeps running
+ * post-response), then POSTs the answer to the command's `response_url` — no bot token, no scopes,
+ * no socket connection.
+ *
+ * Auth: every request carries an HMAC-SHA256 signature over the raw body keyed by the app's Signing
+ * Secret; anything invalid or stale is rejected. Payment model: identical to the site's anonymous
+ * free trial — treasury-funded, budget clamped to anonMaxBudget, rate-limited per Slack user id,
+ * tagged `web` (a Slack member is a genuine external human asker). Creators are still really paid.
+ */
+
+import { NextRequest, after } from "next/server";
+import { collectRun } from "@/lib/agent";
+import { hostedRunClaimsEnabled, prepareHostedRunClaim } from "@/lib/run-claims/hosted-delivery";
+import { privateRunClaimText } from "@/lib/run-claims/delivery";
+import { privateSlackResponseUrl } from "@/lib/run-claims/slack-private";
+import { config } from "@/lib/config";
+import { getDb } from "@/lib/db";
+import { chatControlReply, exactChatControl, linkedChatOwner } from "@/lib/chat-accounts/service";
+import { slackChatRecipient } from "@/lib/chat-accounts/provider-recipient";
+import type { ChatRecipient } from "@/lib/chat-accounts/contracts";
+import { botResearchMessages } from "@/lib/bots/research-messages";
+import { botControlResponse, parseBotControl } from "@/lib/bots/language";
+import { botAnswerPresentation } from "@/lib/bots/answer-preference";
+import { checkSponsoredResearchAdmission } from "@/lib/sponsored-admission";
+import { verifyRequestSignature } from "@/lib/slack/verify-request-signature";
+import {
+  type SlashCommand,
+  isSlackAccountControl,
+  slackAccountLinkingUnavailable,
+  parseSlashCommand,
+  helpText,
+  buildAnswerText,
+  buildErrorText,
+} from "@/lib/slack/ask-command";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
+export async function POST(req: NextRequest) {
+  if (!config.slackSigningSecret) {
+    return Response.json({ error: "slack commands not configured" }, { status: 503 });
+  }
+
+  // The signature covers the raw bytes, so the body must be read as text and verified before it is
+  // parsed as a form — and re-parsed with URLSearchParams over the very same string.
+  const signature = req.headers.get("x-slack-signature") ?? "";
+  const timestamp = req.headers.get("x-slack-request-timestamp") ?? "";
+  const rawBody = await req.text();
+  if (!verifyRequestSignature(config.slackSigningSecret, signature, timestamp, rawBody)) {
+    return Response.json({ error: "invalid request signature" }, { status: 401 });
+  }
+
+  const params = new URLSearchParams(rawBody), command = params.get("command"), text = params.get("text")?.trim() ?? "";
+  // Authenticate first, then refuse unavailable account controls privately before storage or research.
+  if (isSlackAccountControl(params)) {
+    const recipient = slackChatRecipient(params);
+    const verb = command === "/keryx" ? exactChatControl(text) : !text && params.getAll("command").length === 1 ? exactChatControl(command ?? "") : null;
+    let reply = slackAccountLinkingUnavailable;
+    if (recipient && verb && params.getAll("text").length <= 1 && params.getAll("command").length === 1) {
+      try { reply = await chatControlReply({ command: verb, recipient, db: getDb,
+        binding: { origin: new URL(config.baseUrl).origin, network: config.networkId } }); }
+      catch { /* Static private refusal only; no credential/error reflection. */ }
+    }
+    return Response.json(reply === slackAccountLinkingUnavailable ? ephemeral(reply)
+      : { ...ephemeral(reply), unfurl_links: false, unfurl_media: false });
+  }
+  const control = command === "/language" ? { action: "language" as const, ...(text ? { value: text } : {}) }
+    : command === "/help" ? { action: "help" as const, ...(text ? { value: text } : {}) }
+    : command === "/keryx" && !text ? { action: "help" as const } : parseBotControl(text);
+  if (control) {
+    const reply = await botControlResponse({ control,
+      recipient: { platform: "slack", scope: params.get("team_id") ?? "", userId: params.get("user_id") ?? "" } });
+    return Response.json(ephemeral(control.action === "help" ? helpText(reply.language) : reply.text));
+  }
+  const cmd = parseSlashCommand(params);
+  if (!cmd) return Response.json(ephemeral(helpText()));
+  if (!config.sellerAddress) {
+    return Response.json(ephemeral(botResearchMessages(cmd.question, cmd.presentationLanguage)("treasuryUnavailable")));
+  }
+
+  // Treasury-funded like the site's free trial — throttle per Slack user, not per IP (every request
+  // arrives from Slack's servers, so IPs are useless as a key here).
+  const limited = await checkSponsoredResearchAdmission({ kind: "bot", platform: "slack", userId: cmd.userId });
+  if (limited) {
+    return Response.json(ephemeral(botResearchMessages(cmd.question, cmd.presentationLanguage)("sponsoredLimited")));
+  }
+
+  const budget = Math.min(config.defaultBudget, config.anonMaxBudget);
+  after(() => runAndReply(cmd, budget, { platform: "slack", scope: params.get("team_id") ?? "", userId: cmd.userId }, slackChatRecipient(params, true)));
+  return Response.json(ephemeral(botResearchMessages(cmd.question, cmd.presentationLanguage)("dispatching")));
+}
+
+/** Only-the-asker-sees-this reply, for the ack, help, throttles, and config notices. */
+function ephemeral(text: string) {
+  return { response_type: "ephemeral", text };
+}
+
+/** Runs the agent after the ack, then posts the answer (or a failure note) to the response_url. */
+async function runAndReply(cmd: SlashCommand, budget: number, recipient: Parameters<typeof botAnswerPresentation>[1], chatRecipient: ChatRecipient | null) {
+  if (hostedRunClaimsEnabled() && !privateSlackResponseUrl(cmd.responseUrl)) return;
+  let text: string;
+  try {
+    const queryId = crypto.randomUUID();
+    // Default-OFF research keeps its storage-free anonymous admission contract.
+    const owner = hostedRunClaimsEnabled() && chatRecipient ? await linkedChatOwner(await getDb(), chatRecipient,
+      { origin: new URL(config.baseUrl).origin, network: config.networkId }) : undefined;
+    const privateClaim = await prepareHostedRunClaim(queryId, owner);
+    // Resolve stored generation intent only after the owned reply path is admitted.
+    cmd.presentationLanguage = (await botAnswerPresentation(cmd.question, recipient)).language;
+    const run = await collectRun({
+      question: cmd.question,
+      ...(cmd.presentationLanguage ? { presentationLanguage: cmd.presentationLanguage } : {}),
+      budget,
+      queryId,
+      origin: "web",
+      ...(owner ? { asker: owner, fundingOwner: "treasury" as const } : {}),
+      provenance: { version: 1, surface: "slack", ownershipMethod: "unknown" },
+    });
+    const packet = await privateClaim?.complete(run);
+    text = buildAnswerText(run, cmd.presentationLanguage) + (packet ? `\n\n${privateRunClaimText(packet)}` : "");
+  } catch (err) {
+    console.error("[slack] /keryx run failed:", err);
+    text = buildErrorText(err, cmd.question, cmd.presentationLanguage);
+  }
+  await postToResponseUrl(cmd.responseUrl, text);
+}
+
+/**
+ * Deliver the finished answer privately via the command's response_url (valid ~30 min / 5 uses;
+ * one post suffices). The URL arrives in the request body, so even though signature verification
+ * already gates the request, the host is checked before any outbound fetch — this endpoint must
+ * never be turned into an SSRF/spam relay. The response_url carries a secret token, so it is never
+ * logged; only failures (and, on host mismatch, the bad host) are.
+ */
+async function postToResponseUrl(responseUrl: string, text: string) {
+  let host: string;
+  try {
+    host = new URL(responseUrl).host;
+  } catch {
+    console.error("[slack] response_url is not a valid URL — skipping delivery");
+    return;
+  }
+  if (host !== "hooks.slack.com") {
+    console.error(`[slack] refusing to POST to non-Slack response_url host: ${host}`);
+    return;
+  }
+  try {
+    const res = await fetch(responseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ response_type: "ephemeral", text, unfurl_links: false, unfurl_media: false }),
+    });
+    if (!res.ok) console.error(`[slack] response_url post failed: ${res.status}`);
+  } catch (err) {
+    console.error("[slack] response_url post failed", err instanceof Error ? err.name : "DeliveryError");
+  }
+}

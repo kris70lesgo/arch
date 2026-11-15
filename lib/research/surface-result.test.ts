@@ -1,0 +1,347 @@
+import { buildResearchReceipt, verifyResearchReceipt } from "../research-receipt";
+import { exportsFromCheckedReceipt } from "./receipt-exports";
+import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import { a2aResponseFromRun } from "../a2a/result";
+import { quoteA2aResearch } from "../a2a/pricing";
+import { buildAnswerContent, keryxMeta } from "../openai-compat";
+import { replayExtensionPopup } from "../display/extension-popup.test-fixture";
+import { remoteResearchResult } from "../mcp/remote-server";
+import type { QueryRun } from "../types";
+import { surfaceResearch } from "./surface-result";
+import { createReadCheckpointCapture } from "../agent/read-checkpoint-capture";
+import { actualReadCheckpoint } from "../research-audit/actual-read-policy";
+import { optimizerPacketFixture } from "../research-audit/optimizer-checkpoint.test-fixture";
+import type { ReasoningAttempt } from "../llm/reasoning-engine";
+import { readBibliographicTask } from "./bibliographic-task";
+import { recognizeBibliographicTask } from "./bibliographic-task-request";
+import { frenchArxivTask } from "./fixtures/bibliographic-task-questions";
+
+function attempt(overrides: Partial<ReasoningAttempt> = {}): ReasoningAttempt {
+  return { step: "decide", engine: "llm:deepseek:recorded-model", tier: 0, attempt: 1,
+    startedAt: 100, durationMs: 10, outcome: "served", ...overrides };
+}
+
+export function fixture(): QueryRun {
+  const identity = { sourceKind: "public-reference" as const, itemId: "article-1", itemTitle: "Observed paper",
+    itemUrl: "https://example.org/paper", contentVersion: "sha256:observed" };
+  return { id: "run", question: "Question?", budget: 0.03, engine: "heuristic", answer: "Evidence [P1]",
+    subClaims: ["Recorded claim"], decisions: [], citations: [{ ...identity, marker: "P1", sourceId: "public:paper",
+      sourceName: "Publisher", weight: 1, reward: 0, rationale: "Actual public evidence" }],
+    evidence: [{ ...identity, claimIndex: 0, claim: "Recorded claim", marker: "P1", sourceId: "public:paper",
+      sourceName: "Publisher", quote: "Exact original quote", support: 0.8, qualifiesForAnswer: true, qualifiesForReward: false }],
+    totalSpent: 0, totalToCreators: 0, trace: [], createdAt: "2026-10-01T00:00:00Z", paymentMode: "real" };
+}
+
+describe("research surface parity", () => {
+  it.each([
+    ["matching URL", "https://example.org/paper", "https://example.org/paper", true],
+    ["copied origin", "https://example.org/paper", "https://copied.example/paper", false],
+    ["changed article version", "https://example.org/paper?v=1", "https://example.org/paper?v=2", false],
+    ["missing citation URL", undefined, "https://example.org/paper", false],
+    ["missing excerpt URL", "https://example.org/paper", undefined, false],
+    ["legacy URLs both absent", undefined, undefined, true],
+  ] as const)("preserves %s evidence identity across shared transports without changing the stored run or receipt", (_name, citationUrl, excerptUrl, accepted) => {
+    const run = fixture();
+    run.citations[0].itemUrl = citationUrl;
+    run.evidence![0].itemUrl = excerptUrl;
+    const before = JSON.stringify(run), receipt = buildResearchReceipt(run, []);
+    for (const output of [surfaceResearch(run), remoteResearchResult(run), keryxMeta(run),
+      a2aResponseFromRun(run, quoteA2aResearch(0.03, "deep"))]) {
+      expect(output.evidence).toHaveLength(accepted ? 1 : 0);
+      expect(output.researchExports.evidenceCsv.includes("Exact original quote")).toBe(accepted);
+      expect(output.citations).toHaveLength(1);
+    }
+    expect(JSON.stringify(run)).toBe(before);
+    expect(buildResearchReceipt(run, [])).toEqual(receipt);
+  });
+  it("projects one closed assertion packet consistently without changing historical receipt bytes or adding private sidecars", () => {
+    const run = fixture(), receipt = buildResearchReceipt(run, []), capture = createReadCheckpointCapture(true);
+    const check = { kind: "channel", creatorFree: false, cache: true } as const;
+    capture.append(check, actualReadCheckpoint(check), { candidate: 1, round: 0, proposal: "BUY", plan: "CACHE", price: 0.002 });
+    const retained = capture.finish(); expect(retained?.status).toBe("available");
+    run.trace = [{ phase: "done", message: "done", ts: 0, readCheckpoints: retained }];
+    for (const result of [surfaceResearch(run), remoteResearchResult(run), keryxMeta(run), a2aResponseFromRun(run, quoteA2aResearch(0.03, "deep"))]) {
+      expect(result.readCheckpoints).toEqual(retained);
+      const privateRun = { ...run, id: "prv_private-fixture" };
+      expect(surfaceResearch(privateRun).readCheckpoints).toEqual({ status: "unavailable" });
+    }
+    expect(buildResearchReceipt(run, [])).toEqual(receipt);
+  });
+  it("projects v2 empty-stop capture across public transports while private and native-owned records remain unavailable", () => {
+    const run = fixture(), receipt = buildResearchReceipt(run, []), capture = createReadCheckpointCapture(true, undefined, true);
+    capture.stop("discovery", 0); const retained = capture.finish(); expect(retained?.status).toBe("available");
+    run.trace = [{ phase: "done", message: "done", ts: 0, readCheckpoints: retained }];
+    const results = (value: QueryRun) => [surfaceResearch(value), remoteResearchResult(value), keryxMeta(value),
+      a2aResponseFromRun(value, quoteA2aResearch(0.03, "deep"))];
+    for (const result of results(run)) expect(result.readCheckpoints).toEqual(retained);
+    for (const restricted of [{ ...run, id: "prv_private" }, { ...run, originalFulfillment: undefined }])
+      for (const result of results(restricted)) expect(result.readCheckpoints).toEqual({ status: "unavailable" });
+    expect(buildResearchReceipt(run, [])).toEqual(receipt);
+  });
+  it("projects v3 optimizer replay consistently while preserving private and original unavailable boundaries", () => {
+    const run = fixture(), receipt = buildResearchReceipt(run, []), capture = optimizerPacketFixture();
+    run.trace = [{ phase: "done", message: "done", ts: 0, readCheckpoints: capture }];
+    for (const result of [surfaceResearch(run), remoteResearchResult(run), keryxMeta(run), a2aResponseFromRun(run, quoteA2aResearch(0.03, "deep"))])
+      expect(result.readCheckpoints).toEqual(capture);
+    expect(surfaceResearch({ ...run, id: "prv_private" }).readCheckpoints).toEqual({ status: "unavailable" });
+    expect(surfaceResearch({ ...run, originalFulfillment: undefined }).readCheckpoints).toEqual({ status: "unavailable" });
+    expect(buildResearchReceipt(run, [])).toEqual(receipt);
+  });
+  it("exports only new closed ingress labels and leaves legacy projections and portable receipts unchanged", () => {
+    const legacy = fixture(), receipt = buildResearchReceipt(legacy, []);
+    expect(surfaceResearch(legacy)).not.toHaveProperty("provenance");
+    const provenance = { version: 1, surface: "api", ownershipMethod: "api-key" } as const;
+    const fresh = { ...legacy, provenance };
+    for (const result of [surfaceResearch(fresh), remoteResearchResult(fresh), keryxMeta(fresh),
+      a2aResponseFromRun(fresh, quoteA2aResearch(0.03, "deep"))]) {
+      expect(result.provenance).toEqual(provenance); expect(result.provenance).not.toBe(provenance);
+      expect(result).not.toHaveProperty("asker");
+    }
+    expect(buildResearchReceipt(fresh, [])).toEqual(receipt);
+    expect(surfaceResearch({ ...fresh, provenance: { ...provenance, wallet: "PRIVATE_WALLET" } as never })).not.toHaveProperty("provenance");
+  });
+
+  it("retains optional ingress beside metadata CSL downloads without extending stored bibliography or changing original receipt bytes", async () => {
+    const run = fixture();
+    run.provenance = { version: 1, surface: "api", ownershipMethod: "api-key" };
+    const body = fs.readFileSync(new URL("./fixtures/arxiv-2005.11401v4-bibliography.html", import.meta.url), "utf8");
+    run.bibliography = await readBibliographicTask(recognizeBibliographicTask(frenchArxivTask)!, { reader: async url => ({
+      requestedUrl: url, finalUrl: url, observedAt: run.createdAt, mediaType: "text/html", body, truncated: false,
+    }) });
+    // Historical archives retain their original ordinal BibTeX snapshot even after new exports adopt stable work keys.
+    const legacyBibtex = run.bibliography.bibliographyExports.bibtex.content.replace(/^(@\w+\{)[^,]+,/, "$1keryxPaper1,");
+    run.bibliography.bibliographyExports.bibtex.content = legacyBibtex;
+    const beforeRun = JSON.stringify(run), beforeReceipt = JSON.stringify(buildResearchReceipt(run, []));
+    const result = surfaceResearch(run);
+    expect(result.provenance).toEqual(run.provenance);
+    expect(result.bibliography).toEqual(run.bibliography);
+    expect(result.bibliographyExports!.bibtex.content).toBe(legacyBibtex);
+    expect(result.bibliography!.bibliographyExports).not.toHaveProperty("cslJson");
+    expect(JSON.parse(result.bibliographyExports!.cslJson.content)[0]).toMatchObject({ archive_location: "2005.11401v4" });
+    expect(result.bibliographyExports!.cslJson.content).toContain("no Keryx read, citation or settlement evidence");
+    expect(JSON.stringify(run)).toBe(beforeRun);
+    expect(JSON.stringify(buildResearchReceipt(run, []))).toBe(beforeReceipt);
+  });
+  it("retains trace-only inner review ceilings across hosted transports without inventing attempts or exporting private detail", () => {
+    const run = fixture();
+    run.trace = [{ phase: "synthesize", ts: 1, message: "Fixed diagnostic",
+      detail: { reasoningOutputLimit: { stage: "review", outputTokenLimit: 4096, body: "PRIVATE_REVIEW_BODY" } } }];
+    for (const result of [surfaceResearch(run), remoteResearchResult(run), keryxMeta(run),
+      a2aResponseFromRun(run, quoteA2aResearch(0.03, "deep"))]) {
+      expect(result.reasoningAttempts).toEqual([]);
+      expect(result.reasoning.telemetry).toBe("unavailable");
+      expect(result.outputLimits).toEqual([{ step: "synthesize", stage: "review", outputTokenLimit: 4096 }]);
+      expect(result.citations).toHaveLength(1);
+      expect(JSON.stringify(result)).not.toContain("PRIVATE_REVIEW_BODY");
+    }
+    const receipt = buildResearchReceipt(run, []);
+    expect(verifyResearchReceipt(receipt).valid).toBe(true);
+    expect(JSON.stringify(receipt)).not.toMatch(/outputTokenLimit|PRIVATE_REVIEW_BODY/);
+  });
+
+  it("keeps operating fee allocations separate from creator totals and points to per-payment authority", async () => {
+    const run = fixture();
+    run.operatingFee = { policy: "public-citation-operating-fee-v1", beneficiary: "0xfounder",
+      amountUsdc: 0.004, status: "pending", paymentId: "original-fee", allocations: [
+        { marker: "P1", sourceId: "public:paper", itemUrl: "https://example.org/paper", amountUsdc: 0.004 },
+      ] };
+    for (const output of [surfaceResearch(run), remoteResearchResult(run), keryxMeta(run)]) {
+      expect(output.operatingFee).toMatchObject({ amountUsdc: 0.004, status: "pending",
+        funding: "keryx-sponsored", settlementAuthority: "per-payment-ledger" });
+      expect(output.creatorRewardAllocations).toBe(0);
+    }
+    expect(keryxMeta(run).totalToCreators).toBe(0);
+    expect(remoteResearchResult(run).totalToCreatorsUsdc).toBe(0);
+    expect(surfaceResearch(fixture()).operatingFee).toBeUndefined();
+    expect(buildAnswerContent(run)).toContain("Keryx operating fee allocation: $0.004000 USDC (pending)");
+    await replayExtensionPopup([{ choices: [{ delta: { content: buildAnswerContent(run) } }] },
+      { choices: [{ delta: {}, finish_reason: "stop" }], keryx: keryxMeta(run) }], document => {
+      expect(document.getElementById("paid-total-usd")!.textContent).toBe("$0.0000");
+      expect(document.getElementById("answer")!.textContent)
+        .toContain("Keryx operating fee allocation: $0.004000 USDC (pending)");
+    });
+  });
+  it("retains typed request-local refusal metadata on the one shared bounded reasoning contract", () => {
+    const run = fixture(); run.engine = "llm:deepseek:recorded-model";
+    run.reasoningAttempts = [attempt({ outcome: "failed", error: "output_validation", outputTokenLimit: 2560 }),
+      attempt({ engine: "llm:cloudflare:recorded-model", tier: 1, outcome: "input-limited", error: "input_limit",
+        inputBounds: { promptUtf8Bytes: 25000, requestedOutputTokens: 8192, maximumCombinedUnits: 23000 } }),
+      attempt({ engine: "heuristic", tier: 2 })];
+    for (const result of [surfaceResearch(run), remoteResearchResult(run), keryxMeta(run),
+      a2aResponseFromRun(run, quoteA2aResearch(0.03, "deep"))]) {
+      expect(result.reasoningAttempts).toEqual(run.reasoningAttempts);
+      expect(result.reasoning).toMatchObject({ telemetry: "recorded", attemptsOmitted: 0,
+        sourceSelection: { state: "heuristic", servingEngines: ["heuristic"], fallbackUsed: true } });
+      expect(result).not.toHaveProperty("reasoningTelemetry"); expect(result).not.toHaveProperty("reasoningServing");
+    }
+  });
+
+  it("exposes actual heuristic source selection despite a model aggregate label and other model-served steps", () => {
+    const run = fixture(); run.engine = "llm:deepseek:recorded-model";
+    run.reasoningAttempts = [attempt({ step: "decompose" }),
+      attempt({ outcome: "circuit-open", attempt: 0, durationMs: 0, retryAfterMs: 5000 }),
+      attempt({ engine: "llm:cloudflare:recorded-model", tier: 1, outcome: "failed", status: 413, error: "invalid_request" }),
+      attempt({ engine: "heuristic", tier: 2 })];
+    for (const result of [surfaceResearch(run), remoteResearchResult(run), keryxMeta(run),
+      a2aResponseFromRun(run, quoteA2aResearch(0.03, "deep"))]) {
+      expect(result.reasoningAttempts).toEqual(run.reasoningAttempts);
+      expect(result.reasoning.telemetry).toBe("recorded");
+      expect(result.reasoning.sourceSelection).toMatchObject({ state: "heuristic", servingEngines: ["heuristic"], fallbackUsed: true });
+      expect(result.reasoning.steps.find(step => step.step === "decompose")).toMatchObject({ state: "model", fallbackUsed: false });
+    }
+    expect(remoteResearchResult(run).engine).toBe(run.engine);
+  });
+
+  it("retains mixed serving across repeated and overlapping steps without selecting the last provider as sole authority", () => {
+    const run = fixture();
+    run.reasoningAttempts = [attempt({ engine: "heuristic", tier: 2, startedAt: 200 }),
+      attempt({ step: "synthesize", startedAt: 150 }), attempt({ startedAt: 100 }),
+      attempt({ step: "sufficiency", engine: "llm:mimo:recorded-model", tier: 1, startedAt: 120 }),
+      attempt({ step: "sufficiency", startedAt: 130 })];
+    const original = JSON.stringify(run.reasoningAttempts), result = surfaceResearch(run);
+    expect(result.reasoning.sourceSelection).toMatchObject({ state: "mixed", servingEngines: ["heuristic", "llm:deepseek:recorded-model"], fallbackUsed: true });
+    expect(result.reasoning.steps.find(step => step.step === "sufficiency")).toMatchObject({ state: "model", servingEngines: ["llm:mimo:recorded-model", "llm:deepseek:recorded-model"], fallbackUsed: true });
+    expect(JSON.stringify(run.reasoningAttempts)).toBe(original);
+  });
+
+  it("keeps historical or missing selection telemetry unknown instead of inferring it from engine or another step", () => {
+    const run = fixture(); run.engine = "llm:deepseek:historical-model";
+    for (const reasoningAttempts of [undefined, [], [attempt({ step: "decompose" })]]) {
+      run.reasoningAttempts = reasoningAttempts;
+      const result = remoteResearchResult(run);
+      expect(result.engine).toBe(run.engine);
+      expect(result.reasoning.sourceSelection).toMatchObject({ state: "unknown", servingEngines: [], fallbackUsed: null });
+    }
+  });
+
+  it("allowlists public attempt fields and marks malformed records incomplete without exposing private data", () => {
+    const run = fixture();
+    run.reasoningAttempts = [Object.assign(attempt(), { prompt: "PRIVATE_PROMPT", providerBody: "PRIVATE_BODY" }),
+      Object.assign(attempt({ durationMs: -1 }), { exception: "PRIVATE_EXCEPTION" })];
+    const result = surfaceResearch(run);
+    expect(result.reasoningAttempts).toEqual([attempt()]);
+    expect(result.reasoning).toMatchObject({ telemetry: "incomplete", attemptsOmitted: 1,
+      sourceSelection: { state: "unknown", fallbackUsed: null } });
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_|providerBody|prompt|exception/);
+    expect(result.citations).toHaveLength(1);
+  });
+
+  it("withholds model-only selection certainty when a bounded prefix omits a later heuristic attempt", () => {
+    const run = fixture();
+    run.reasoningAttempts = [...Array.from({ length: 256 }, (_, startedAt) => attempt({ startedAt })),
+      attempt({ engine: "heuristic", tier: 2, startedAt: 257 })];
+    const result = surfaceResearch(run);
+    expect(result.reasoningAttempts).toHaveLength(256);
+    expect(result.reasoning).toMatchObject({ telemetry: "incomplete", attemptsOmitted: 1,
+      sourceSelection: { state: "unknown", servingEngines: ["llm:deepseek:recorded-model"], fallbackUsed: null } });
+    expect(run.reasoningAttempts).toHaveLength(257);
+  });
+
+  it("retains bounded claim policy and creator-free provenance through shared transports and portable receipts", () => {
+    const run = fixture(), policy = { id: "a".repeat(64), revision: 3, mode: "free" as const,
+      verifiedAt: "2026-10-01T00:00:00.000Z", effectiveAt: "2026-10-01T00:00:00.000Z" };
+    for (const record of [run.citations[0], run.evidence![0]]) {
+      delete record.sourceKind;
+      Object.assign(record, { sourceId: "owned", sourceClaim: { ...policy, privateNonce: "MUST_NOT_EXPORT" }, accessKind: "creator-free" });
+    }
+    for (const result of [surfaceResearch(run), remoteResearchResult(run), keryxMeta(run),
+      a2aResponseFromRun(run, quoteA2aResearch(0.03, "deep"))]) {
+      expect(result.citations[0]).toMatchObject({ sourceClaim: policy, accessKind: "creator-free" });
+      expect(result.evidence[0]).toMatchObject({ sourceClaim: policy, accessKind: "creator-free", qualifiesForReward: false });
+      expect(JSON.stringify(result)).not.toContain("MUST_NOT_EXPORT");
+    }
+    const receipt = buildResearchReceipt(run, []);
+    expect(verifyResearchReceipt(receipt).valid).toBe(true);
+    expect(receipt.payload.citations[0]).toMatchObject({ sourceClaim: policy, accessKind: "creator-free" });
+    expect(receipt.payload.claims[0].evidence[0]).toMatchObject({ sourceClaim: policy, accessKind: "creator-free" });
+    expect(JSON.stringify(receipt)).not.toContain("MUST_NOT_EXPORT");
+  });
+  it("does not obstruct saved-run recovery or fabricate a missing claim ledger", () => {
+    const run = fixture();
+    delete (run as Partial<QueryRun>).subClaims;
+    run.evidence = undefined;
+    run.claimCoverage = undefined;
+    const result = a2aResponseFromRun(run, quoteA2aResearch(0.03, "deep"));
+    expect(result.subClaims).toEqual([]);
+    expect(result.evidence).toEqual([]);
+    expect(result.answer).toBe(run.answer);
+    expect(result.researchExports.evidenceCsv).not.toContain("Recorded claim");
+    expect(result.researchExports.bibtex.count).toBe(1);
+    expect(result.creatorsPaid).toBeNull();
+  });
+  it("retains public article identity, answer evidence and reusable exports on all transports", () => {
+    const run = fixture();
+    for (const result of [surfaceResearch(run), remoteResearchResult(run), keryxMeta(run),
+      a2aResponseFromRun(run, quoteA2aResearch(0.03, "deep"))]) {
+      expect(result.citations[0]).toMatchObject({ marker: "P1", itemUrl: "https://example.org/paper", rewardPlannedUsdc: 0 });
+      expect(result.evidence[0]).toMatchObject({ qualifiesForAnswer: true, qualifiesForReward: false, itemId: "article-1" });
+      expect(result.researchExports.bibtex.count).toBe(1);
+      expect(result.researchExports.ris.content).toContain("TI  - Observed paper");
+      expect(JSON.parse(result.researchExports.cslJson.content)[0]).toMatchObject({ type: "webpage", title: "Observed paper", URL: "https://example.org/paper" });
+      expect(result.researchExports.evidenceCsv).toContain("Exact original quote");
+      expect(result.creatorsPaid).toBeNull();
+      expect(result.creatorRewardAllocations).toBe(0);
+      expect(result.creatorsReferenced).toBe(1);
+    }
+  });
+
+  it("matches actual receipt-derived scholarly exports without enrichment", () => {
+    const run = fixture();
+    run.citations[0].scholarly = { provider: "crossref", recordUrl: "https://api.crossref.org/works/10.1234/example", retrievedAt: run.createdAt, title: "Observed paper", authors: ["Recorded Author"], workType: "journal-article", peerReview: "unknown", doi: "10.1234/example", evidenceScope: "publisher-page" };
+    const receipt = buildResearchReceipt(run, []);
+    expect(exportsFromCheckedReceipt(receipt)).toEqual(surfaceResearch(run).researchExports);
+    expect(exportsFromCheckedReceipt(receipt).bibtex.content).toContain("10.1234/example");
+  });
+
+  it("preserves preprint RIS identity and literal notes across hosted and checked-receipt exports", () => {
+    const run = fixture();
+    for (const record of [run.citations[0], run.evidence![0]]) Object.assign(record, {
+      sourceId: "public:arxiv", sourceName: "Source <b>literal</b> & research", itemId: "1706.03762v7",
+      itemUrl: "https://arxiv.org/abs/1706.03762v7", contentVersion: "v7",
+    });
+    run.citations[0].scholarly = { provider: "arxiv", recordUrl: "https://export.arxiv.org/api/query",
+      retrievedAt: run.createdAt, title: "Observed paper", authors: [], workType: "preprint", peerReview: "unknown",
+      arxivId: "1706.03762v7", evidenceScope: "abstract-page" };
+    const original = JSON.stringify(run), receipt = buildResearchReceipt(run, []);
+    expect(verifyResearchReceipt(receipt).valid).toBe(true);
+    const expected = surfaceResearch(run).researchExports;
+    for (const output of [remoteResearchResult(run), keryxMeta(run), a2aResponseFromRun(run, quoteA2aResearch(0.03, "deep"))]) {
+      expect(output.researchExports).toEqual(expected);
+      expect(output.researchExports.ris.content).toContain("TY  - MANSCPT");
+      expect(output.researchExports.ris.content).toContain("AN  - arXiv:1706.03762v7");
+      expect(output.researchExports.ris.content).toContain("Source &lt;b&gt;literal&lt;/b&gt; &amp; research");
+      expect(output.researchExports.ris.content).toContain("Read scope: abstract-page. Preprint. Peer review unknown");
+    }
+    expect(exportsFromCheckedReceipt(receipt)).toEqual(expected);
+    expect(JSON.stringify(run)).toBe(original);
+  });
+
+  it("refuses mismatched and unbounded excerpts and strips unexpected internal fields", () => {
+    const run = fixture();
+    run.evidence = [run.evidence![0], { ...run.evidence![0], contentVersion: "other" },
+      { ...run.evidence![0], itemId: "other" }, { ...run.evidence![0], quote: "x".repeat(241) }];
+    Object.assign(run.citations[0], { privateKey: "secret", plaintext: "gated body" });
+    Object.assign(run.evidence[0], { privateKey: "secret" });
+    const result = surfaceResearch(run);
+    expect(result.evidence).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toMatch(/secret|gated body|privateKey/);
+  });
+});
+
+
+it("demotes synthetic evidence across A2A, remote MCP, OpenAI and receipt exports", () => {
+  const run = fixture(); run.citations[0].evidenceProvenance = "synthetic-demo";
+  run.evidence![0].evidenceProvenance = "synthetic-demo";
+  run.answer = "Synthetic empirical benchmark median 178ms p95 240ms [P1].";
+  run.claimCoverage = [{ claimIndex: 0, claim: "Recorded claim", coverage: 0.8, coveredBy: ["P1"] }];
+  for (const result of [remoteResearchResult(run), a2aResponseFromRun(run, quoteA2aResearch(0.03, "deep"))]) {
+    expect(result.answer).toContain("Illustrative demo content");
+    expect(result.citations[0].evidenceProvenance).toBe("synthetic-demo");
+    expect(result.evidence[0].qualifiesForAnswer).toBe(false);
+    expect(result.claimCoverage[0]).toMatchObject({ coverage: 0, coveredBy: [] });
+    expect(result.paymentMode).toBe("real");
+  }
+  expect(keryxMeta(run).evidence[0].qualifiesForAnswer).toBe(false);
+  expect(keryxMeta(run).researchExports.bibtex.content).toContain("ILLUSTRATIVE SYNTHETIC DEMO");
+});

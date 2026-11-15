@@ -1,0 +1,568 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "locales/en/reports.ts",
+  "sourceSha256": "c382523e9b0216952efe118a5e28d1ba77c298f0c6bb7c38fe28d5b8e1ca2b5b",
+  "entries": {
+    "reportEvidence.title": {
+      "source": "Recorded evidence",
+      "text": "Bukti tercatat"
+    },
+    "reportEvidence.recorded": {
+      "source": "Targets with inspectable excerpts: {count}/{total}.",
+      "text": "Topik dengan kutipan yang dapat diperiksa: {count}/{total}."
+    },
+    "reportEvidence.unavailable": {
+      "source": "This report has no stored excerpt ledger; target support cannot be inspected here.",
+      "text": "Laporan ini tidak memiliki catatan kutipan tersimpan; dukungan bagi topik riset tidak dapat diperiksa di sini."
+    },
+    "reportEvidence.notice": {
+      "source": "Excerpt presence and estimated support do not establish a complete or factually correct answer.",
+      "text": "Adanya kutipan dan perkiraan dukungan tidak membuktikan bahwa jawaban lengkap atau benar secara faktual."
+    },
+    "reportEvidence.inspectCount": {
+      "source": "Targets with missing excerpts or a low recorded support estimate: {count}.",
+      "text": "Topik tanpa kutipan atau dengan perkiraan dukungan tercatat yang rendah: {count}."
+    },
+    "reportEvidence.inspect": {
+      "source": "Inspect targets and prepare a follow-up",
+      "text": "Periksa topik dan siapkan pertanyaan lanjutan"
+    },
+    "reportEvidence.targetUnavailable": {
+      "source": "Excerpt ledger unavailable",
+      "text": "Catatan kutipan tidak tersedia"
+    },
+    "reportEvidence.missing": {
+      "source": "No qualifying excerpt recorded",
+      "text": "Tidak ada kutipan yang memenuhi kriteria yang tercatat"
+    },
+    "reportEvidence.excerpts": {
+      "source": "Inspectable excerpts: {count}",
+      "text": "Kutipan yang dapat diperiksa: {count}"
+    },
+    "reportEvidence.prepare": {
+      "source": "Prepare follow-up",
+      "text": "Siapkan pertanyaan lanjutan"
+    },
+    "reportEvidence.prepareNotice": {
+      "source": "Opens an editable question. Review the question and budget before starting a new research run, which may incur charges.",
+      "text": "Membuka pertanyaan yang dapat diedit. Tinjau pertanyaan dan anggaran sebelum memulai riset baru, yang dapat menimbulkan biaya."
+    },
+    "reportEvidence.draft": {
+      "source": "Investigate this research target: “{target}”. Find source excerpts, explain what they support and identify what remains unknown. Original question: “{question}”.",
+      "text": "Teliti topik riset ini: “{target}”. Temukan kutipan sumber, jelaskan apa yang didukungnya, dan identifikasi hal yang masih belum diketahui. Pertanyaan asli: “{question}”."
+    },
+    "reportEvidence.selection": {
+      "source": "Selected sources: {selected}/{eligible} proposals",
+      "text": "Sumber dipilih: {selected}/{eligible} usulan"
+    },
+    "reportEvidence.selectionNotice": {
+      "source": "Source selection is a plan. Inspect the recorded excerpts for actual evidence; selection counts do not measure answer support.",
+      "text": "Pemilihan sumber adalah rencana. Periksa kutipan tercatat untuk melihat bukti yang sebenarnya; jumlah sumber yang dipilih tidak mengukur dukungan terhadap jawaban."
+    },
+    "reportReading.estimated": {
+      "source": "{coverage}% estimated",
+      "text": "Perkiraan {coverage}%"
+    },
+    "reportActions.copy": {
+      "source": "Copy report",
+      "text": "Salin laporan"
+    },
+    "reportActions.download": {
+      "source": "Download report",
+      "text": "Unduh laporan"
+    },
+    "reportActions.openSaved": {
+      "source": "Open saved report",
+      "text": "Buka laporan tersimpan"
+    },
+    "reportActions.copyUnavailable": {
+      "source": "Copy unavailable. Download the report instead.",
+      "text": "Tidak dapat menyalin. Unduh laporan sebagai gantinya."
+    },
+    "reportActions.downloadUnavailable": {
+      "source": "Download unavailable. Open the saved report instead.",
+      "text": "Tidak dapat mengunduh. Buka laporan tersimpan sebagai gantinya."
+    },
+    "citationExport.title": {
+      "source": "Reference export",
+      "text": "Ekspor referensi"
+    },
+    "citationExport.bibtex": {
+      "source": "Download BibTeX",
+      "text": "Unduh BibTeX"
+    },
+    "citationExport.cslJson": {
+      "source": "Download CSL-JSON",
+      "text": "Unduh CSL-JSON"
+    },
+    "citationExport.ris": {
+      "source": "Download RIS (Zotero)",
+      "text": "Unduh RIS (Zotero)"
+    },
+    "citationExport.references.one": {
+      "source": "{count} article references. Recorded titles, links and dates; observed scholarly records also include supplied authors, DOI and journal metadata with read limits. Review metadata before using in a paper. Import RIS into Zotero with File → Import.",
+      "text": "Referensi artikel: {count}. Judul, tautan, dan tanggal yang tercatat; rekaman ilmiah yang diamati juga mencakup penulis, DOI, dan metadata jurnal yang diberikan, dengan batas pembacaan. Tinjau metadata sebelum menggunakannya dalam makalah. Impor RIS ke Zotero melalui File → Import."
+    },
+    "citationExport.omitted.one": {
+      "source": "{count} citations omitted because an article title or usable article link is unavailable.",
+      "text": "Sitasi yang dihilangkan karena judul artikel atau tautan artikel yang dapat digunakan tidak tersedia: {count}."
+    },
+    "citationExport.references.other": {
+      "source": "{count} article references. Recorded titles, links and dates; observed scholarly records also include supplied authors, DOI and journal metadata with read limits. Review metadata before using in a paper. Import RIS into Zotero with File → Import.",
+      "text": "Referensi artikel: {count}. Judul, tautan, dan tanggal yang tercatat; rekaman ilmiah yang diamati juga mencakup penulis, DOI, dan metadata jurnal yang diberikan, dengan batas pembacaan. Tinjau metadata sebelum menggunakannya dalam makalah. Impor RIS ke Zotero melalui File → Import."
+    },
+    "citationExport.omitted.other": {
+      "source": "{count} citations omitted because an article title or usable article link is unavailable.",
+      "text": "Sitasi yang dihilangkan karena judul artikel atau tautan artikel yang dapat digunakan tidak tersedia: {count}."
+    },
+    "bibliographyExport.label": {
+      "source": "Bibliography exports",
+      "text": "Ekspor bibliografi"
+    },
+    "bibliographyExport.provenance": {
+      "source": "Original metadata and field provenance",
+      "text": "Metadata asli dan asal setiap bidang"
+    },
+    "bibliographyExport.bibtex": {
+      "source": "Download BibTeX",
+      "text": "Unduh BibTeX"
+    },
+    "bibliographyExport.cslJson": {
+      "source": "Download CSL-JSON",
+      "text": "Unduh CSL-JSON"
+    },
+    "bibliographyExport.ris": {
+      "source": "Download RIS",
+      "text": "Unduh RIS"
+    },
+    "reportSourceLens.unavailable": {
+      "source": "Source inspection unavailable: this report has no stored excerpt ledger.",
+      "text": "Pemeriksaan sumber tidak tersedia: laporan ini tidak memiliki catatan kutipan teks yang tersimpan."
+    },
+    "reportSourceLens.empty": {
+      "source": "No inspectable non-demo excerpts are recorded for source inspection.",
+      "text": "Tidak ada kutipan teks selain demo yang tercatat dan dapat diperiksa dalam pemeriksaan sumber."
+    },
+    "reportSourceLens.title": {
+      "source": "What if a source were missing?",
+      "text": "Bagaimana jika satu sumber tidak ada?"
+    },
+    "reportSourceLens.localView": {
+      "source": "Local excerpt view",
+      "text": "Tampilan kutipan teks lokal"
+    },
+    "reportSourceLens.originalExcerpts": {
+      "source": "Original excerpts",
+      "text": "Kutipan teks asli"
+    },
+    "reportSourceLens.viewExcerpts": {
+      "source": "Excerpts in this view",
+      "text": "Kutipan teks dalam tampilan ini"
+    },
+    "reportSourceLens.intro": {
+      "source": "Temporarily leave out one source to see which research targets retain excerpts in this report.",
+      "text": "Kecualikan sementara satu sumber untuk melihat sasaran penelitian mana yang masih memiliki kutipan teks dalam laporan ini."
+    },
+    "reportSourceLens.select": {
+      "source": "Inspect without",
+      "text": "Periksa tanpa"
+    },
+    "reportSourceLens.keepAll": {
+      "source": "Keep every source",
+      "text": "Pertahankan semua sumber"
+    },
+    "reportSourceLens.restore": {
+      "source": "Restore source",
+      "text": "Pulihkan sumber"
+    },
+    "reportSourceLens.original": {
+      "source": "Showing the original excerpt ledger.",
+      "text": "Menampilkan catatan kutipan teks asli."
+    },
+    "reportSourceLens.missing": {
+      "source": "No inspectable excerpts in the original report.",
+      "text": "Tidak ada kutipan teks yang dapat diperiksa dalam laporan asli."
+    },
+    "reportSourceLens.lost": {
+      "source": "No excerpts remain in this view.",
+      "text": "Tidak ada kutipan teks yang tersisa dalam tampilan ini."
+    },
+    "reportSourceLens.inspect": {
+      "source": "Inspect remaining excerpts",
+      "text": "Periksa kutipan teks yang tersisa"
+    },
+    "reportSourceLens.remaining.one": {
+      "source": "{count} recorded excerpt remains.",
+      "text": "Tersisa {count} kutipan teks yang tercatat."
+    },
+    "reportSourceLens.remaining.other": {
+      "source": "{count} recorded excerpts remain.",
+      "text": "Tersisa {count} kutipan teks yang tercatat."
+    },
+    "reportSourceLens.omitted.one": {
+      "source": "{count} research target loses its last recorded excerpt without {source}.",
+      "text": "{count} sasaran penelitian kehilangan kutipan teks terakhir yang tercatat tanpa {source}."
+    },
+    "reportSourceLens.omitted.other": {
+      "source": "{count} research targets lose their last recorded excerpt without {source}.",
+      "text": "{count} sasaran penelitian kehilangan kutipan teks terakhir yang tercatat tanpa {source}."
+    },
+    "reportSourceLens.alreadyMissing.one": {
+      "source": " {count} target already had no inspectable excerpts.",
+      "text": " {count} sasaran sejak awal tidak memiliki kutipan teks yang dapat diperiksa."
+    },
+    "reportSourceLens.alreadyMissing.other": {
+      "source": " {count} targets already had no inspectable excerpts.",
+      "text": " {count} sasaran sejak awal tidak memiliki kutipan teks yang dapat diperiksa."
+    },
+    "reportSourceLens.version": {
+      "source": "{marker} · {source} · version {version}",
+      "text": "{marker} · {source} · versi {version}"
+    },
+    "reportSourceLens.versionTitle": {
+      "source": "{marker} · {source} · {title} · version {version}",
+      "text": "{marker} · {source} · {title} · versi {version}"
+    },
+    "literatureWorkspace.staleFocusError": {
+      "source": "Your review focus changed in another tab. Load the saved focus before saving again.",
+      "text": "Fokus tinjauan berubah di tab lain. Muat fokus tersimpan sebelum menyimpan lagi."
+    },
+    "literatureWorkspace.focusSaved": {
+      "source": "Review focus saved on this browser.",
+      "text": "Fokus tinjauan disimpan di browser ini."
+    },
+    "literatureWorkspace.titleLabel": {
+      "source": "Review title",
+      "text": "Judul tinjauan"
+    },
+    "literatureWorkspace.titlePlaceholder": {
+      "source": "My literature review",
+      "text": "Tinjauan pustaka saya"
+    },
+    "literatureWorkspace.questionLabel": {
+      "source": "Research question or inclusion criteria",
+      "text": "Pertanyaan penelitian atau kriteria inklusi"
+    },
+    "literatureWorkspace.staleFocus": {
+      "source": "The saved review focus changed in another tab or restore. Your unsaved draft is still here.",
+      "text": "Fokus tinjauan tersimpan berubah di tab lain atau saat pemulihan. Draf Anda yang belum disimpan masih ada di sini."
+    },
+    "literatureWorkspace.loadFocus": {
+      "source": "Load saved focus",
+      "text": "Muat fokus tersimpan"
+    },
+    "literatureWorkspace.saveFocus": {
+      "source": "Save review focus",
+      "text": "Simpan fokus tinjauan"
+    },
+    "literatureWorkspace.stalePaperError": {
+      "source": "This paper changed in another tab. Load its saved screening before saving again.",
+      "text": "Makalah ini berubah di tab lain. Muat penyaringan tersimpannya sebelum menyimpan lagi."
+    },
+    "literatureWorkspace.screeningSaved": {
+      "source": "Screening and notes saved on this browser.",
+      "text": "Penyaringan dan catatan disimpan di browser ini."
+    },
+    "literatureWorkspace.screeningDecision": {
+      "source": "Your screening decision",
+      "text": "Keputusan penyaringan Anda"
+    },
+    "literatureWorkspace.notesLabel": {
+      "source": "Why keep or exclude this paper? What needs checking?",
+      "text": "Mengapa makalah ini disertakan atau dikeluarkan? Apa yang perlu diperiksa?"
+    },
+    "literatureWorkspace.staleScreening": {
+      "source": "Saved screening changed in another tab or restore. Your unsaved notes are still here.",
+      "text": "Penyaringan tersimpan berubah di tab lain atau saat pemulihan. Catatan Anda yang belum disimpan masih ada di sini."
+    },
+    "literatureWorkspace.loadScreening": {
+      "source": "Load saved screening",
+      "text": "Muat penyaringan tersimpan"
+    },
+    "literatureWorkspace.notesNotice": {
+      "source": "These are your own notes. Saving them does not read the paper or verify its findings.",
+      "text": "Ini adalah catatan Anda sendiri. Menyimpannya tidak membaca makalah atau memverifikasi temuannya."
+    },
+    "literatureWorkspace.saveScreening": {
+      "source": "Save screening and notes",
+      "text": "Simpan penyaringan dan catatan"
+    },
+    "literatureWorkspace.compare": {
+      "source": "Compare",
+      "text": "Bandingkan"
+    },
+    "literatureWorkspace.contributorsUnavailable": {
+      "source": "Contributors unavailable",
+      "text": "Informasi kontributor tidak tersedia"
+    },
+    "literatureWorkspace.open": {
+      "source": "Open paper record ↗",
+      "text": "Buka rekaman makalah ↗"
+    },
+    "literatureWorkspace.notes": {
+      "source": "Your screening notes",
+      "text": "Catatan penyaringan Anda"
+    },
+    "literatureWorkspace.editNotes": {
+      "source": "Edit screening and notes",
+      "text": "Edit penyaringan dan catatan"
+    },
+    "literatureWorkspace.removalDetails": {
+      "source": "Saved record and removal",
+      "text": "Rekaman tersimpan dan penghapusan"
+    },
+    "literatureWorkspace.removeCancelled": {
+      "source": "Removal cancelled. Your paper is still saved.",
+      "text": "Penghapusan dibatalkan. Makalah Anda masih tersimpan."
+    },
+    "literatureWorkspace.removed": {
+      "source": "Paper removed from this browser.",
+      "text": "Makalah dihapus dari browser ini."
+    },
+    "literatureWorkspace.remove": {
+      "source": "Remove saved paper",
+      "text": "Hapus makalah tersimpan"
+    },
+    "literatureWorkspace.loading": {
+      "source": "Loading your saved workspace…",
+      "text": "Memuat ruang kerja tersimpan Anda…"
+    },
+    "literatureWorkspace.focusTitle": {
+      "source": "Start with your review question",
+      "text": "Mulai dengan pertanyaan tinjauan Anda"
+    },
+    "literatureWorkspace.focusExample": {
+      "source": "Keep a focus for screening. For example: which retrieval methods improve factual grounding, and under what evaluation conditions?",
+      "text": "Tetapkan fokus penyaringan. Misalnya: metode penelusuran mana yang meningkatkan landasan faktual, dan dalam kondisi evaluasi seperti apa?"
+    },
+    "literatureWorkspace.papers": {
+      "source": "Your papers",
+      "text": "Makalah Anda"
+    },
+    "literatureWorkspace.find": {
+      "source": "Find and save papers →",
+      "text": "Cari dan simpan makalah →"
+    },
+    "literatureWorkspace.filter": {
+      "source": "Show screening decisions",
+      "text": "Tampilkan keputusan penyaringan"
+    },
+    "literatureWorkspace.filterAll": {
+      "source": "All saved papers",
+      "text": "Semua makalah tersimpan"
+    },
+    "literatureWorkspace.ris": {
+      "source": "Download shown references (RIS)",
+      "text": "Unduh referensi yang ditampilkan (RIS)"
+    },
+    "literatureWorkspace.csl": {
+      "source": "Download shown references (CSL-JSON)",
+      "text": "Unduh referensi yang ditampilkan (CSL-JSON)"
+    },
+    "literatureWorkspace.prepare": {
+      "source": "Prepare comparison →",
+      "text": "Siapkan perbandingan →"
+    },
+    "literatureWorkspace.selectTwo": {
+      "source": "Select two papers to compare",
+      "text": "Pilih dua makalah untuk dibandingkan"
+    },
+    "literatureWorkspace.clearSelection": {
+      "source": "Clear comparison selection",
+      "text": "Kosongkan pilihan perbandingan"
+    },
+    "literatureWorkspace.emptyTitle": {
+      "source": "Build a review you can return to.",
+      "text": "Buat tinjauan yang dapat Anda lanjutkan nanti."
+    },
+    "literatureWorkspace.emptyFind": {
+      "source": "Find papers in the starter library or search repositories.",
+      "text": "Temukan makalah di pustaka awal atau cari di repositori."
+    },
+    "literatureWorkspace.emptySave": {
+      "source": "Save an exact paper record, then record why it belongs in your review.",
+      "text": "Simpan rekaman makalah yang tepat, lalu catat mengapa makalah itu termasuk dalam tinjauan Anda."
+    },
+    "literatureWorkspace.emptyCompare": {
+      "source": "Compare two papers or export the screening list to continue your work.",
+      "text": "Bandingkan dua makalah atau ekspor daftar penyaringan untuk melanjutkan pekerjaan Anda."
+    },
+    "literatureWorkspace.browse": {
+      "source": "Browse research papers →",
+      "text": "Jelajahi makalah penelitian →"
+    },
+    "literatureWorkspace.filterEmpty": {
+      "source": "No papers have this screening decision. Choose another filter to see your saved list.",
+      "text": "Tidak ada makalah dengan keputusan penyaringan ini. Pilih filter lain untuk melihat daftar tersimpan Anda."
+    },
+    "literatureWorkspace.portable": {
+      "source": "Keep your work portable",
+      "text": "Bawa hasil kerja Anda"
+    },
+    "literatureWorkspace.csvPrepared": {
+      "source": "Screening CSV download prepared.",
+      "text": "Unduhan CSV penyaringan telah disiapkan."
+    },
+    "literatureWorkspace.csv": {
+      "source": "Download screening CSV",
+      "text": "Unduh CSV penyaringan"
+    },
+    "literatureWorkspace.backupPrepared": {
+      "source": "Workspace backup download prepared.",
+      "text": "Unduhan cadangan ruang kerja telah disiapkan."
+    },
+    "literatureWorkspace.backup": {
+      "source": "Download JSON backup",
+      "text": "Unduh cadangan JSON"
+    },
+    "literatureWorkspace.storedPrepared": {
+      "source": "Original stored data download prepared.",
+      "text": "Unduhan data asli yang tersimpan telah disiapkan."
+    },
+    "literatureWorkspace.stored": {
+      "source": "Download stored data",
+      "text": "Unduh data tersimpan"
+    },
+    "literatureWorkspace.restoreLabel": {
+      "source": "Restore a workspace backup (JSON, up to 1 MiB)",
+      "text": "Pulihkan cadangan ruang kerja (JSON, hingga 1 MiB)"
+    },
+    "literatureWorkspace.tooLarge": {
+      "source": "Backup exceeds the 1 MiB limit. Existing workspace has been kept.",
+      "text": "Cadangan melebihi batas 1 MiB. Ruang kerja yang ada tetap dipertahankan."
+    },
+    "literatureWorkspace.unreadable": {
+      "source": "Backup could not be read.",
+      "text": "Cadangan tidak dapat dibaca."
+    },
+    "literatureWorkspace.untitled": {
+      "source": "Untitled review",
+      "text": "Tinjauan tanpa judul"
+    },
+    "literatureWorkspace.restored": {
+      "source": "Backup restored on this browser.",
+      "text": "Cadangan dipulihkan di browser ini."
+    },
+    "literatureWorkspace.restoring": {
+      "source": "Restoring workspace…",
+      "text": "Memulihkan ruang kerja…"
+    },
+    "literatureWorkspace.restore": {
+      "source": "Replace workspace with this backup",
+      "text": "Ganti ruang kerja dengan cadangan ini"
+    },
+    "literatureWorkspace.cancelRestore": {
+      "source": "Cancel restore",
+      "text": "Batalkan pemulihan"
+    },
+    "literatureWorkspace.clearDetails": {
+      "source": "Clear this browser’s literature workspace",
+      "text": "Kosongkan ruang kerja pustaka di browser ini"
+    },
+    "literatureWorkspace.clearCancelled": {
+      "source": "Clear cancelled. Your workspace has been kept.",
+      "text": "Pengosongan dibatalkan. Ruang kerja Anda tetap dipertahankan."
+    },
+    "literatureWorkspace.cleared": {
+      "source": "Literature workspace cleared on this browser.",
+      "text": "Ruang kerja pustaka dikosongkan di browser ini."
+    },
+    "literatureWorkspace.clear": {
+      "source": "Clear saved workspace",
+      "text": "Kosongkan ruang kerja tersimpan"
+    },
+    "literatureWorkspace.compareLabel": {
+      "source": "Compare {title}",
+      "text": "Bandingkan {title}"
+    },
+    "literatureWorkspace.metadata": {
+      "source": "Metadata only · Peer review unknown",
+      "text": "Hanya metadata · Status tinjauan sejawat tidak diketahui"
+    },
+    "literatureWorkspace.metadataIncomplete": {
+      "source": "Metadata only · Peer review unknown · Incomplete contributors ({recorded}/{total})",
+      "text": "Hanya metadata · Status tinjauan sejawat tidak diketahui · Kontributor tidak lengkap ({recorded}/{total})"
+    },
+    "literatureWorkspace.observed": {
+      "source": "Metadata observed {date} ↗",
+      "text": "Metadata diamati pada {date} ↗"
+    },
+    "literatureWorkspace.snapshot": {
+      "source": "Saved {date}. Retains the first saved snapshot of this exact paper link; imported records are not revalidated.",
+      "text": "Disimpan pada {date}. Mempertahankan salinan pertama yang disimpan dari tautan makalah yang persis ini; rekaman yang diimpor tidak divalidasi ulang."
+    },
+    "literatureWorkspace.selection.one": {
+      "source": "{count} shown · {selected}/2 selected for comparison",
+      "text": "{count} ditampilkan · {selected}/2 dipilih untuk perbandingan"
+    },
+    "literatureWorkspace.risPrepared.one": {
+      "source": "RIS download prepared for {count} shown papers.",
+      "text": "Unduhan RIS untuk {count} makalah yang ditampilkan telah disiapkan."
+    },
+    "literatureWorkspace.cslPrepared.one": {
+      "source": "CSL-JSON download prepared for {count} shown papers.",
+      "text": "Unduhan CSL-JSON untuk {count} makalah yang ditampilkan telah disiapkan."
+    },
+    "literatureWorkspace.backupSummary.one": {
+      "source": "{filename}: {count} papers · {title}",
+      "text": "{filename}: {count} makalah · {title}"
+    },
+    "literatureWorkspace.selection.other": {
+      "source": "{count} shown · {selected}/2 selected for comparison",
+      "text": "{count} ditampilkan · {selected}/2 dipilih untuk perbandingan"
+    },
+    "literatureWorkspace.risPrepared.other": {
+      "source": "RIS download prepared for {count} shown papers.",
+      "text": "Unduhan RIS untuk {count} makalah yang ditampilkan telah disiapkan."
+    },
+    "literatureWorkspace.cslPrepared.other": {
+      "source": "CSL-JSON download prepared for {count} shown papers.",
+      "text": "Unduhan CSL-JSON untuk {count} makalah yang ditampilkan telah disiapkan."
+    },
+    "literatureWorkspace.backupSummary.other": {
+      "source": "{filename}: {count} papers · {title}",
+      "text": "{filename}: {count} makalah · {title}"
+    },
+    "literatureComparison.label": {
+      "source": "Comparison selection",
+      "text": "Pilihan perbandingan"
+    },
+    "literatureComparison.title": {
+      "source": "Papers selected for comparison",
+      "text": "Makalah yang dipilih untuk dibandingkan"
+    },
+    "literatureComparison.outsideFilter": {
+      "source": "Outside the current screening filter; still selected.",
+      "text": "Di luar filter penyaringan saat ini; tetap dipilih."
+    },
+    "literatureComparison.remove": {
+      "source": "Remove from comparison",
+      "text": "Keluarkan dari perbandingan"
+    },
+    "literatureComparison.focus": {
+      "source": "Saved focus used in the draft",
+      "text": "Fokus tersimpan yang digunakan dalam draf"
+    },
+    "literatureComparison.noFocus": {
+      "source": "No saved review focus. The draft uses the general comparison questions.",
+      "text": "Belum ada fokus tinjauan yang disimpan. Draf memakai pertanyaan perbandingan umum."
+    },
+    "literatureComparison.reviewQuestion": {
+      "source": "Review prepared question",
+      "text": "Tinjau pertanyaan yang disiapkan"
+    },
+    "literatureComparison.preparedQuestion": {
+      "source": "Prepared comparison question",
+      "text": "Pertanyaan perbandingan yang disiapkan"
+    },
+    "literatureComparison.paper": {
+      "source": "Paper {number} · {screening} · {repository}",
+      "text": "Makalah {number} · {screening} · {repository}"
+    },
+    "literatureComparison.removeLabel": {
+      "source": "Remove paper {number} from comparison",
+      "text": "Keluarkan makalah {number} dari perbandingan"
+    }
+  }
+}

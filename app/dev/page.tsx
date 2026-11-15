@@ -1,0 +1,456 @@
+"use client";
+import { DisplayTime } from "@/components/keryx/display-time";
+
+/**
+ * Developer Portal — wallet-gated API key management.
+ *
+ * Lists the signed-in wallet's API keys, mints new ones (raw key shown once),
+ * revokes existing ones, and shows a 30-day usage chart per key.
+ *
+ * Keys authorize their explicit scopes. x402 payment-signature is still
+ * required on every /api/agent/ask call — keys do not grant free compute.
+ */
+
+import { useEffect, useState } from "react";
+import { SiteHeader } from "@/components/keryx/site-header";
+import { shortAddr } from "@/components/keryx/phase-style";
+import { Copy, Key, Plus, Trash2, X } from "lucide-react";
+import type { ApiKeyRow, ApiKeyUsage } from "@/lib/db/keryx-db";
+import { API_KEY_SCOPES, LEGACY_API_KEY_SCOPES, type ApiKeyScope } from "@/lib/api-key-scopes";
+import { deliverableAcceptanceCopy } from "@/locales/en/deliverable-acceptance";
+import { personalHistoryCopy } from "@/locales/en/personal-history";
+import { operatorObligationsCopy } from "@/locales/en/operator-obligations";
+
+
+import { selectPlural } from "@/lib/i18n/format";
+import { useUiCopy, useUiMessages, useUiRichMessages } from "@/lib/i18n/ui-copy";
+const uiEnglish_deliverableAcceptanceCopy = deliverableAcceptanceCopy;
+const uiEnglish_personalHistoryCopy = personalHistoryCopy;
+const uiEnglish_operatorObligationsCopy = operatorObligationsCopy;
+
+
+
+
+
+
+/** GET /api/keys parses the stored scope columns before returning them, so a pre-scopes key
+ *  arrives with historical ask/export rights rather than private-profile permissions. */
+interface KeyWithUsage extends Omit<ApiKeyRow, "scopes" | "sourceIds"> {
+  usage?: ApiKeyUsage[];
+  scopes: ApiKeyScope[];
+  sourceIds: string[] | null;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function copyToClipboard(text: string) {
+  void navigator.clipboard.writeText(text).catch(() => null);
+}
+
+function fmtDate(iso: string | null) {
+  if (!iso) return "—";
+  return <DisplayTime value={iso} dateOnly />;
+}
+
+// ── Mini usage bar chart ──────────────────────────────────────────────────────
+
+function UsageBar({ usage }: { usage: ApiKeyUsage[] }) {
+  const copy = useUiMessages();
+  if (!usage.length) {
+    return <p className="font-mono text-xs text-ink-3">{copy("apiKeys.noCalls")}</p>;
+  }
+  const max = Math.max(...usage.map((u) => u.count), 1);
+  // Show up to 14 most recent days left→right (oldest first).
+  const visible = [...usage].reverse().slice(-14);
+
+  return (
+    <div className="flex items-end gap-px" style={{ height: 32 }}>
+      {visible.map((u) => (
+        <div key={u.day} className="group relative flex-1" title={copy(selectPlural(u.count, "en") === "one" ? "apiKeys.callsOnDay.one" : "apiKeys.callsOnDay.other", { day: u.day, count: u.count })}>
+          <div
+            className="w-full rounded-sm bg-seal/70 transition-all group-hover:bg-seal"
+            style={{ height: `${Math.max(2, Math.round((u.count / max) * 32))}px` }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Raw-key modal (shown once at mint) ───────────────────────────────────────
+
+function RawKeyModal({ rawKey, onClose }: { rawKey: string; onClose: () => void }) {
+  const copy = useUiMessages();
+  const richCopy = useUiRichMessages();
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    copyToClipboard(rawKey);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 backdrop-blur-sm">
+      <div className="relative mx-4 max-w-lg w-full rounded border border-seal/50 bg-paper p-6 shadow-2xl">
+        {/* Herald ornament */}
+        <div className="mb-4 text-center font-serif text-xs tracking-widest text-seal uppercase">{copy("apiKeys.copyNow")}</div>
+        <p className="mb-3 font-serif text-sm text-ink-2">{richCopy("apiKeys.rawKeyWarning", { neverAgain: <strong>{copy("apiKeys.neverShownAgain")}</strong> })}</p>
+
+        {/* Key display */}
+        <div className="flex items-center gap-2 rounded border border-line bg-paper-2 px-3 py-2">
+          <code className="flex-1 break-all font-mono text-[11px] text-ink select-all">
+            {rawKey}
+          </code>
+          <button
+            onClick={handleCopy}
+            className="shrink-0 rounded border border-line p-1.5 text-ink-2 hover:border-seal hover:text-seal transition-colors"
+            title={copy("apiKeys.copyAria")}
+          >
+            <Copy size={14} />
+          </button>
+        </div>
+
+        {copied && (
+          <p className="mt-1.5 text-center font-mono text-xs text-paid">{copy("apiKeys.copied")}</p>
+        )}
+
+        <p className="mt-3 font-mono text-[10px] text-ink-3 text-center">{copy("apiKeys.authorityBoundary")}</p>
+
+        <button
+          onClick={onClose}
+          className="mt-4 w-full rounded border border-seal bg-seal/10 py-2 font-mono text-sm text-seal hover:bg-seal/20 transition-colors"
+        >{copy("apiKeys.copiedAcknowledgement")}</button>
+
+        <button
+          onClick={onClose}
+          className="absolute right-3 top-3 text-ink-3 hover:text-ink transition-colors"
+        >
+          <X size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Key card ─────────────────────────────────────────────────────────────────
+
+function KeyCard({
+  apiKey,
+  onRevoke,
+}: {
+  apiKey: KeyWithUsage;
+  onRevoke: (id: string) => void;
+}) {
+  const copy = useUiMessages();
+  const richCopy = useUiRichMessages();
+  const isRevoked = Boolean(apiKey.revokedAt);
+
+  return (
+    <div
+      className={`rounded border p-4 transition-colors ${
+        isRevoked ? "border-line bg-paper opacity-60" : "border-line bg-paper hover:border-ink-3"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Key size={13} className={isRevoked ? "text-ink-3" : "text-seal"} />
+            <code className="font-mono text-xs text-ink truncate">{apiKey.prefix}…</code>
+            {apiKey.label && (
+              <span className="rounded bg-paper-2 px-1.5 py-0.5 font-mono text-[10px] text-ink-2">
+                {apiKey.label}
+              </span>
+            )}
+            {isRevoked && (
+              <span className="rounded bg-red-100 px-1.5 py-0.5 font-mono text-[10px] text-red-600">{copy("apiKeys.revoked")}</span>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10px] text-ink-3">
+            <span>{richCopy("apiKeys.createdAt", { date: fmtDate(apiKey.createdAt) })}</span>
+            <span>{richCopy("apiKeys.lastUsedAt", { date: fmtDate(apiKey.lastUsedAt) })}</span>
+            <span>{copy("apiKeys.scopes")}{" "}
+              <span className="text-ink-2">
+                {apiKey.scopes.join(" + ")}
+                {apiKey.sourceIds && copy(selectPlural(apiKey.sourceIds.length, "en") === "one" ? "apiKeys.pinnedSources.one" : "apiKeys.pinnedSources.other", { count: apiKey.sourceIds.length })}
+              </span>
+            </span>
+          </div>
+        </div>
+
+        {!isRevoked && (
+          <button
+            onClick={() => onRevoke(apiKey.id)}
+            className="shrink-0 rounded border border-line p-1.5 text-ink-3 hover:border-red-400 hover:text-red-500 transition-colors"
+            title={copy("apiKeys.revokeAria")}
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
+      </div>
+
+      {!isRevoked && apiKey.usage && (
+        <div className="mt-3">
+          <p className="mb-1 font-mono text-[9px] uppercase tracking-widest text-ink-3">{copy("apiKeys.recentCalls")}</p>
+          <UsageBar usage={apiKey.usage} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+
+export default function DevPage() {
+  const copy = useUiMessages();
+  const richCopy = useUiRichMessages();
+  const deliverableAcceptanceCopy = useUiCopy("deliverable-acceptance", uiEnglish_deliverableAcceptanceCopy);
+  const personalHistoryCopy = useUiCopy("personal-history", uiEnglish_personalHistoryCopy);
+  const operatorObligationsCopy = useUiCopy("operator-obligations", uiEnglish_operatorObligationsCopy);
+  const [keys, setKeys] = useState<KeyWithUsage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [minting, setMinting] = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+  // Historical defaults remain ask/export. Private profile permissions are never preselected.
+  const [newScopes, setNewScopes] = useState<ApiKeyScope[]>([...LEGACY_API_KEY_SCOPES]);
+  const [showMintForm, setShowMintForm] = useState(false);
+  const [rawKey, setRawKey] = useState<string | null>(null);
+
+  async function loadKeys() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/keys", { cache: "no-store" });
+      if (res.status === 401) {
+        setError(copy("apiKeys.signIn"));
+        setLoading(false);
+        return;
+      }
+      if (!res.ok) throw new Error(`${res.status}`);
+      // The route already parsed the scope columns into arrays — see KeyWithUsage.
+      const data = (await res.json()) as Omit<KeyWithUsage, "usage">[];
+
+      // Load usage for each active key in parallel.
+      const withUsage = await Promise.all(
+        data.map(async (k) => {
+          if (k.revokedAt) return { ...k, usage: [] };
+          try {
+            const ur = await fetch(`/api/keys/${k.id}/usage`, { cache: "no-store" });
+            const usage = ur.ok ? ((await ur.json()) as ApiKeyUsage[]) : [];
+            return { ...k, usage };
+          } catch {
+            return { ...k, usage: [] };
+          }
+        }),
+      );
+      setKeys(withUsage);
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadKeys(), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  async function handleMint(e: React.FormEvent) {
+    e.preventDefault();
+    setMinting(true);
+    try {
+      const res = await fetch("/api/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: newLabel.trim() || undefined,
+          scopes: newScopes,
+        }),
+      });
+      if (!res.ok) {
+        const j = (await res.json()) as { error?: string; message?: string };
+        throw new Error(j.message ?? j.error ?? copy("apiKeys.httpError", { status: res.status }));
+      }
+      const { rawKey: rk } = (await res.json()) as { rawKey: string; prefix: string; id: string };
+      setRawKey(rk);
+      setNewLabel("");
+      setNewScopes([...LEGACY_API_KEY_SCOPES]);
+      setShowMintForm(false);
+      void loadKeys();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setMinting(false);
+    }
+  }
+
+  async function handleRevoke(id: string) {
+    if (!confirm(copy("apiKeys.revokeConfirmation"))) return;
+    try {
+      await fetch(`/api/keys/${id}`, { method: "DELETE" });
+      void loadKeys();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  return (
+    <>
+      <SiteHeader />
+      {rawKey && <RawKeyModal rawKey={rawKey} onClose={() => setRawKey(null)} />}
+
+      <main className="mx-auto max-w-[820px] px-4 py-10 sm:px-8">
+        {/* Page header */}
+        <div className="mb-8 border-b border-line pb-6">
+          <h1 className="font-serif text-2xl text-ink">{copy("apiKeys.title")}</h1>
+          <p className="mt-1 font-mono text-xs text-ink-3">{richCopy("apiKeys.introduction", { endpointGap: " ", endpoint: <code className="text-seal">/api/agent/ask</code>, signature: <code className="text-seal">payment-signature</code> })}</p>
+          <div className="mt-3 flex gap-3">
+            <a
+              href="/api/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono text-xs text-ink-2 underline underline-offset-2 hover:text-seal transition-colors"
+            >{copy("apiKeys.apiReference")}</a>
+            <a
+              href="/api/openapi.json"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono text-xs text-ink-2 underline underline-offset-2 hover:text-seal transition-colors"
+            >{copy("apiKeys.openApi")}</a>
+          </div>
+        </div>
+
+        {/* OpenAI-compatible endpoint — the widest-reach integration surface. Any OpenAI SDK/tool
+            can point base_url here; creators are paid downstream exactly as on the site. */}
+        <div className="mb-8 rounded border border-line bg-paper p-4">
+          <h2 className="font-serif text-lg text-ink">{copy("apiKeys.compatibilityTitle")}</h2>
+          <p className="mt-1 font-mono text-xs text-ink-3">{richCopy("apiKeys.compatibilityInstruction", { urlGap: " ", url: <code className="text-seal">https://keryx.cc/api/v1</code>, modelGap: " ", model: <code className="text-seal">keryx</code>, keyGap: " ", key: <code className="text-seal">kx_live_…</code>, streamGap: " ", stream: <code className="text-seal">stream:true</code>, reasoning: <code className="text-seal">reasoning_content</code> })}</p>
+          <pre className="mt-3 overflow-x-auto rounded border border-line bg-paper-2 p-3 font-mono text-[11px] leading-relaxed text-ink-2">
+{`curl https://keryx.cc/api/v1/chat/completions \\
+  -H "Authorization: Bearer kx_live_…" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"keryx","messages":[{"role":"user","content":"What is Arc?"}]}'`}
+          </pre>
+          <a
+            href="/playground"
+            className="mt-2 inline-block font-mono text-xs text-seal underline underline-offset-2 hover:text-ink transition-colors"
+          >{copy("apiKeys.playground")}</a>
+        </div>
+
+        {/* Earnings audit export — the same wallet-issued key doubles as accounting credentials.
+            The browser link works off the SIWE session, so a creator never has to mint a key just
+            to download their own ledger. */}
+        <div className="mb-8 rounded border border-line bg-paper p-4">
+          <h2 className="font-serif text-lg text-ink">{copy("apiKeys.exportTitle")}</h2>
+          <p className="mt-1 font-mono text-xs text-ink-3">{richCopy("apiKeys.exportInstruction", { key: <code className="text-seal">kx_live_…</code> })}</p>
+          <pre className="mt-3 overflow-x-auto rounded border border-line bg-paper-2 p-3 font-mono text-[11px] leading-relaxed text-ink-2">
+{`curl https://keryx.cc/api/creator/export?format=csv \\
+  -H "Authorization: Bearer kx_live_…" -o earnings.csv`}
+          </pre>
+          <a
+            href="/api/creator/export?format=csv"
+            download
+            className="mt-2 inline-block font-mono text-xs text-seal underline underline-offset-2 hover:text-ink transition-colors"
+          >{copy("apiKeys.downloadLedger")}</a>
+        </div>
+
+        {/* Error banner */}
+        {error && (
+          <div className="mb-6 rounded border border-red-300 bg-red-50 px-4 py-3 font-mono text-xs text-red-700">
+            {error}
+          </div>
+        )}
+
+        {/* Mint form */}
+        <div className="mb-6">
+          {!showMintForm ? (
+            <button
+              onClick={() => setShowMintForm(true)}
+              className="flex items-center gap-2 rounded border border-seal bg-seal/10 px-4 py-2 font-mono text-sm text-seal hover:bg-seal/20 transition-colors"
+            >
+              <Plus size={14} />{copy("apiKeys.issue")}</button>
+          ) : (
+            <form
+              onSubmit={(e) => void handleMint(e)}
+              className="rounded border border-seal/40 bg-paper p-3"
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder={copy("apiKeys.labelPlaceholder")}
+                  value={newLabel}
+                  onChange={(e) => setNewLabel(e.target.value)}
+                  maxLength={80}
+                  className="flex-1 rounded border border-line bg-paper-2 px-3 py-1.5 font-mono text-xs text-ink placeholder-ink-3 focus:border-seal focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={minting}
+                  className="rounded border border-seal bg-seal/10 px-4 py-1.5 font-mono text-xs text-seal hover:bg-seal/20 disabled:opacity-50 transition-colors"
+                >
+                  {minting ? copy("apiKeys.minting") : copy("apiKeys.mint")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowMintForm(false)}
+                  className="text-ink-3 hover:text-ink transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              {/* Scope picker. A key handed to an accountant should read the ledger without
+                  being able to spend; unticking everything would mint a useless key, so the
+                  empty selections retain ask/export defaults. Private-profile scopes are opt-in. */}
+              <div className="mt-3 flex flex-wrap items-center gap-4 border-t border-line pt-3">
+                <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">{copy("apiKeys.scopes")}</span>
+                {API_KEY_SCOPES.map((scope) => (
+                  <label
+                    key={scope}
+                    className="flex cursor-pointer items-center gap-1.5 font-mono text-xs text-ink-2"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={newScopes.includes(scope)}
+                      onChange={(e) =>
+                        setNewScopes((prev) =>
+                          e.target.checked
+                            ? [...prev, scope]
+                            : prev.filter((s) => s !== scope),
+                        )
+                      }
+                      className="accent-seal"
+                    />
+                    {scope}
+                    <span className="text-ink-3">
+                      {scope === "ask" ? copy("apiKeys.askScope") : scope === "export" ? copy("apiKeys.exportScope") : scope === "profile:read" ? copy("apiKeys.profileReadScope") : scope === "history:read" ? personalHistoryCopy.scopeLabel : scope === "operator:read" ? operatorObligationsCopy.scopeLabel : scope === "deliverable:read" ? deliverableAcceptanceCopy.readScope : scope === "deliverable:write" ? deliverableAcceptanceCopy.writeScope : copy("apiKeys.profileWriteScope")}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <p className="mt-2 font-mono text-[10px] text-ink-3">{personalHistoryCopy.scopeDefaults}</p>
+            </form>
+          )}
+        </div>
+
+        {/* Key list */}
+        {loading ? (
+          <p className="font-mono text-xs text-ink-3">{copy("apiKeys.loading")}</p>
+        ) : keys.length === 0 && !error ? (
+          <div className="rounded border border-dashed border-line p-8 text-center">
+            <Key size={24} className="mx-auto mb-2 text-ink-3" />
+            <p className="font-mono text-xs text-ink-3">{copy("apiKeys.empty")}</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {keys.map((k) => (
+              <KeyCard key={k.id} apiKey={k} onRevoke={(id) => void handleRevoke(id)} />
+            ))}
+          </div>
+        )}
+      </main>
+    </>
+  );
+}

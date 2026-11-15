@@ -1,0 +1,82 @@
+import type { DatabaseSync } from "node:sqlite";
+import { assertOrdinarySqliteResearchAuthority } from "./research-monthly";
+import { assertVerifiedSqliteConnection } from "./storage-identity-connection";
+import { parseRunProvenance, RUN_SURFACES, RUN_OWNERSHIP_METHODS } from "../research/run-provenance";
+import { HistoryError, historyFiltersSchema, historyPositionSchema, historyRowSchema, historyWallet, type PersonalHistoryStore } from "../history/personal-history";
+import { historyReceiptSchema } from "../history/owned-history";
+import { historyIdSchema } from "../history/personal-history";
+
+/** Reads only an allowlist projection. Never selects answer, private fulfillment or raw data. */
+export function createSqlitePersonalHistory(db: DatabaseSync): PersonalHistoryStore {
+  return personalHistoryPort(db, () => assertOrdinarySqliteResearchAuthority(db));
+}
+
+/** Native application connection only; reads existing rows and installs no schema. */
+export function createEnrolledSqlitePersonalHistory(db: DatabaseSync): PersonalHistoryStore {
+  if (arguments.length !== 1) throw new HistoryError("history_unavailable");
+  let refused = false;
+  const contention = (error: unknown) => error instanceof Error && "code" in error && error.code === "ERR_SQLITE_ERROR"
+    && "errcode" in error && (error.errcode === 5 || error.errcode === 6);
+  const assertAuthority = () => {
+    if (refused) throw new HistoryError("history_unavailable");
+    try { assertVerifiedSqliteConnection(db); }
+    catch (error) { if (!contention(error)) refused = true; throw new HistoryError("history_unavailable"); }
+  };
+  assertAuthority();
+  return personalHistoryPort(db, assertAuthority, error => { if (!contention(error)) refused = true; });
+}
+
+/** The authority callback is private to the two verified constructors above. */
+function personalHistoryPort(db: DatabaseSync, assertAuthority: () => void, refuseNativeRead?: (error: unknown) => void): PersonalHistoryStore {
+  function readRows<T>(read: () => T): T {
+    try { return read(); }
+    catch (error) { refuseNativeRead?.(error); throw error; }
+  }
+  return Object.freeze({ async list(owner, query) {
+    assertAuthority();
+    const wallet = historyWallet(owner), filters = historyFiltersSchema.parse(query.filters);
+    if (!Number.isInteger(query.take) || query.take < 1 || query.take > 51) throw new HistoryError("history_unavailable");
+    const where = ["asker = ?"], args: (string | number)[] = [wallet];
+    for (const [position, exclusive] of [[query.upper, false], [query.before, true]] as const) if (position) {
+      const value = historyPositionSchema.parse(position);
+      where.push(`(created_at < ? OR (created_at = ? AND id ${exclusive ? "<" : "<="} ? COLLATE BINARY))`);
+      args.push(value.createdAt, value.createdAt, value.id);
+    }
+    if (filters.from) { where.push("created_at >= ?"); args.push(filters.from); }
+    if (filters.to) { where.push("created_at <= ?"); args.push(filters.to); }
+    if (filters.search !== undefined) { where.push("instr(question, ?) > 0"); args.push(filters.search); }
+    // A malformed historical snapshot remains unknown; origin and client labels are not authority.
+    const snapshot = `CASE WHEN json_type(data,'$.provenance')='object'
+      AND (SELECT count(*) FROM json_each(data,'$.provenance'))=3
+      AND json_type(data,'$.provenance.version') IN ('integer','real') AND json_extract(data,'$.provenance.version')=1
+      AND json_extract(data,'$.provenance.surface') IN (${RUN_SURFACES.map(value => `'${value}'`).join(",")})
+      AND json_extract(data,'$.provenance.ownershipMethod') IN (${RUN_OWNERSHIP_METHODS.map(value => `'${value}'`).join(",")})
+      THEN json_extract(data,'$.provenance') ELSE NULL END`;
+    if (filters.surface) { where.push(`coalesce(json_extract((${snapshot}),'$.surface'),'unknown') = ?`); args.push(filters.surface); }
+    if (filters.funding) where.push(`(json_type(data,'$.askerFunded')='true') ${filters.funding === "browser-recorded" ? "IS TRUE" : "IS NOT TRUE"}`);
+    args.push(query.take);
+    const rows = readRows(() => db.prepare(`SELECT id,created_at,question,asker,total_spent,total_to_creators,payment_mode,parent_id,
+      (${snapshot}) AS provenance,json_extract(data,'$.asker') AS recorded_asker,
+      json_type(data,'$.askerFunded') AS funded FROM query_runs WHERE ${where.join(" AND ")}
+      ORDER BY created_at DESC,id COLLATE BINARY DESC LIMIT ?`).all(...args));
+    try { const result = rows.map(row => {
+      if (row.asker !== wallet || row.recorded_asker !== null && (typeof row.recorded_asker !== "string" || row.recorded_asker.toLowerCase() !== wallet)) throw new Error("Owner mismatch");
+      return historyRowSchema.parse({ id: row.id, createdAt: row.created_at, question: row.question,
+        provenance: typeof row.provenance === "string" ? parseRunProvenance(JSON.parse(row.provenance)) ?? null : null,
+        funding: row.funded === "true" ? "browser-recorded" : "other-or-unknown", recordedSpendUsdc: row.total_spent,
+        recordedCreatorAllocationUsdc: row.total_to_creators, paymentMode: row.payment_mode, isFollowUp: row.parent_id !== null });
+    }); assertAuthority(); return result; } catch { throw new HistoryError("history_unavailable"); }
+  }, async receipts(rawId, take) {
+    assertAuthority();
+    const id = historyIdSchema.parse(rawId);
+    if (!Number.isInteger(take) || take < 1 || take > 201) throw new HistoryError("history_unavailable");
+    const rows = readRows(() => db.prepare(`SELECT id,query_id,kind,source_id,source_name,payer,payee,amount_usdc,network,tx_hash,
+      settled,settlement_status,created_at FROM payment_events WHERE query_id=?
+      AND (authorization_phase IS NULL OR authorization_phase NOT IN ('prepared','cancelled_unexposed'))
+      ORDER BY created_at,id COLLATE BINARY LIMIT ?`).all(id, take));
+    const result = rows.map(row => historyReceiptSchema.parse({ id: row.id, queryId: row.query_id, kind: row.kind,
+      sourceId: row.source_id, sourceName: row.source_name, payer: row.payer, payee: row.payee, amountUsdc: row.amount_usdc,
+      network: row.network, txHash: row.tx_hash, settled: row.settled === 1, settlementStatus: row.settlement_status, createdAt: row.created_at }));
+    assertAuthority(); return result;
+  } } satisfies PersonalHistoryStore);
+}

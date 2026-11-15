@@ -1,0 +1,95 @@
+/**
+ * Reads how much USDC Circle's Gateway holds for a depositor address.
+ *
+ * The browser cannot call the Gateway API directly (CORS), so `/api/session/credit`
+ * proxies this for the grant flow's poll loop, and `/api/session/grant` uses it to
+ * check a claimed cap against the deposit that actually landed.
+ *
+ * Returns atomic 6-decimal units. `null` means the API could not be reached or
+ * answered — distinguishable from a definite zero, which callers treat differently:
+ * an unfunded address is a rejection, an unreachable Circle is not.
+ */
+
+import { paymentRuntimeConfig } from "../payment-runtime-config";
+import { ARC_MAINNET_PROFILE, ARC_TESTNET_PROFILE, type ArcNetworkProfile } from "../arc-network-profile";
+import { readBoundedJson } from "../read-bounded-json";
+import { gatewayAvailableAtomic, gatewayHeldUsdcByChunk } from "./available-balance";
+
+// Verified from @circle-fin/x402-batching/dist/client/index.js:638-672.
+const runtimeProfile = paymentRuntimeConfig().profile;
+function balanceProfile(profile: ArcNetworkProfile) {
+  if (profile !== ARC_MAINNET_PROFILE && profile !== ARC_TESTNET_PROFILE) throw new Error("Gateway balance profile refused");
+  return profile;
+}
+
+export async function getGatewayAvailableAtomic(address: string, trustedProfile: ArcNetworkProfile = runtimeProfile): Promise<bigint | null> {
+  const profile = balanceProfile(trustedProfile);
+  if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return null;
+  try {
+    const upstream = await fetch(`${profile.gatewayApiUrl}/v1/balances`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: "USDC",
+        sources: [{ depositor: address, domain: profile.cctpDomain }],
+      }),
+      signal: AbortSignal.timeout(15_000),
+      redirect: "error",
+      cache: "no-store",
+    });
+    if (!upstream.ok) { await upstream.body?.cancel(); return null; }
+    return gatewayAvailableAtomic(await readBoundedJson(upstream), address, profile.cctpDomain);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Depositors per request. Circle's hard limit: 21 sources answers
+ * `400 {"message":"Invalid request: sources: No more than 20 sources allowed"}`,
+ * and because a rejected chunk marks every address in it unknown, one address over the line
+ * blanks the whole sweep rather than trimming it.
+ */
+const BATCH = 20;
+
+/**
+ * Gateway holdings for many addresses at once, in whole USDC, keyed by LOWERCASED address.
+ *
+ * Used by the settlement-parity watchdog to check what Keryx tells creators against what Circle
+ * actually holds for them. Two rules carry the honesty of that check:
+ *
+ *  - An address the API did not answer for maps to `null`, never to 0. A silent Circle must read
+ *    as "unknown", or an outage would look exactly like a creator's money vanishing.
+ *  - `pendingBatch` counts toward the balance. Funds mid-settlement have left the payer and are
+ *    owed to the payee; excluding them would invent a shortfall for every busy wallet.
+ *
+ * A failed chunk marks only its own addresses unknown, so one bad request cannot blank the sweep.
+ */
+export async function getGatewayHeldUsdc(addresses: string[], trustedProfile: ArcNetworkProfile = runtimeProfile): Promise<Map<string, number | null>> {
+  const profile = balanceProfile(trustedProfile);
+  const unique = [...new Set(addresses.map((a) => a.toLowerCase()))];
+  const out = new Map<string, number | null>(unique.map((a) => [a, null]));
+
+  for (let i = 0; i < unique.length; i += BATCH) {
+    const chunk = unique.slice(i, i + BATCH);
+    try {
+      const upstream = await fetch(`${profile.gatewayApiUrl}/v1/balances`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: "USDC",
+          sources: chunk.map((depositor) => ({ depositor, domain: profile.cctpDomain })),
+        }),
+        signal: AbortSignal.timeout(20_000),
+        redirect: "error", cache: "no-store",
+      });
+      if (!upstream.ok) { await upstream.body?.cancel(); continue; } // chunk stays unknown
+
+      const held = gatewayHeldUsdcByChunk(await readBoundedJson(upstream), chunk, profile.cctpDomain);
+      for (const [key, value] of held) out.set(key, value);
+    } catch {
+      /* timeout or transport error — the chunk's addresses stay unknown */
+    }
+  }
+  return out;
+}

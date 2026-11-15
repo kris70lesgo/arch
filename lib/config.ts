@@ -1,0 +1,355 @@
+/**
+ * Keryx runtime configuration — single source of truth for chain, economics, and providers.
+ * Trusted server/public configuration selects one pinned Arc profile;
+ * conflicting environment values fail startup rather than creating a mixed-chain deployment.
+ */
+
+import { configuredRegistryAddress } from "./arc-network-profile";
+import { browserPaymentProfile } from "./browser-payment-profile";
+import { assertPaymentRuntimeConfiguration, paymentAuthorizationLifetime } from "./payment-runtime-config";
+
+/** Ordinary fresh dispatch only. Accepted private/bounded originals retain their
+ * separately bound wire identities; this is not a migration of paid requests. */
+function ordinaryDeepSeekModel(model: string | undefined): string {
+  const retired = new Set(["deepseek-chat", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "mimo-v2.5", "mimo-v2.5-pro"]);
+  return !model || retired.has(model.trim()) ? "deepseek-flash" : model;
+}
+
+/** Reject network contract overrides until a separately reviewed network profile exists. */
+export function assertArcConfiguration(env: {
+  KERYX_NETWORK?: string;
+  NEXT_PUBLIC_KERYX_NETWORK?: string;
+  KERYX_USDC_ADDRESS?: string;
+  KERYX_GATEWAY_WALLET?: string;
+  KERYX_GATEWAY_MINTER?: string;
+  KERYX_REGISTRY_ADDRESS?: string;
+  NEXT_PUBLIC_KERYX_REGISTRY_ADDRESS?: string;
+  KERYX_REGISTRY_READ_ADDRESS?: string;
+  NEXT_PUBLIC_KERYX_REGISTRY_READ_ADDRESS?: string;
+  KERYX_FORCE_OFFLINE?: string;
+  KERYX_MAX_TIMEOUT_SECONDS?: string;
+}): void {
+  const profile = assertPaymentRuntimeConfiguration(env);
+  configuredRegistryAddress(profile, env.KERYX_REGISTRY_ADDRESS, env.NEXT_PUBLIC_KERYX_REGISTRY_ADDRESS);
+  if (env.KERYX_REGISTRY_READ_ADDRESS !== undefined || env.NEXT_PUBLIC_KERYX_REGISTRY_READ_ADDRESS !== undefined)
+    configuredRegistryAddress(profile, env.KERYX_REGISTRY_READ_ADDRESS, env.NEXT_PUBLIC_KERYX_REGISTRY_READ_ADDRESS);
+}
+
+/** Compatibility export; new integrations should use the network-neutral name. */
+export const assertArcTestnetConfiguration = assertArcConfiguration;
+// This historical config module is shared by some UI modules. Only Node reads private
+// configuration; critical browser/worker signing imports the lightweight public module instead.
+if (typeof process !== "undefined" && process.release?.name === "node") assertArcConfiguration({
+  KERYX_NETWORK: process.env.KERYX_NETWORK,
+  NEXT_PUBLIC_KERYX_NETWORK: process.env.NEXT_PUBLIC_KERYX_NETWORK,
+  KERYX_USDC_ADDRESS: process.env.KERYX_USDC_ADDRESS,
+  KERYX_GATEWAY_WALLET: process.env.KERYX_GATEWAY_WALLET,
+  KERYX_GATEWAY_MINTER: process.env.KERYX_GATEWAY_MINTER,
+  KERYX_REGISTRY_ADDRESS: process.env.KERYX_REGISTRY_ADDRESS,
+  NEXT_PUBLIC_KERYX_REGISTRY_ADDRESS: process.env.NEXT_PUBLIC_KERYX_REGISTRY_ADDRESS,
+  KERYX_REGISTRY_READ_ADDRESS: process.env.KERYX_REGISTRY_READ_ADDRESS,
+  NEXT_PUBLIC_KERYX_REGISTRY_READ_ADDRESS: process.env.NEXT_PUBLIC_KERYX_REGISTRY_READ_ADDRESS,
+  KERYX_FORCE_OFFLINE: process.env.KERYX_FORCE_OFFLINE,
+  KERYX_MAX_TIMEOUT_SECONDS: process.env.KERYX_MAX_TIMEOUT_SECONDS,
+});
+const profile = browserPaymentProfile();
+
+export const config = {
+  // ── Chain (Arc testnet defaults) ──
+  profile,
+  chainId: profile.chainId,
+  network: profile.name,
+  // x402 network identifier used in payment requirements
+  networkId: profile.networkId,
+  rpcUrl: process.env.KERYX_RPC_URL ?? profile.rpcUrl,
+  // WebSocket RPC for the indexer's live log subscription (read-only pushes; settlement
+  // stays on rpcUrl). Set to an empty string to disable pushes — the indexer then relies
+  // on its heartbeat poll alone.
+  rpcWsUrl: process.env.KERYX_RPC_WS_URL ?? ("rpcWsUrl" in profile ? profile.rpcWsUrl : ""),
+  usdcAddress: profile.usdcAddress as `0x${string}`,
+  gatewayWallet: profile.gatewayWallet as `0x${string}`,
+  // GatewayMinter contract — mints USDC on the destination chain from a Circle transfer
+  // attestation. Used by the creator-withdraw relay to submit gatewayMint(). Testnet value
+  // from @circle-fin/x402-batching CHAIN_CONFIGS.arcTestnet.gatewayMinter.
+  gatewayMinter: profile.gatewayMinter as `0x${string}`,
+  explorerUrl: profile.explorerUrl,
+  gatewayBalanceApi: `${profile.gatewayApiUrl}/v1/balances`,
+  cctpDomain: profile.cctpDomain,
+
+  // ── Agent economics (USDC) ──
+  defaultBudget: num(process.env.KERYX_DEFAULT_BUDGET, 0.05),
+  // share of a query's budget reserved for weighted citation rewards (rest is fetch tolls)
+  citationPoolRatio: num(process.env.KERYX_CITATION_POOL_RATIO, 0.5),
+  defaultFetchPrice: num(process.env.KERYX_DEFAULT_FETCH_PRICE, 0.002),
+  // x402 authorization validity window (seconds). Circle's Gateway facilitator requires at
+  // least seven days (604800s) of remaining validity at verification. Signing/verification
+  // latency, second-truncation and host clock skew erode that window, so the eight-day default
+  // retains margin above the floor. Keryx independently bounds local payment signing to its
+  // reviewed seven-to-eight-day policy, with a small validation skew allowance. Historical
+  // upstream acceptance of longer windows does not authorize a longer Keryx signing lifetime.
+  maxTimeoutSeconds: paymentAuthorizationLifetime(profile, process.env.KERYX_MAX_TIMEOUT_SECONDS),
+  // Gateway spend-wallet top-up. Circle's facilitator won't settle against tiny balances, so the
+  // agent keeps a healthy reusable Gateway balance and tops up when it drops below the threshold.
+  gatewayDepositUsdc: process.env.KERYX_GATEWAY_DEPOSIT ?? "1",
+  gatewayMinAvailableUsdc: num(process.env.KERYX_GATEWAY_MIN_AVAILABLE, 0.1),
+  // Agent-to-agent: fee another agent pays Keryx to answer a question (x402 → treasury).
+  a2aFeeUsdc: num(process.env.KERYX_A2A_FEE, 0.02),
+  // Deep-mode orchestration fee. The caller's creator-spend cap is added to this fee in the
+  // dynamic A2A v2 challenge, so paid calls cannot create a larger treasury liability.
+  a2aDeepFeeUsdc: num(process.env.KERYX_A2A_DEEP_FEE, 0.05),
+  // Hard ceiling on the budget the anonymous (no-session) treasury path will honor. That path is
+  // unauthenticated and spends Keryx's OWN funds (RealGateway), with `budget` caller-controlled —
+  // without a cap a caller could POST an arbitrarily large budget and drive treasury spend. The
+  // browser co-sign path spends the user's own funded session (grant-cap bounded) and has its own
+  // per-dispatch clamp below. Default 0.1 sits just above the UI budget dial's 0.08 max.
+  anonMaxBudget: num(process.env.KERYX_ANON_MAX_BUDGET, 0.1),
+  // A browser grant can hold more for a session, but one dispatch cannot turn that entire balance
+  // into a caller-controlled payout/compute request. The remaining persisted grant cap is a second,
+  // tighter bound at request time.
+  sessionAskMaxBudget: num(process.env.KERYX_SESSION_ASK_MAX_BUDGET, 0.25),
+  // Sanity ceiling (USDC) on a single citation settlement reaching /api/cite. Not a drain vector
+  // (the caller self-pays via x402 to a source-owned wallet), but bounds a fat-finger / absurd
+  // `amount` that would skew the leaderboard. ~100×+ above any realistic weighted reward.
+  maxCitationUsdc: num(process.env.KERYX_MAX_CITATION_USDC, 5),
+  // Ceiling (USDC) on the fee a creator's instant Gateway withdraw will tolerate. The actual
+  // same-chain fee on testnet is small; this is only an upper bound passed in the burn intent
+  // (mirrors the SDK/operator default of 2.01 so the proven withdraw path isn't fee-rejected).
+  withdrawMaxFeeUsdc: num(process.env.KERYX_WITHDRAW_MAX_FEE, 2.01),
+  // Circle charges a fee ON TOP of the burn value (it requires available >= value + fee), so a
+  // withdraw of the FULL available balance always fails by exactly the fee. The burn value is
+  // signed in the browser, so the fee must be reserved BEFORE signing: value = available - reserve.
+  // Observed same-chain Arc testnet fee ≈ 0.0035; reserve a small margin above it.
+  withdrawFeeReserveUsdc: num(process.env.KERYX_WITHDRAW_FEE_RESERVE, 0.005),
+  // Ceiling on the budget the A2A path (/api/agent/ask) will honor before driving treasury-funded
+  // creator payouts. Same drain class as anonMaxBudget but behind the x402 fee, so more generous.
+  // The traction a2a-client uses 0.03, well under this.
+  a2aMaxBudget: num(process.env.KERYX_A2A_MAX_BUDGET, 0.5),
+
+  // ── Agent reasoning ──
+  // Max re-evaluation rounds after the initial fetch pass. Each round assesses per-claim coverage
+  // and may buy additional previously-skipped sources to fill gaps. 0 disables re-evaluation
+  // (single-pass behavior, pre-v0.4). Default 1 keeps latency low while still showing multi-pass.
+  reevaluateRounds: Math.round(num(process.env.KERYX_REEVALUATE_ROUNDS, 1)),
+  // A source consumes scarce model context even when its bytes came from a free cache. Bound total
+  // reads independently from USDC so a cheap/noisy catalog cannot dilute the evidence set.
+  maxAttentionSources: Math.max(
+    1,
+    Math.round(num(process.env.KERYX_MAX_ATTENTION_SOURCES, 4)),
+  ),
+  // Cached content is free in money, not in attention. Only reuse it when the engine predicts
+  // material value and names at least one sub-claim it can support.
+  minCacheExpectedValue: Math.min(
+    1,
+    Math.max(0, num(process.env.KERYX_MIN_CACHE_EXPECTED_VALUE, 0.45)),
+  ),
+
+  // A paid read is reusable for a bounded period, not forever: without an expiry the first toll for
+  // an article version is the last one that version ever earns, however often it is read. 0 disables
+  // expiry. The cache is shared between callers: enrolled storage caps its rows and never evicts.
+  cacheTtlSeconds: Math.max(0, Math.round(num(process.env.KERYX_CACHE_TTL_SECONDS, 604_800))),
+
+  // Original public reads have no toll and no pre-read evidence. Keep their preview
+  // ranking floor aligned with the heuristic's positive selection threshold; cached
+  // creator/feed content retains the stricter reuse gate above. Neither proves coverage.
+  minPublicReadExpectedValue: Math.min(
+    1,
+    Math.max(0, num(process.env.KERYX_MIN_PUBLIC_READ_EXPECTED_VALUE, 0.12)),
+  ),
+
+  // ── Open x402 marketplace discovery ──
+  // When on, the agent probes the live Circle x402 service bazaar (`circle services search`) during
+  // discovery and reasons over real external endpoints alongside its registered creators. These
+  // advertise their own payment networks. They remain DISCOVERY-ONLY even when an endpoint
+  // advertises the selected Arc rail; listing metadata is not payment or delivery authority:
+  // evaluated and logged, never purchased (the orchestrator enforces this, mirroring the budget cap).
+  externalDiscovery: (process.env.KERYX_EXTERNAL_DISCOVERY ?? "1") !== "0",
+  webSearchUrl: process.env.KERYX_WEB_SEARCH_URL ?? "",
+  webSearchProvider: process.env.KERYX_WEB_SEARCH_PROVIDER ?? "",
+  tavilyApiKey: process.env.TAVILY_API_KEY ?? "",
+  // Max external endpoints surfaced per query (top by topical relevance).
+  externalDiscoveryLimit: Math.round(num(process.env.KERYX_EXTERNAL_DISCOVERY_LIMIT, 5)),
+  // Semantic discovery: use embedding cosine similarity instead of keyword-overlap for
+  // marketplace relevance scoring. Requires an OpenAI-compatible embedding endpoint.
+  // Falls back to keyword-overlap when unconfigured or on API failure.
+  embeddingApiKey: process.env.KERYX_EMBEDDING_API_KEY ?? process.env.OPENAI_API_KEY ?? "",
+  embeddingBaseUrl: process.env.KERYX_EMBEDDING_BASE_URL ?? "https://api.openai.com/v1",
+  embeddingModel: process.env.KERYX_EMBEDDING_MODEL ?? "text-embedding-3-small",
+
+  // ── LLM ──
+  // DeepSeek is the primary provider. Other explicitly configured tiers remain fallbacks.
+  anthropicKey: process.env.ANTHROPIC_API_KEY ?? "",
+  deepseekKey: process.env.DEEPSEEK_API_KEY ?? process.env.OPENAI_API_KEY ?? "",
+  llmBaseUrl: process.env.KERYX_LLM_BASE_URL ?? "https://api.deepseek.com",
+  llmModel: ordinaryDeepSeekModel(process.env.KERYX_LLM_MODEL),
+  synthesisModel: ordinaryDeepSeekModel(process.env.KERYX_SYNTHESIS_MODEL),
+  // Cloudflare is an explicitly enabled experimental third provider; credentials alone do not
+  // authorize sending public research to another processor. Private reasoning has its own policy.
+  cloudflareEnabled: process.env.KERYX_CLOUDFLARE_ENABLED === "true",
+  cloudflareGptOssEnabled: process.env.KERYX_CLOUDFLARE_GPT_OSS_ENABLED === "true",
+  cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
+  cloudflareKey: process.env.CLOUDFLARE_API_TOKEN ?? "",
+  // Transport timeouts abort the provider request. Circuit state is stored in the shared DB so
+  // the Next server and fresh one-shot volume workers inherit the same provider-step health.
+  llmTimeoutMs: Math.max(1_000, Math.round(num(process.env.KERYX_LLM_TIMEOUT_MS, 60_000))),
+  llmCircuitFailures: Math.max(
+    1,
+    Math.round(num(process.env.KERYX_LLM_CIRCUIT_FAILURES, 2)),
+  ),
+  llmCircuitCooldownMs: Math.max(
+    1_000,
+    Math.round(num(process.env.KERYX_LLM_CIRCUIT_COOLDOWN_MS, 1_800_000)),
+  ),
+  // Each failed half-open probe doubles the cooldown up to this ceiling. A real success clears the
+  // streak immediately; merely waiting out the window does not erase evidence of a long outage.
+  llmCircuitMaxCooldownMs: Math.max(
+    1_000,
+    Math.round(num(process.env.KERYX_LLM_CIRCUIT_MAX_COOLDOWN_MS, 14_400_000)),
+  ),
+  // ── App ──
+  baseUrl: process.env.BASE_URL ?? "http://localhost:3939",
+  // Optional audit tag for manual internal requests sent with `?bot=`. No scheduled caller
+  // uses this key. Unset means requests retain their entry-path origin.
+  botKey: process.env.KERYX_BOT_KEY ?? "",
+  // Discord application public key (Developer Portal → General Information). When set, the
+  // /api/discord/interactions endpoint verifies requests and serves the /ask slash command;
+  // unset → that endpoint answers 503 and the Discord front door stays dark.
+  discordPublicKey: process.env.DISCORD_PUBLIC_KEY ?? "",
+  // Telegram bot token (BotFather) + the webhook secret Telegram echoes back on every update
+  // (X-Telegram-Bot-Api-Secret-Token). Both set → /api/telegram/webhook serves /ask; either
+  // unset → that endpoint answers 503 and the Telegram front door stays dark.
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
+  telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET ?? "",
+  // Slack app Signing Secret (Basic Information → App Credentials). When set, the
+  // /api/slack/commands endpoint verifies every request's HMAC signature and serves the /keryx
+  // slash command; unset → that endpoint answers 503 and the Slack front door stays dark. No bot
+  // token is needed — replies ride back over the command's response_url.
+  slackSigningSecret: process.env.SLACK_SIGNING_SECRET ?? "",
+
+  // ── Auth ──
+  // JWT_SECRET must be ≥ 32 bytes (256 bits) for HS256 security. When unset,
+  // getSession() returns null (auth degrades gracefully — build passes, but
+  // session routes won't issue real JWTs).
+  jwtSecret: process.env.JWT_SECRET ?? "",
+  // Comma-separated wallet addresses that receive the 'dev' role at sign-in time.
+  // Lowercased at load time so comparisons are case-insensitive.
+  devWallets: (process.env.KERYX_DEV_WALLETS ?? "")
+    .split(",")
+    .map((w) => w.trim().toLowerCase())
+    .filter(Boolean),
+  // Reown Cloud project ID for WalletConnect mobile wallet support.
+  // Optional: when unset, only injected wallets (MetaMask, Rabby) are available.
+  wcProjectId: process.env.NEXT_PUBLIC_WC_PROJECT_ID ?? "",
+
+  // ── IPFS / content encryption ──
+  // When set, content is encrypted with AES-256-GCM and pinned to Pinata on ingest.
+  // Plaintext is released only inside settleThenServe's produce() after x402 settles.
+  // When unset (offline dev), content is served directly from the DB — no behavior change.
+  pinataJwt: process.env.PINATA_JWT ?? "",
+  // 32-byte hex master key used to wrap per-item AES keys. Never logged or transmitted.
+  // Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  contentMasterKey: process.env.CONTENT_MASTER_KEY ?? "",
+  // Public IPFS gateway for fetching encrypted blobs. Defaults to Pinata's public gateway.
+  ipfsGatewayUrl: process.env.KERYX_IPFS_GATEWAY ?? "https://gateway.pinata.cloud",
+
+  // ── Wallets ──
+  // funderKey is Keryx's own TREASURY wallet — used by authorized server-side requests.
+  // It is NEVER used for user sessions (those are funded by the user's own browser-held EOA).
+  sellerAddress: (process.env.SELLER_ADDRESS ?? "") as `0x${string}` | "",
+  // Current and retired private research merchants. Public x402 sellers must never accept them.
+  // Empty until private merchant provisioning; this alone does not enable private research.
+  privateResearchReservedPayees: process.env.KERYX_PRIVATE_RESEARCH_RESERVED_PAYEES ?? "",
+  funderKey: (process.env.AGENT_FUNDER_PRIVATE_KEY ??
+    process.env.BUYER_PRIVATE_KEY ??
+    "") as `0x${string}` | "",
+
+  // ── Session grants (browser co-sign, Phase 03) ──
+  // TTL for a user's session grant. After this window the server stops honoring sign-requests
+  // for that session, limiting the XSS exposure window to the funded session amount only.
+  // Default: 3600s (1 hour). Expired grants prompt the user to re-grant or revoke residual.
+  // NO server secret is stored for user sessions — the private key lives only in the browser tab.
+  sessionGrantTtlSeconds: Math.round(num(process.env.KERYX_SESSION_GRANT_TTL, 3600)),
+
+  // ── On-chain SourceRegistry ──
+  // Set after deploying contracts/source-registry.sol to Arc testnet.
+  // When unset: indexer is a no-op, register form falls back to DB-direct write.
+  // NEXT_PUBLIC_ variant is also read so the browser can call useWriteContract.
+  registryAddress: (process.env.NEXT_PUBLIC_KERYX_REGISTRY_ADDRESS ??
+    process.env.KERYX_REGISTRY_ADDRESS ??
+    "") as `0x${string}` | "",
+  // Address used for READS only — the payTo guard asks the registry who may be paid for a
+  // source. Deliberately separate from registryAddress: pointing the guard at a deployed
+  // contract must not also switch creator registration into on-chain mode or wake the
+  // indexer. Defaults to registryAddress, so a deployment that sets only that keeps working.
+  registryReadAddress: (process.env.NEXT_PUBLIC_KERYX_REGISTRY_READ_ADDRESS ??
+    process.env.KERYX_REGISTRY_READ_ADDRESS ??
+    process.env.NEXT_PUBLIC_KERYX_REGISTRY_ADDRESS ??
+    process.env.KERYX_REGISTRY_ADDRESS ??
+    "") as `0x${string}` | "",
+  // The block number at which SourceRegistry was deployed. The indexer uses this
+  // as the cold-start backfill origin so it doesn't scan blocks before the contract exists.
+  registryDeployBlock: process.env.KERYX_REGISTRY_DEPLOY_BLOCK ?? "0",
+  // Exact public origin profiles for retaining old registries alongside new registration.
+  registryOrigins: process.env.NEXT_PUBLIC_KERYX_REGISTRY_ORIGINS ?? process.env.KERYX_REGISTRY_ORIGINS ?? "",
+  // One-time deployer key — used ONLY for `npx hardhat run scripts/deploy-source-registry.ts`.
+  // Never used for per-source writes (those are creator-signed from the browser).
+  deployerKey: (process.env.DEPLOYER_PRIVATE_KEY ?? "") as `0x${string}` | "",
+} as const;
+
+export type LlmProvider = "anthropic" | "deepseek" | "cloudflare" | "heuristic";
+
+type RealLlmProvider = Exclude<LlmProvider, "heuristic">;
+
+/**
+ * Ordered real-provider tiers. DeepSeek leads unless an operator gives a
+ * deployment-local override; unknown and duplicate names are ignored so a typo cannot select an
+ * unconfigured transport or remove the deterministic final fallback.
+ */
+export function llmProviderOrder(): RealLlmProvider[] {
+  const fallback: RealLlmProvider[] = ["deepseek", "anthropic", "cloudflare"];
+  const requested = (process.env.KERYX_LLM_PROVIDER_ORDER ?? "")
+    .split(",")
+    .map((provider) => provider.trim().toLowerCase())
+    .filter((provider): provider is RealLlmProvider =>
+      provider === "anthropic" || provider === "deepseek" || provider === "cloudflare",
+    );
+  return requested.length > 0 ? [...new Set(requested)] : fallback;
+}
+
+/** Which reasoning engine to use, by available credentials. */
+export function llmProvider(): LlmProvider {
+  for (const provider of llmProviderOrder()) {
+    if (provider === "anthropic" && config.anthropicKey.length > 0) return provider;
+    if (provider === "deepseek" && config.deepseekKey.length > 0) return provider;
+    if (provider === "cloudflare" && config.cloudflareEnabled && /^[a-f0-9]{32}$/.test(config.cloudflareAccountId) && config.cloudflareKey.length > 0) return provider;
+  }
+  return "heuristic";
+}
+
+/** True when a real LLM key is present; otherwise Keryx runs in deterministic heuristic mode. */
+export function hasLlm(): boolean {
+  return llmProvider() !== "heuristic";
+}
+
+/** True when Supabase is configured; otherwise the local SQLite adapter is used. */
+export function hasSupabase(): boolean {
+  return Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL &&
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+  );
+}
+
+function num(v: string | undefined, fallback: number): number {
+  const n = v ? parseFloat(v) : NaN;
+  return Number.isFinite(n) ? n : fallback;
+}
+
+// Startup warning: JWT_SECRET set but too short. Don't crash — offline dev (empty
+// secret) is intentional and already handled by getSession() returning null.
+// Only warn when a secret IS provided but is dangerously short (< 32 bytes).
+if (config.jwtSecret.length > 0 && config.jwtSecret.length < 32) {
+  console.warn(
+    `[keryx config] JWT_SECRET is only ${config.jwtSecret.length} bytes — ` +
+    "HS256 requires ≥ 32 bytes. Tokens are brute-forceable. " +
+    "Run: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\" to generate one.",
+  );
+}

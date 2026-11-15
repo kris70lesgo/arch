@@ -1,0 +1,638 @@
+/**
+ * Keryx domain model. Shared across the agent brain, persistence, API, and UI.
+ */
+
+/** A registered content source = a creator (or multi-author publication) that gets paid per citation. */
+export interface Source {
+  /** Immutable registry origin; required when multiple registries share this catalog. */
+  registryAuthority?: import("./registry/source-registry-authority").SourceRegistryAuthority;
+  /** Trusted catalog classification; settlement never establishes factual authenticity. */
+  evidenceProvenance?: "synthetic-demo";
+  /** Sticky distribution-rights enrollment; unsupported backends must refuse paid activation. */
+  scholarlyEnrolled?: boolean;
+  /** Retained opt-in claim binding. Catalog import cannot discard its policy/history. */
+  sourceClaimId?: string;
+  id: string;
+  name: string;
+  url: string; // homepage / canonical link
+  description: string;
+  rssUrl?: string;
+  walletAddress: string; // payTo for fetch tolls + citation rewards
+  fetchPrice: number; // USDC access toll per fetch
+  tags: string[];
+  authors: Author[]; // for multi-author splits (defaults to one = the source)
+  createdAt: string;
+  /** false when the creator has called deactivate() on-chain. listSources() filters these out
+   *  so deactivated sources are never discovered, fetched, or cited. Defaults to true for
+   *  offline/DB-direct rows that predate the active flag. */
+  active?: boolean;
+  /** IPFS CID for gated content. Set by the registry indexer from on-chain contentCid.
+   *  Content fetch stays lazy — pulled on first agent demand, cached in cache_items.
+   *  Phase 04 will use this to fetch + decrypt encrypted content. */
+  ipfsCid?: string;
+  /** The source's id in the on-chain SourceRegistry = keccak256(abi.encode(registrant, urlHash)).
+   *  Present once the curated source has been registered on Arc. Lets the UI prove provenance. */
+  onchainId?: string;
+  /** EVM tx hash of the SourceRegistry register() call. Unlike Gateway settlement IDs (UUIDs),
+   *  this resolves on the block explorer, so the UI can link it as verifiable on-chain proof. */
+  registerTx?: string;
+  /** Feed-ownership proof gate. Listing a source is permissionless, but EARNING is not: the agent
+   *  only discovers/reads/cites/pays sources whose owner has proven control of the feed (by placing
+   *  `keryx-verify:<payoutWallet>` in it — see lib/sources/feed-verification.ts). An impostor who
+   *  lists a feed they don't own can never make it carry their wallet, so can never verify or earn.
+   *  Undefined/null is treated as true so operator-curated + pre-existing rows are grandfathered. */
+  verified?: boolean;
+  /** How much of each item a FREE preview may reveal — the creator's incentive dial. Undefined/null
+   *  means "full" (grandfathers every row that predates the column). See lib/sources/preview-depth.ts. */
+  previewDepth?: import("./sources/preview-depth").PreviewDepth;
+}
+
+/** A payable author within a source (enables multi-author citation splits). */
+export interface Author {
+  name: string;
+  walletAddress: string;
+  splitWeight: number; // 0..1, weights within a single source sum to 1
+}
+
+/** What the paid body honestly contains. RSS metadata alone must never be advertised as full text. */
+export type ContentDeliveryKind = "full_text" | "excerpt" | "abstract" | "metadata_only";
+
+/** Where the paid body rests before settlement-gated delivery. */
+export type ContentStorageMode = "ipfs_encrypted" | "db_encrypted" | "db_plaintext";
+
+/**
+ * Creator-signed statement about one exact paid body. It authenticates content provenance only:
+ * SourceRegistry remains payout authority and ArticleOffer remains pricing authority.
+ */
+export interface ArticleContentManifest {
+  id: string;
+  sourceId: string;
+  itemId: string;
+  canonicalUrl: string;
+  bodyHash: string;
+  plaintextBytes: number;
+  deliveryKind: ContentDeliveryKind;
+  signer: string;
+  nonce: string;
+  signature: string;
+  createdAt: string;
+}
+
+/** Public, non-secret content receipt metadata carried from discovery through the dispatch. */
+export interface ContentReceiptRef {
+  deliveryKind: ContentDeliveryKind;
+  storageMode: ContentStorageMode;
+  plaintextBytes: number;
+  bodyHash?: string;
+  manifestId?: string;
+  manifestSigner?: string;
+  /** Full public signature proof; it authenticates metadata only and contains no plaintext/key. */
+  manifest?: ArticleContentManifest;
+}
+
+/** A creator content item. Preview is free; a positive current toll gates body delivery. */
+export interface SourceItem {
+  evidenceProvenance?: "synthetic-demo";
+  id: string;
+  sourceId: string;
+  title: string;
+  summary: string; // free preview shown during discovery
+  content: string; // current creator price/policy gates delivery; zero-price reads require no toll
+  link: string;
+  publishedAt?: string;
+  // Phase 04: IPFS encrypted content. When set, `content` is empty and the real text lives
+  // on IPFS as AES-256-GCM ciphertext. Paid delivery follows settlement; free delivery rechecks zero price.
+  ipfsCid?: string;       // CID of the encrypted blob on Pinata IPFS
+  itemKeyEnc?: string;    // base64: per-item AES key wrapped with CONTENT_MASTER_KEY (+ 16-byte GCM tag)
+  itemIv?: string;        // base64: 12-byte GCM nonce used to encrypt the content
+  itemAuthTag?: string;   // base64: 16-byte GCM auth tag for the content ciphertext
+  /** Random AES-GCM nonce for wrapping the item key. Missing means the legacy zero-IV envelope. */
+  itemWrapIv?: string;
+  deliveryKind?: ContentDeliveryKind;
+  storageMode?: ContentStorageMode;
+  plaintextBytes?: number;
+  bodyHash?: string;
+  manifest?: ArticleContentManifest;
+}
+
+/** Immutable identity for the exact article version the agent evaluated and purchased. */
+export interface SourceItemIdentity {
+  /** Original URLs explicitly supplied by the caller, including requested fragments.
+   * Section scope is recorded only after a successful observed HTML section read. */
+  requestedSource?: { urls: string[]; readScope: "bounded-whole-document" | "bounded-heading-section" };
+  /** Policy captured before this read; informational history, never payout authority. */
+  sourceClaim?: SourceClaimReceipt;
+  /** A free read is distinct from a cache hit or a settled access payment. */
+  accessKind?: "creator-free";
+  evidenceProvenance?: "synthetic-demo";
+  /** Observed provider metadata; never creator identity or payout authority. */
+  scholarly?: ScholarlyMetadata;
+  webProvenance?: {
+    retrievedAt: string;
+    publisherGroup: string;
+    normalizedBodyHash: string;
+    extraction: "html" | "text" | "pdf";
+    /** Page/character limits clipped the extracted text; textless PDF pages are separate. */
+    truncated: boolean;
+    /** New PDF reads only; absence on historical records means unknown page scope. */
+    pdfTextScope?: import("./web-research/pdf-text-scope").PdfTextScope;
+    htmlSectionScope?: import("./web-research/html-section-scope").HtmlSectionScope;
+  };
+  /** Trusted catalog provenance; public references never carry payout authority. */
+  sourceKind?: "public-reference";
+  publicDeliveryKind?: ContentDeliveryKind;
+  itemId: string;
+  itemTitle: string;
+  itemUrl: string;
+  contentVersion: string;
+  itemPublishedAt?: string;
+  contentReceipt?: ContentReceiptRef;
+}
+
+export interface SourceClaimReceipt {
+  id: string;
+  revision: number;
+  mode: "free" | "citation-only" | "paid";
+  effectiveAt: string;
+  verifiedAt: string;
+}
+
+export interface ScholarlyMetadata {
+  provider: "crossref" | "arxiv";
+  recordUrl: string;
+  retrievedAt: string;
+  title: string;
+  authors: string[];
+  /** Count of contributor entries supplied by the provider, not verified authorship. */
+  authorCount?: number;
+  authorsTruncated?: boolean;
+  /** Optional exact provider name parts; never guess surnames from a full name. */
+  authorNames?: Array<{ given?: string; family?: string; literal?: string }>;
+  doi?: string;
+  arxivId?: string;
+  workType: "journal-article" | "preprint" | "other";
+  journal?: string;
+  publishedDate?: string;
+  volume?: string;
+  issue?: string;
+  pages?: string;
+  /** Provider type does not prove peer review. */
+  peerReview: "unknown";
+  evidenceScope?: "paper-text" | "abstract-page" | "publisher-page";
+}
+
+/**
+ * A creator-signed, version-bound discount for one article.
+ *
+ * `priceUsdc6` is an integer so the signed price is exactly the amount x402 settles. The
+ * SourceRegistry publication price remains the ceiling and payout authority; an offer can only
+ * make one exact article cheaper until `expiresAt`.
+ */
+export interface ArticleOffer {
+  id: string;
+  sourceId: string;
+  itemId: string;
+  contentVersion: string;
+  priceUsdc6: number;
+  expiresAt: number; // unix seconds
+  signer: string;
+  nonce: string;
+  signature: string;
+  createdAt: string;
+}
+
+/** Public purchase terms carried through discovery, payment, and receipts. */
+export interface ArticleOfferRef {
+  id: string;
+  priceUsdc: number;
+  listPriceUsdc: number;
+  expiresAt: number;
+  /** Signed payload sent to browser co-signers so they can verify amount independently. */
+  proof?: ArticleOffer;
+}
+
+export type DecisionAction = "BUY" | "SKIP" | "CACHE";
+
+/** The agent's reasoned choice about a single candidate source. The rationale is the product. */
+export interface Decision extends Partial<SourceItemIdentity> {
+  sourceId: string;
+  /** Candidate identity used during reasoning. Article candidates are `item:<itemId>`. */
+  assetId?: string;
+  sourceName: string;
+  action: DecisionAction;
+  expectedValue: number; // 0..1 — predicted usefulness for the question
+  price: number; // USDC toll
+  /** Creator-signed article discount selected by the agent, when one beat the list price. */
+  offerId?: string;
+  listPrice?: number;
+  confidence: number; // 0..1
+  rationale: string; // human-readable WHY (buy/skip/cache)
+  targets: number[]; // indexes of sub-claims this source is expected to address
+  /** Present only on a downward-only local validator SKIP; absent on model-authored choices. */
+  selectionRefusal?: import("./research/selection-diagnostic").SelectionRefusalReason;
+  /** Structured planning snapshot (price, budget left, alternative, rule). Absent on legacy runs. */
+  basis?: import("./research/decision-basis").DecisionBasis;
+  external?: boolean; // true = a marketplace endpoint, always discovery-only regardless of advertised network
+}
+
+/** One contributing source in the final answer, with its weighted reward. */
+export interface Citation extends Partial<SourceItemIdentity> {
+  marker: string; // e.g. "S1"
+  sourceId: string;
+  sourceName: string;
+  weight: number; // 0..1 contribution to the answer (cited sources sum to 1)
+  reward: number; // USDC citation reward = pool * weight
+  rationale: string; // why this weight
+}
+
+/** A source span that survived the deterministic evidence gate for one decomposed claim. */
+export interface EvidenceRecord extends Partial<SourceItemIdentity> {
+  claimIndex: number;
+  claim: string;
+  marker: string;
+  sourceId: string;
+  sourceName: string;
+  quote: string;
+  support: number; // 0..1, model-proposed but bounded after the quote is verified
+  /** Literal source quote, answer marker and estimated-support gate passed; not entailment/truth. */
+  qualifiesForAnswer?: boolean;
+  qualifiesForReward: boolean;
+}
+
+/** The final, evidence-bounded coverage used for confidence and the public demand board. */
+export interface ClaimCoverageRecord {
+  claimIndex: number;
+  claim: string;
+  coverage: number; // min(final assessment, strongest validated evidence)
+  coveredBy: string[]; // answer-supporting owned or public source markers
+}
+
+export type GapIntentStatus =
+  | "pending"
+  | "running"
+  | "filled"
+  | "missed"
+  | "unpaid"
+  | "stale"
+  | "failed";
+
+/**
+ * One creator source offered against a measured demand-board gap.
+ *
+ * This is coordination state, never payment authority: owner/payTo still comes from the source
+ * registry, the retry spends only Keryx's bounded treasury path, and `filled` requires both
+ * evidence-qualified coverage and a settled citation payment to the offered source.
+ */
+export interface GapIntent {
+  id: string;
+  gapId: string;
+  claim: string;
+  question: string;
+  failedQueryId: string;
+  sourceId: string;
+  sourceItemLink: string;
+  /** Exact paid asset offered for this gap. Absent only on legacy registration-era intents. */
+  itemId?: string;
+  contentVersion?: string;
+  /** Current creator-signed discount revision, when the response was admitted below list price. */
+  articleOfferId?: string;
+  ownerWallet: string;
+  status: GapIntentStatus;
+  attempts: number;
+  leaseExpiresAt?: number;
+  retryRunId?: string;
+  coverage?: number;
+  rewardUsdc?: number;
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Execution origin for audit and channel-specific behavior. `engine` marks Keryx-initiated
+ *  runs (including the volume driver); `web`, `a2a`, and `mcp` identify request channels.
+ *  A web request may come from a person or a program. Legacy rows may lack an origin. */
+export type PaymentOrigin = "engine" | "web" | "a2a" | "mcp";
+
+/** User-visible research depth. It changes attention/latency policy, never payment authority. */
+export type ResearchMode = "quick" | "deep";
+
+/** Free-preview plan coverage measured before any paid fetch is attempted. */
+export interface PreviewCoverage {
+  status: "ready" | "partial" | "insufficient";
+  coveredClaims: number;
+  totalClaims: number;
+  ratio: number;
+  claims: Array<{
+    claimIndex: number;
+    claim: string;
+    candidateIds: string[];
+    strongestExpectedValue: number;
+  }>;
+}
+
+/**
+ * The deterministic source set selected from the model's claim-targeted BUY/CACHE proposals.
+ * This is a preview-derived attention/spend plan, never evidence or payment authority.
+ */
+export interface EvidencePortfolio {
+  selectionMethod?: "bounded-heuristic" | "exhaustive";
+  evaluatedStates?: number;
+  policy: "claim-coverage-v1";
+  eligibleCandidates: number;
+  attentionLimit: number;
+  fetchBudgetUsdc: number;
+  selectedAssetIds: string[];
+  selectedBuyUsdc: number;
+  unusedFetchBudgetUsdc: number;
+  predictedCoveredClaims: number;
+  claims: Array<{
+    claimIndex: number;
+    selectedCandidateIds: string[];
+    predictedCoverage: number;
+  }>;
+  /** Present only after the paid/cached bodies have passed through the evidence gate. */
+  outcome?: {
+    readAssetIds: string[];
+    evidenceAssetIds: string[];
+    nonqualifyingReads: number;
+    unreadSelected: number;
+    groundedClaims: number;
+    evidenceYield: number | null;
+  };
+}
+
+/** Coarse first-party product events. Rows store only UTC day + event + aggregate count. */
+export type ActivationEvent =
+  | "reader_landing"
+  | "reader_ask_started"
+  | "reader_answer_completed"
+  | "reader_wallet_connected"
+  | "reader_session_funded"
+  | "reader_returning_dispatch"
+  | "creator_registration_started"
+  | "creator_verification_completed"
+  | "creator_citation_settled"
+  | "creator_withdrawal_completed";
+
+export interface ActivationFunnel {
+  windowDays: number;
+  sinceDay: string;
+  counts: Record<ActivationEvent, number>;
+}
+
+/** One payment attempt's evidence state. */
+export type PaymentSettlementStatus = "settled" | "simulated" | "pending" | "failed";
+
+/** Inbound is a package receipt; fetch/citation pay creators; operating-fee pays Keryx. */
+export interface PaymentRecord extends Partial<SourceItemIdentity> {
+  scholarlyDeclarationId?: string;
+  scholarlyApprovalId?: string;
+  id?: string;
+  kind: "fetch" | "citation" | "inbound" | "operating-fee";
+  queryId: string;
+  sourceId: string;
+  sourceName: string;
+  payer: string;
+  payee: string;
+  amountUsdc: number;
+  /** Article offer provenance. Absent for list-price, legacy, and citation payments. */
+  offerId?: string;
+  listPriceUsdc?: number;
+  weight?: number;
+  rationale?: string;
+  txHash?: string | null;
+  network: string;
+  settled: boolean; // compatibility/metrics bit: true only with real Circle settlement evidence
+  /** Distinguishes offline simulation from a signed authorization awaiting proof. Optional so
+   *  archived rows written before this field existed remain readable. */
+  settlementStatus?: PaymentSettlementStatus;
+  /** EIP-3009 nonce for browser co-sign attempts. Correlation evidence, never a signature. */
+  authorizationId?: string;
+  authorizationPhase?: import("./db/browser-authorization-journal").BrowserAuthorizationPhase;
+  /** Exact signed EIP-3009 `validBefore`, normalized to ISO-8601. Operational context only:
+   *  expiry is not evidence that Circle accepted or failed the transfer. */
+  authorizationExpiresAt?: string;
+  /** Grant generation that reserved this browser-funded amount. A terminal failure may release
+   *  capacity only while the current grant still has this exact epoch. */
+  grantEpoch?: string;
+  origin?: PaymentOrigin; // engine | web | a2a | mcp — see PaymentOrigin
+  createdAt: string;
+}
+
+/** A creator cash-out: accrued Gateway earnings minted on-chain to a wallet via Gateway withdraw.
+ *  Unlike the per-payment Circle settlement UUIDs (which do NOT open at /tx/), `txHash` is a real
+ *  EVM mint hash that resolves on the block explorer — so the dashboard can link it as verifiable
+ *  proof that the rewards are real, withdrawable USDC, not just a Gateway ledger number. */
+export interface WithdrawalRecord {
+  txHash: string; // EVM mint tx hash (primary key) — resolves at explorer /tx/
+  label: string; // keystore label of the creator wallet (e.g. "latent-space-ae8bf6")
+  sourceName?: string; // human-readable source name when resolvable, else the label
+  wallet: string; // creator EOA whose Gateway balance was drawn from
+  recipient: string; // address the minted USDC landed in (defaults to the creator's own wallet)
+  amountUsdc: number;
+  network: string;
+  createdAt: string;
+}
+
+export type TracePhase =
+  | "decompose"
+  | "discover"
+  | "coverage"
+  | "decide"
+  | "fetch"
+  | "sufficiency"
+  | "reevaluate"
+  | "synthesize"
+  | "evidence"
+  | "adjudicate"
+  | "verdict"
+  | "attribute"
+  | "settle"
+  | "done";
+
+/** A single streamed step in the agent's visible reasoning trace. */
+export interface TraceStep {
+  phase: TracePhase;
+  message: string;
+  detail?: unknown;
+  ts: number;
+  /** Bounded ordinary-public checkpoint assertions; no read/payment authority. */
+  readCheckpoints?: import("./agent/read-checkpoint-capture").ReadCheckpointCapture;
+}
+
+/** How much the agent trusts its own answer, derived from its coverage signals (sources
+ *  corroborating, sub-claims left thin, disagreements adjudicated). Emitted as a trace step and
+ *  carried as a first-class field so every surface — permalink, archive, API — can show it without
+ *  re-reading the trace. */
+export interface Confidence {
+  level: "High" | "Moderate" | "Low";
+  reason: string;
+}
+
+/**
+ * Self-declared MCP distribution channel. This is useful for activation telemetry only: the URL
+ * query can be edited by any caller, so it must never grant identity, auth, or payment authority.
+ */
+export type McpClientChannel = "codex" | "claude" | "cursor" | "direct" | "other";
+
+/** Complete record of one agent run over a question. */
+export interface OperatingFeeSnapshot {
+  policy: "public-citation-operating-fee-v1";
+  beneficiary: string;
+  amountUsdc: number;
+  allocations: Array<{ marker: string; sourceId: string; itemUrl: string; amountUsdc: number }>;
+  status: PaymentSettlementStatus | "withheld";
+  paymentId?: string;
+  reason?: string;
+}
+
+export interface QueryRun {
+  /** Failed before discovery; a saved question attempt, never a completed/evidence-supported answer. */
+  planningFailure?: import("./research/planning-failure").PlanningFailureDiagnostic;
+  /** Public write-time source outcomes; observational only, with no live learned spending authority. */
+  sourceLearning?: import("./research/source-learning-contract").SourceLearningSnapshot;
+  /** Write-time server classification. Missing historical observations remain unknown. */
+  usage?: import("./research/usage-provenance").RunUsage;
+  /** Trusted ingress and owner-proof method. Absent historical metadata is unknown, not inferred. */
+  provenance?: import("./research/run-provenance").RunProvenance;
+  /** Reviewed, hypothetical teaching suggestions; never factual/payment authority. */
+  teachingProposals?: import("./research/teaching-proposals").TeachingProposalDelivery;
+  /** Public exact-original bibliography, separate from scientific evidence/rewards. */
+  bibliography?: import("./research/bibliographic-task").BibliographicTaskResult;
+  /** Recorded native-feed ordering only, separate from body evidence/payment authority. */
+  sourceRecency?: import("./sources/source-recency-result").SourceRecencyResult;
+  /** Sponsored service allocation; canonical payment rows alone establish settlement. */
+  operatingFee?: OperatingFeeSnapshot;
+  /** Private same-original recovery provenance; public response builders omit this packet. */
+  originalFulfillment?: import("./a2a/failed-original-fulfillment-protocol").FulfilledOriginalRunMetadata;
+  id: string;
+  question: string;
+  budget: number;
+  /** Quick/Deep attention policy selected for this dispatch. Historical runs default to Deep. */
+  researchMode?: ResearchMode;
+  /** Free-preview plan coverage captured before the first paid fetch. */
+  previewCoverage?: PreviewCoverage;
+  /** Dual-budget, claim-aware source portfolio captured before the first paid fetch. */
+  evidencePortfolio?: EvidencePortfolio;
+  engine: string; // which reasoning engine produced this (llm:model | heuristic)
+  /** Per-step provider attempts, including fallbacks. Absent on pre-v0.8.1 runs. */
+  reasoningAttempts?: import("./llm/reasoning-engine").ReasoningAttempt[];
+  /** Provider token counters captured per response. Empty alone does not prove zero cost;
+   * correlate with calls and reasoning attempts. Absent means historical/unsampled. */
+  llmUsage?: import("./llm/reasoning-engine").LlmUsageRecord[];
+  /** Every instrumented model call, including optional review calls and failures. */
+  llmCalls?: readonly import("./llm/call-ledger").LlmCallRecord[];
+  subClaims: string[];
+  decisions: Decision[];
+  citations: Citation[];
+  /** Claim → source → quote ledger validated by the orchestrator. Absent on historical runs. */
+  evidence?: EvidenceRecord[];
+  /** Final evidence-bounded coverage. Absent on historical runs; trace remains the fallback. */
+  claimCoverage?: ClaimCoverageRecord[];
+  answer: string;
+  totalSpent: number; // USDC actually spent (tolls + rewards)
+  totalToCreators: number; // USDC that reached creator wallets
+  trace: TraceStep[];
+  createdAt: string;
+  /** The dispatch this one follows up on. A follow-up is a full paid dispatch in its own right —
+   *  it buys and pays creators again; the parent only supplied the question's context. */
+  parentId?: string;
+  /** The under-covered dispatch this one re-asks. A retry is the *same question* put to the corpus
+   *  again after it gained content that might answer it — unlike `parentId`, which carries a
+   *  different, follow-up question. The two are kept apart because the demand board must never read
+   *  the agent's own repeat as a second reader arriving at the same hole. */
+  retryOf?: string;
+  /** How confident the agent is in this answer. Absent on runs recorded before it became a field;
+   *  deriveConfidence() reconstructs it from the trace's verdict step for those. */
+  confidence?: Confidence;
+  /** Lowercased wallet from a server-verified session, API key or original payer. Never from
+   *  client telemetry. Absent on anonymous asks and unidentified agents. */
+  asker?: string;
+  /** Recorded browser-session funding for downstream creator payments. False/absent groups other
+   *  funding, including hosted keyed and prepaid A2A runs; it does not prove a free research
+   *  service, incoming price, gas, settlement or historical funding authority. */
+  askerFunded?: boolean;
+  /** Funding provenance set by the trusted server path, never by a public request body. */
+  fundingOwner?: "browser" | "treasury" | "offline";
+  /** Verified request channel. Persisted on the run as well as its payments so zero-spend
+   *  dispatches still count in an honest external conversion denominator. */
+  origin?: PaymentOrigin;
+  /** Self-declared MCP client channel, normalized from the setup URL. Telemetry only. */
+  mcpClient?: McpClientChannel;
+  /** End-to-end orchestrator time for completed runs. Absent on historical rows. */
+  durationMs?: number;
+  /** Settlement telemetry for completed runs; historical rows intentionally remain unsampled. */
+  paymentMode?: "real" | "offline";
+  paymentAttempts?: number;
+  settledPayments?: number;
+  /** Signed browser authorizations without a definitive settlement response. */
+  pendingPayments?: number;
+  /** Signed creator authorizations awaiting Circle confirmation, in exact micro-USDC. */
+  pendingSpendUsdc?: number;
+}
+
+export interface DashboardEvidenceQuality {
+  status: "unavailable";
+  basis: "recorded-unreassessed";
+  explanation: string;
+}
+
+/** Aggregate dashboard telemetry. Payment totals use settled rows; evidence counters are recorded history. */
+export interface DashboardMetrics {
+  /** Sponsored Keryx operating transfers, separate from creator payouts and external revenue. */
+  settledOperatingFeeUsdc?: number | null;
+  settledOperatingFeePayments?: number | null;
+  totalPayments: number;
+  totalVolumeUsdc: number;
+  totalCreatorPayoutsUsdc: number;
+  creatorsEarning: number;
+  avgPaymentUsdc: number;
+  totalQueries: number;
+  /** Indexed authenticated wallet accounts, deduped by valid normalized address.
+   * Not unique humans, active users, current connections or a sign-in-provider split.
+   * null/absent means the backend cannot supply an exact aggregate. */
+  recordedAccounts?: number | null;
+  /** Completed web questions with no signed-in wallet recorded; a subset of totalQueries.
+   * Counts questions, not visits or unique people. null/absent means unavailable. */
+  guestQuestions?: number | null;
+  payingQueries: number; // queries that produced >= 1 payment
+  readerToPayerConversion: number; // payingQueries / totalQueries
+  /** Recorded evidence-counter samples; not reassessed against current source provenance. */
+  evidenceRunSamples: number;
+  evidenceClaimSamples: number;
+  /** Aggregate factual grounding is unavailable until provenance-aware historical reassessment. */
+  groundedClaimRate: number | null;
+  evidenceQuality: DashboardEvidenceQuality;
+  /** Recorded runs with a known-zero planned creator citation pool; not a current factual quality measure. */
+  citationPoolWithheldRuns: number;
+  /** Creator offers queued from /wanted, including terminal outcomes. */
+  gapIntentOffers: number;
+  /** Offers with evidence-qualified coverage and real settled citation reward. */
+  gapIntentFilled: number;
+  gapIntentPending: number;
+  gapIntentFillRate: number;
+  /** Operational uncertainty only; excluded from every settled payment and traction total. */
+  pendingPaymentConfirmations: number;
+  pendingPaymentVolumeUsdc: number;
+  /** Circle-terminal failures; retained as receipts but excluded from spend and traction. */
+  failedPaymentAttempts: number;
+  failedPaymentVolumeUsdc: number;
+  /** Remote MCP dispatches grouped by their self-declared setup channel. */
+  mcpClientQueries: Array<{
+    client: McpClientChannel | "unknown";
+    queries: number;
+    payingQueries: number;
+  }>;
+  /** Global answer satisfaction rate (up / total feedback). Added by /api/metrics. */
+  satisfactionRate?: number;
+  /** Total feedback votes received. Added by /api/metrics. */
+  feedbackTotal?: number;
+  /** Coarse first-party event totals; never unique-user or wallet counts. */
+  activationFunnel?: ActivationFunnel;
+}
+
+/** One day's settled USDC volume. `day` is a UTC `YYYY-MM-DD` key. */
+export interface DailyVolume {
+  day: string;
+  usdc: number;
+}

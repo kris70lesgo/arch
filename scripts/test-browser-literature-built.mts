@@ -1,0 +1,250 @@
+/** Actual built Next pages, local metadata and localStorage. All client API and external HTTP intercepted. */
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { mkdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { chromium } from "playwright";
+import { PAPER_CATALOG } from "../lib/papers/catalog";
+import { LITERATURE_STORAGE_KEY, parseLiteratureWorkspace, serializeLiteratureWorkspace } from "../lib/papers/literature-workspace";
+import { literatureImportCopy as importCopy } from "../locales/en/literature-import";
+import { createMessages } from "../lib/i18n/messages";
+
+const messages = createMessages("en");
+
+const require = createRequire(import.meta.url), port = 3963, base = `http://127.0.0.1:${port}`;
+const screenshots = process.env.KERYX_LITERATURE_SCREENSHOT_DIR ?? join(process.cwd(), ".artifacts", "literature-ux");
+await mkdir(screenshots, { recursive: true });
+const server = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "-H", "127.0.0.1", "-p", String(port)], {
+  cwd: process.cwd(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+  env: { ...process.env, KERYX_NETWORK: "arcTestnet", NEXT_PUBLIC_KERYX_NETWORK: "arcTestnet", KERYX_FORCE_OFFLINE: "1",
+    NEXT_PUBLIC_SUPABASE_URL: "", NEXT_PUBLIC_SUPABASE_ANON_KEY: "", SUPABASE_SERVICE_ROLE_KEY: "" },
+});
+let output = "";
+server.stdout.on("data", value => { output = (output + String(value)).slice(-4000); });
+server.stderr.on("data", value => { output = (output + String(value)).slice(-4000); });
+const exited = new Promise<void>(resolve => { server.once("exit", () => resolve()); server.once("error", () => resolve()); });
+const browser = await chromium.launch({ headless: true });
+try {
+  let ready = false;
+  for (let attempt = 0; attempt < 100 && server.exitCode === null; attempt++) {
+    try { ready = (await fetch(`${base}/literature`, { signal: AbortSignal.timeout(1000) })).ok; } catch { /* Starting */ }
+    if (ready) break; await delay(250);
+  }
+  assert(ready, `Built offline server failed: ${output}`);
+  for (const width of [320, 390, 768, 1440]) {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: "reduce", acceptDownloads: true });
+    const errors: string[] = [], researchRequests: string[] = [], metadataRequests: string[] = [];
+    await context.route("**/*", route => {
+      const request = route.request(), url = new URL(request.url());
+      if (url.origin !== base) return route.abort();
+      if (url.pathname.startsWith("/api/")) {
+        if (url.pathname === "/api/ask/visibility") {
+          assert.equal(request.method(), "GET", "Visibility context is read-only");
+          return route.fulfill({ json: { wallet: null, defaultVisibility: "public", privacyActive: true } });
+        }
+        if (url.pathname === "/api/papers") metadataRequests.push(url.search);
+        if (/\/ask(?:\/|$)|\/source(?:\/|$)|\/cite(?:\/|$)/.test(url.pathname)) researchRequests.push(url.pathname);
+        return route.fulfill({ json: url.pathname === "/api/models" ? { models: [] } : {} });
+      }
+      assert.equal(request.method(), "GET"); return route.continue();
+    });
+    const page = await context.newPage(); page.on("pageerror", error => errors.push(error.message));
+    assert.equal((await page.goto(`${base}/literature`))?.status(), 200);
+    await page.getByRole("heading", { name: "Start with your review question" }).waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    await page.screenshot({ path: join(screenshots, `empty-${width}.png`), fullPage: true });
+    await page.screenshot({ path: join(screenshots, `empty-viewport-${width}.png`) });
+    const trial = page.getByRole("complementary", { name: "Sponsored research trial" });
+    await trial.getByText("Trial reports have public links.", { exact: false }).waitFor();
+    await trial.getByRole("link", { name: "Prepare a research question" }).click();
+    await page.getByRole("textbox", { name: "What do you want to know?" }).waitFor();
+    assert.equal(researchRequests.length, 0, "The sponsored trial link prepares the composer without research or payment");
+    await page.goto(`${base}/literature`);
+    await page.getByRole("heading", { name: "Start with your review question" }).waitFor();
+    await page.getByRole("link", { name: "Browse research papers" }).click();
+    const cards = page.locator("#research-papers article"); await cards.first().getByRole("button", { name: "Save to literature workspace" }).waitFor();
+    const savedTitles = [await cards.first().locator("h3").innerText(), await cards.nth(1).locator("h3").innerText()];
+    await cards.first().getByRole("button", { name: "Save to literature workspace" }).click();
+    await cards.nth(1).getByRole("button", { name: "Save to literature workspace" }).click();
+    await cards.first().getByRole("link", { name: "Saved · Open literature workspace" }).click();
+    await page.getByRole("heading", { name: "Your papers 2/50" }).waitFor();
+    await page.getByLabel("Review title", { exact: true }).fill("Retrieval review");
+    await page.getByLabel("Research question or inclusion criteria").fill("A".repeat(600));
+    const beforeDeparture = await page.evaluate(key => localStorage.getItem(key), LITERATURE_STORAGE_KEY);
+    const departure = page.waitForEvent("dialog");
+    const cancelledDeparture = page.locator('a[href="/literature/drafts"]').first().click();
+    const departureDialog = await departure; assert.equal(departureDialog.type(), "confirm"); await departureDialog.dismiss();
+    await cancelledDeparture;
+    assert.equal(new URL(page.url()).pathname, "/literature");
+    assert.equal(await page.getByLabel("Review title", { exact: true }).inputValue(), "Retrieval review");
+    assert.equal(await page.getByLabel("Research question or inclusion criteria").inputValue(), "A".repeat(600));
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), LITERATURE_STORAGE_KEY), beforeDeparture);
+    await page.getByRole("button", { name: "Save review focus" }).click();
+    await page.getByText("Review focus saved on this browser.", { exact: true }).waitFor();
+    const entries = page.locator("main article");
+    await entries.first().getByText("Edit screening and notes", { exact: true }).click();
+    await entries.first().getByLabel("Your screening decision").selectOption("include");
+    await entries.first().getByLabel("Why keep or exclude this paper? What needs checking?").fill("User notes: verify methods against the original paper.");
+    await entries.first().getByRole("button", { name: "Save screening and notes" }).click();
+    await page.getByText("Screening and notes saved on this browser.", { exact: true }).waitFor();
+    await page.reload(); await page.getByText("User notes: verify methods", { exact: false }).first().waitFor();
+    await page.getByLabel("Show screening decisions").selectOption("include");
+    const downloadEvent = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download shown references (RIS)" }).click();
+    const download = await downloadEvent;
+    assert.equal(download.suggestedFilename(), "keryx-literature-references.ris");
+    const references = await readFile((await download.path())!, "utf8");
+    assert.equal((references.match(/^TY  - /gm) ?? []).length, 1);
+    assert(references.includes(savedTitles[0]) && !references.includes(savedTitles[1]));
+    assert(!references.includes("User notes: verify methods") && !references.includes("A".repeat(600)));
+    await page.getByLabel("Show screening decisions").selectOption("all");
+    await page.getByRole("checkbox", { name: `Compare ${savedTitles[0]}`, exact: true }).check();
+    await page.getByRole("checkbox", { name: `Compare ${savedTitles[1]}`, exact: true }).check();
+    await page.getByLabel("Show screening decisions").selectOption("include");
+    const selection = page.getByRole("region", { name: "Comparison selection" });
+    assert.equal(await selection.locator("li").count(), 2);
+    for (const title of savedTitles) await selection.getByRole("link", { name: title, exact: true }).waitFor();
+    assert.equal(await selection.getByText("Outside the current screening filter; still selected.", { exact: true }).count(), 1);
+    await selection.getByText("Review prepared question", { exact: true }).click();
+    const preparedHref = await page.getByRole("link", { name: "Prepare comparison" }).getAttribute("href"); assert(preparedHref);
+    assert.equal(await selection.getByLabel("Prepared comparison question").textContent(), new URL(preparedHref, base).searchParams.get("q"));
+    const comparison = page.getByRole("link", { name: "Prepare comparison" });
+    const contrast = await comparison.evaluate(element => {
+      const styles = getComputedStyle(element), canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d")!;
+      const luminances: number[] = [], weights = [0.2126, 0.7152, 0.0722];
+      for (const color of [styles.color, styles.backgroundColor]) {
+        context.clearRect(0, 0, 1, 1); context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+        const pixels = context.getImageData(0, 0, 1, 1).data;
+        if (pixels[3] !== 255) throw new Error("Comparison colors must be opaque for this contrast measurement");
+        let luminance = 0;
+        for (let index = 0; index < 3; index++) {
+          const channel = pixels[index] / 255;
+          luminance += weights[index] * (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+        }
+        luminances.push(luminance);
+      }
+      const [foreground, background] = luminances;
+      return { color: styles.color, background: styles.backgroundColor, ratio: (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05) };
+    });
+    assert(contrast.ratio >= 4.5, `Prepare comparison must retain readable text contrast: ${JSON.stringify(contrast)}`);
+    console.log(`PASS: ${width}px comparison text contrast ${contrast.ratio.toFixed(2)}:1`);
+    await comparison.evaluate(element => element.scrollIntoView({ block: "center" }));
+    await comparison.screenshot({ path: join(screenshots, `prepare-${width}.png`) });
+    await page.getByText("Edit screening and notes", { exact: true }).first().click();
+    await page.evaluate(() => document.fonts.ready);
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    for (const control of await page.locator("main button:visible, main select:visible, main textarea:visible, main input:visible").all()) {
+      const box = await control.boundingBox(); assert(box && box.x >= 0 && box.x + box.width <= width + 1);
+      if (await control.getAttribute("type") !== "checkbox") assert(box.height >= 43, "Touch/keyboard controls retain a readable hit area");
+    }
+    await page.screenshot({ path: join(screenshots, `saved-${width}.png`), fullPage: true });
+    await page.screenshot({ path: join(screenshots, `saved-viewport-${width}.png`) });
+    await selection.screenshot({ path: join(screenshots, `comparison-${width}.png`) });
+    const originalRaw = await page.evaluate(key => localStorage.getItem(key), LITERATURE_STORAGE_KEY); assert(originalRaw);
+    const originalWorkspace = parseLiteratureWorkspace(originalRaw);
+    const missingPaper = PAPER_CATALOG.find(paper => !originalWorkspace.entries.some(entry => entry.paper.url === paper.url)); assert(missingPaper);
+    const importedEntry = { paper: missingPaper, savedAt: "2026-10-20T00:00:00Z", screening: "exclude" as const, notes: "Imported private note: verify methods against the original. 📚 � e\u0301 العربية" };
+    const incomingWorkspace = { ...originalWorkspace, title: "Ignored imported focus", entries: [originalWorkspace.entries[0], importedEntry] };
+    const importFile = page.getByLabel("Restore a workspace backup (JSON, up to 1 MiB)");
+    const damagedWorkspace = { ...incomingWorkspace, entries: [{ ...importedEntry, notes: "DAMAGED_BYTES" }] };
+    const [beforeDamage, afterDamage] = serializeLiteratureWorkspace(damagedWorkspace).split("DAMAGED_BYTES");
+    await importFile.setInputFiles({ name: "damaged-library.json", mimeType: "application/json", buffer:
+      Buffer.concat([Buffer.from(beforeDamage), Buffer.from([0xff]), Buffer.from(afterDamage)]) });
+    const refusedFile = page.getByRole("alert").filter({ hasText: messages("paperWorkspace.unsupportedBackup") });
+    await refusedFile.waitFor();
+    assert.equal(await page.getByRole("region", { name: importCopy.preview, exact: true }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Replace workspace with this backup", exact: true }).count(), 0);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), LITERATURE_STORAGE_KEY), originalRaw, "Invalid UTF-8 never writes repaired metadata or notes");
+    await refusedFile.screenshot({ path: join(screenshots, `utf8-refused-${width}.png`) });
+    await importFile.setInputFiles({ name: "literature-additions.json", mimeType: "application/json", buffer:
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(serializeLiteratureWorkspace(incomingWorkspace))]) });
+    const importPreview = page.getByRole("region", { name: importCopy.preview, exact: true });
+    await importPreview.waitFor();
+    assert.deepEqual(await importPreview.locator("dd").allTextContents(), ["1", "1", "3/50"]);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), LITERATURE_STORAGE_KEY), originalRaw, "Preview makes no storage write");
+    await importPreview.getByText(importCopy.review, { exact: true }).click();
+    await importPreview.getByRole("link", { name: missingPaper.title, exact: true }).waitFor();
+    const addMissing = importPreview.getByRole("button", { name: importCopy.add, exact: true });
+    await addMissing.scrollIntoViewIfNeeded();
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    for (const control of [importFile, addMissing, page.getByRole("button", { name: "Replace workspace with this backup", exact: true }), page.getByRole("button", { name: "Cancel restore", exact: true })]) {
+      const bounds = await control.boundingBox(); assert(bounds && bounds.height >= 43 && bounds.x >= 0 && bounds.x + bounds.width <= width + 1, "Import controls fit the viewport and retain touch targets");
+    }
+    await importPreview.screenshot({ path: join(screenshots, `import-preview-${width}.png`) });
+    await addMissing.click(); await page.getByText(importCopy.added, { exact: true }).waitFor();
+    const combinedRaw = await page.evaluate(key => localStorage.getItem(key), LITERATURE_STORAGE_KEY); assert(combinedRaw);
+    assert.deepEqual(parseLiteratureWorkspace(combinedRaw), { ...originalWorkspace, entries: [...originalWorkspace.entries, importedEntry] });
+    assert.equal(await page.getByLabel("Show screening decisions").inputValue(), "include");
+    assert.equal(await selection.locator("li").count(), 2);
+    assert.equal(await comparison.getAttribute("href"), preparedHref, "Adding papers preserves the selected pair and saved review focus");
+    const href = await comparison.getAttribute("href"); assert(href);
+    const expected = new URL(href, base).searchParams.get("q")!;
+    await comparison.click();
+    const composer = page.getByRole("textbox", { name: "What do you want to know?" });
+    await composer.waitFor(); await page.waitForFunction(value => (document.querySelector('[data-tour="ask-form"] textarea') as HTMLTextAreaElement)?.value === value, expected);
+    assert.equal(await composer.inputValue(), expected, "Actual Next navigation preserves every paper URL and the full comparison draft");
+    assert.equal(await page.locator('input[name="research-depth"][value="deep"]').isChecked(), true);
+    await composer.fill("Private draft: identify the title and first author of arXiv 2005.11401v4");
+    const metadataLink = page.getByTestId("paper-metadata-handoff");
+    assert.equal(await metadataLink.isVisible(), false);
+    await page.getByText("More options", { exact: true }).click();
+    await metadataLink.waitFor();
+    assert.equal(await metadataLink.getAttribute("href"), "/sources?kind=paper&q=2005.11401v4#research-papers");
+    const box = await metadataLink.boundingBox(); assert(box && box.height >= 43 && box.x >= 0 && box.x + box.width <= width + 1);
+    await metadataLink.screenshot({ path: join(screenshots, `metadata-handoff-${width}.png`) });
+    const unsentQuestion = await composer.inputValue();
+    const cancelledHandoff = page.waitForEvent("dialog");
+    const cancelledClick = metadataLink.click();
+    const cancelledPrompt = await cancelledHandoff;
+    assert.equal(cancelledPrompt.type(), "confirm");
+    assert(!cancelledPrompt.message().includes(unsentQuestion), "Discard prompt cannot contain private question text");
+    await cancelledPrompt.dismiss(); await cancelledClick;
+    assert.equal(await composer.inputValue(), unsentQuestion, "Cancelled metadata handoff preserves the exact draft");
+    const acceptedHandoff = page.waitForEvent("dialog");
+    const acceptedClick = metadataLink.click();
+    const acceptedPrompt = await acceptedHandoff;
+    assert.equal(acceptedPrompt.type(), "confirm");
+    await acceptedPrompt.accept(); await acceptedClick;
+    // Count the queried catalogue after this document navigation finishes streaming.
+    await page.waitForURL(`${base}/sources?kind=paper&q=2005.11401v4#research-papers`, { waitUntil: "load" });
+    assert.equal(await page.getByRole("searchbox", { name: "Title, topic, DOI or versioned arXiv identifier" }).inputValue(), "2005.11401v4");
+    const exactCard = page.locator("#research-papers article");
+    await exactCard.getByRole("heading", { name: "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks", exact: true }).waitFor();
+    // Wait for the streamed catalogue to settle; persistent duplicate nodes still fail.
+    await page.waitForFunction(() => document.querySelectorAll("#research-papers article").length === 1, null, { timeout: 30_000 });
+    const cardBoundary = await page.evaluate(() => {
+      const nodes = Array.from(document.querySelectorAll("#research-papers article"));
+      return {
+      pathname: location.pathname, query: new URL(location.href).searchParams.get("q"),
+      count: nodes.length, cards: nodes.slice(0, 8).map(node => {
+        const element = node as HTMLElement, box = element.getBoundingClientRect();
+        const ancestors = []; let parent: HTMLElement | null = element;
+        for (let depth = 0; parent && depth < 12; depth++, parent = parent.parentElement) {
+          const style = getComputedStyle(parent);
+          ancestors.push({ tag: parent.tagName, id: parent.id.slice(0, 200), hidden: parent.hidden,
+            ariaHidden: parent.getAttribute("aria-hidden")?.slice(0, 200) ?? null, display: style.display, visibility: style.visibility });
+        }
+        return { title: element.querySelector("h3")?.textContent?.slice(0, 200) ?? null,
+          connected: element.isConnected, rect: {x:box.x,y:box.y,width:box.width,height:box.height}, ancestors };
+      })
+      };
+    });
+    console.log("LITERATURE_EXACT_CARD_BOUNDARY", JSON.stringify({ width, ...cardBoundary }));
+    assert.equal(cardBoundary.count, 1);
+    assert((await exactCard.innerText()).includes("Patrick Lewis"));
+    assert.equal(metadataRequests.length, 0, "Opening a metadata handoff must not search external repositories");
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    assert.equal(researchRequests.length, 0, "Preparing a comparison never runs research");
+    assert.deepEqual(errors, []); await context.close();
+  }
+  console.log(`PASS: actual built Sources → literature → full draft composer → exact free metadata, responsive controls/no overflow at 320/390/768/1440px; no research or provider search. Screenshots: ${screenshots}`);
+} finally {
+  await browser.close();
+  if (server.exitCode === null) server.kill();
+  await exited;
+}

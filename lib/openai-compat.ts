@@ -1,0 +1,177 @@
+import { demoteSyntheticEvidence } from "./research/evidence-provenance";
+import { isRequestObject } from "./request-object";
+import { surfaceResearch } from "./research/surface-result";
+import { formatRecordedUsdc } from "./display/recorded-usdc";
+import { livePresentationLocale, type PresentationLocale, type RequestedPresentationLanguage } from "./research/presentation-language";
+import { researchPresentationMessages } from "./research/presentation-messages";
+import { API_SETTLEMENT_NOTICE, presentationLocaleNotice } from "./research/result-presentation";
+import { recordedAnswerLanguage } from "./research/answer-language-provenance";
+/**
+ * OpenAI Chat Completions ↔ Keryx mappers (pure, side-effect free).
+ *
+ * These let any OpenAI-compatible SDK/tool (LangChain, LlamaIndex, OpenWebUI, LibreChat, …)
+ * point base_url at https://keryx.cc/api/v1 and ask Keryx a question. The client speaks the
+ * OpenAI wire format; Keryx runs its reasoning loop and reports creator-payment state.
+ *
+ * The route (app/api/v1/chat/completions) owns auth, rate-limit, budget clamp, and the agent run;
+ * this module only translates shapes so both stay small and the translation stays unit-testable.
+ */
+
+import { config } from "./config";
+import type { QueryRun, TraceStep } from "./types";
+
+/** One OpenAI content part (vision-style array form) — only text parts carry a question. */
+interface ContentPart {
+  type?: string;
+  text?: string;
+}
+
+export interface ChatMessage {
+  role: string;
+  content: string | ContentPart[] | null;
+}
+
+/** Incoming OpenAI request body. `budget` is a Keryx extension (passed via extra_body); OpenAI
+ *  clients that don't know it simply omit it and the route applies its per-path default + cap. */
+export interface ChatCompletionRequest {
+  /** This adapter has no live owner review broker; true is explicitly refused. */
+  reviewFirst?: false;
+  model?: string;
+  messages?: ChatMessage[];
+  stream?: boolean;
+  budget?: number;
+  scholarly?: boolean;
+  mode?: "quick" | "deep";
+  /** Generated labels only; never changes question, model output or payment authority. */
+  language?: RequestedPresentationLanguage;
+}
+
+/** Validate every entry, including earlier turns that are not used as the question. */
+export function validChatMessages(value: unknown): value is ChatMessage[] {
+  return Array.isArray(value) && value.length > 0 && value.every(message =>
+    isRequestObject(message) && typeof message.role === "string" &&
+    (typeof message.content === "string" || message.content === null ||
+      Array.isArray(message.content) && message.content.every(part => isRequestObject(part) &&
+        typeof part.type === "string" && (part.type !== "text" || typeof part.text === "string"))));
+}
+
+/** Flatten a message's content to plain text (handles the string form and the vision array form). */
+function contentText(content: ChatMessage["content"]): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((p) => (typeof p?.text === "string" ? p.text : ""))
+      .join(" ")
+      .trim();
+  }
+  return "";
+}
+
+/**
+ * The question to research = the LAST user message (what the client is asking now). Falls back to
+ * the last message of any role, so a client that mislabels roles still works. Prior turns are not
+ * replayed — Keryx answers the current ask from paid sources, not from conversation memory.
+ */
+export function lastUserQuestion(messages: ChatMessage[] | undefined): string {
+  if (!validChatMessages(messages)) return "";
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "user") {
+      const t = contentText(messages[i]!.content);
+      if (t) return t;
+    }
+  }
+  // No usable user turn — fall back to the last non-empty message of any role.
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const t = contentText(messages[i]!.content);
+    if (t) return t;
+  }
+  return "";
+}
+
+/** Structured Keryx settlement summary, attached as a vendor extension on every response. */
+export function keryxMeta(run: QueryRun) {
+  return {
+    queryId: run.id,
+    ...surfaceResearch(run),
+    totalToCreators: run.totalToCreators,
+    engine: run.engine,
+    dispatchUrl: `${config.baseUrl}/dispatch/${run.id}`,
+  };
+}
+
+/** Markdown footer listing planned rewards — so even a client that renders only `content`
+ *  (not the vendor extension) surfaces the citation economy. Empty when nothing was cited. */
+function citationsFooter(run: QueryRun, locale: PresentationLocale): string {
+  if (run.citations.length === 0) return "";
+  const copy = researchPresentationMessages(locale.language);
+  const lines = run.citations.map(
+    (c) => `- ${c.sourceName} — ${formatRecordedUsdc(c.reward, { minimumFractionDigits: 4 })} (${copy("weight", { weight: c.weight.toFixed(2) })})`,
+  );
+  return (
+    `\n\n---\n**${copy("citations")}** — ${copy("apiAllocations")}\n` +
+    lines.join("\n") +
+    `\n\n${copy("apiTotal", { amount: formatRecordedUsdc(run.totalToCreators, { minimumFractionDigits: 4 }), mode: run.paymentMode ?? "legacy" })} ` +
+    (locale.language === "en" ? "" : `${copy("financialDetails")} `) +
+    (run.operatingFee ? `Keryx operating fee allocation: ${formatRecordedUsdc(run.operatingFee.amountUsdc, { minimumFractionDigits: 6 })} USDC (${run.operatingFee.status}), recorded separately from creator rewards. ` : "") +
+    API_SETTLEMENT_NOTICE +
+    `${copy("dispatch")} ${config.baseUrl}/dispatch/${run.id}`
+  );
+}
+
+/** Assistant message body = the grounded answer plus planned rewards and receipt guidance. */
+export function buildAnswerContent(run: QueryRun, requestedLanguage?: ChatCompletionRequest["language"]): string {
+  run = demoteSyntheticEvidence(run);
+  const locale = livePresentationLocale({ requestedLanguage, originalQuestion: run.question,
+    recordedAnswerLanguage: recordedAnswerLanguage(run) }), notice = presentationLocaleNotice(locale);
+  return run.answer + citationsFooter(run, locale) + (notice ? `\n\n${notice}` : "");
+}
+
+/** A complete (non-streamed) OpenAI ChatCompletion object. */
+export function buildCompletion(run: QueryRun, model: string, requestedLanguage?: ChatCompletionRequest["language"]) {
+  return {
+    id: `chatcmpl-${run.id}`,
+    object: "chat.completion" as const,
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant" as const, content: buildAnswerContent(run, requestedLanguage) },
+        finish_reason: "stop" as const,
+      },
+    ],
+    // Keryx does not meter tokens (it meters USDC to creators), so usage is reported as zero.
+    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    keryx: keryxMeta(run),
+  };
+}
+
+type Delta = {
+  role?: "assistant";
+  content?: string;
+  reasoning_content?: string;
+};
+
+/** A single OpenAI chat.completion.chunk (streaming). `extra` carries the final vendor summary. */
+export function buildChunk(
+  id: string,
+  model: string,
+  delta: Delta,
+  finishReason: "stop" | null = null,
+  extra?: Record<string, unknown>,
+) {
+  return {
+    id,
+    object: "chat.completion.chunk" as const,
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [{ index: 0, delta, finish_reason: finishReason }],
+    ...extra,
+  };
+}
+
+/** One trace step as an o1-style reasoning line — streamed via `delta.reasoning_content` so
+ *  clients that support it show Keryx's live buy/skip/trust decisions without polluting the answer. */
+export function traceLine(step: TraceStep): string {
+  return `[${step.phase}] ${step.message}\n`;
+}

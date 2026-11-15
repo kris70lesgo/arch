@@ -1,0 +1,117 @@
+/**
+ * OfflineGateway — runs the full agent flow with no funded wallet.
+ * Content comes straight from the DB; payments are recorded as simulated (settled:false)
+ * and clearly excluded from "real settlement" claims. Dev only.
+ */
+
+import type { ArticleOfferRef, Author, PaymentRecord, Source, SourceItem, SourceItemIdentity, SourceClaimReceipt } from "../types";
+import type { KeryxDB } from "../db";
+import { sourceItemIdentity } from "../sources/source-item-asset";
+import { resolveSourceItemContent } from "../sources/resolve-source-item-content";
+import { makePayment, type FetchResult, type PaymentGateway } from "./payment-gateway";
+import { assertRecipientAllowed, type RecipientExclusion } from "./recipient-exclusion";
+
+export class OfflineGateway implements PaymentGateway {
+  readonly mode = "offline" as const;
+  private address = "0xOFFLINE_AGENT";
+
+  constructor(private db: KeryxDB) {}
+
+  async ensureFunded(): Promise<{ address: string }> {
+    return { address: this.address };
+  }
+
+  agentAddress(): string {
+    return this.address;
+  }
+
+  async payFetch({
+    source,
+    item,
+    queryId,
+    priceUsdc = source.fetchPrice,
+    offer,
+    sourceClaim,
+    deniedRecipient,
+  }: {
+    source: Source;
+    item?: SourceItem;
+    queryId: string;
+    priceUsdc?: number;
+    offer?: ArticleOfferRef;
+    sourceClaim?: SourceClaimReceipt;
+  } & RecipientExclusion): Promise<FetchResult> {
+    const payee = source.walletAddress;
+    assertRecipientAllowed(payee, deniedRecipient);
+    const items = item ? [item] : await this.db.getItems(source.id);
+    const settle = { payer: this.address, transaction: "offline-simulation" };
+    const content = item
+      ? await resolveSourceItemContent(item, settle, { allowSummaryFallback: false })
+      : (await Promise.all(
+          items.slice(0, 5).map(async (candidate) =>
+            `## ${candidate.title}\n${await resolveSourceItemContent(candidate, settle, {
+              allowSummaryFallback: true,
+            })}`,
+          ),
+        )).join("\n\n") || source.description;
+    const itemIdentity = item ? sourceItemIdentity(item) : {};
+
+    const payment = makePayment({
+      kind: "fetch",
+      queryId,
+      sourceId: source.id,
+      sourceName: source.name,
+      ...itemIdentity,
+      sourceClaim,
+      offerId: offer?.id,
+      listPriceUsdc: offer?.listPriceUsdc,
+      payer: this.address,
+      payee,
+      amountUsdc: priceUsdc,
+      txHash: null,
+      settled: false,
+      settlementStatus: "simulated",
+      rationale: "Access toll (simulated — offline dev mode).",
+    });
+    return { content, payment };
+  }
+
+  async payCitation({
+    source,
+    author,
+    item,
+    amount,
+    weight,
+    queryId,
+    rationale,
+    sourceClaim,
+    deniedRecipient,
+  }: {
+    source: Source;
+    author: Author;
+    item?: SourceItemIdentity;
+    amount: number;
+    weight: number;
+    queryId: string;
+    rationale: string;
+    sourceClaim?: SourceClaimReceipt;
+  } & RecipientExclusion): Promise<PaymentRecord> {
+    assertRecipientAllowed(author.walletAddress, deniedRecipient);
+    return makePayment({
+      kind: "citation",
+      queryId,
+      sourceId: source.id,
+      sourceName: source.name,
+      ...item,
+      sourceClaim,
+      payer: this.address,
+      payee: author.walletAddress,
+      amountUsdc: amount,
+      weight,
+      rationale,
+      txHash: null,
+      settled: false,
+      settlementStatus: "simulated",
+    });
+  }
+}

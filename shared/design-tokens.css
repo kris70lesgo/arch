@@ -1,0 +1,18 @@
+/* Shared Keryx surfaces and the desktop Operator. */
+:root {
+  --paper: #06070c;
+  --paper-2: #0b0d14;
+  --panel: #10131c;
+  --sidebar: #080a11;
+  --ink: #e8ebf7;
+  --ink-2: #bec6dc;
+  --ink-3: #8f98b0;
+  --faint: #717b95;
+  --seal: #7aa2ff;
+  --paid: #a5c98f;
+  --paid-2: #bdd6ac;
+  --brass: #526284;
+  --cream: #f5f7ff;
+  --line: rgba(232, 235, 247, 0.14);
+  --line-2: rgba(232, 235, 247, 0.075);
+}

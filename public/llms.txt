@@ -1,0 +1,55 @@
+﻿# Keryx
+
+> Keryx is a citation-toll research agent. Give it a question and a source budget; it discovers sources, explains BUY/SKIP/CACHE/stop decisions, reads selected material, and returns a cited report with evidence and payment records. Eligible verified creators receive weighted USDC rewards for qualifying citations.
+
+Keryx serves readers researching a question, researchers preparing related work, creators publishing sources, and agents buying a bounded research job. Production payments use Circle x402 and Gateway on Arc mainnet (eip155:5042). Retained Arc testnet history (eip155:5042002) is labelled separately and is not current mainnet activity.
+
+## Start here
+
+- [Get started](https://keryx.cc/get-started): choose the web app, Windows Operator alpha, browser extension, MCP, API, CLI or chat bots. Each has its own setup requirements and role.
+- [Downloads](https://keryx.cc/download): published Windows x64 installer/portable build, a [public Chrome Web Store listing](https://chromewebstore.google.com/detail/ofhhhbkpdemcngolfgkjkmkjdilhgjmd), and the [extension 0.1.4.3 manual ZIP](https://github.com/tang-vu/keryx/releases/download/extension-v0.1.4.3/keryx-extension-v0.1.4.3.zip). For the ZIP, extract it, enable Developer mode at chrome://extensions or edge://extensions, and choose Load unpacked with the directory containing manifest.json at its root. Check the version displayed by the Store listing; web deployment does not establish installed-client versions. No mobile/macOS/Linux installer is offered here.
+- [Integrations](https://keryx.cc/integrations): hosted and stdio MCP, OpenAI-compatible API setup, separate caller-funded x402 research, source CLI installation and Telegram/Discord/Slack guides. Copying examples does not run them.
+- [Focused briefs](https://keryx.cc/briefs): prepare bounded API/platform comparisons, SaaS competitor/niche questions or literature overviews with separate review checklists. Preparation stays in the browser; copying or downloading a request does not start research or authorize payment. Existing checkout determines price and availability. These templates are not a new guaranteed deliverable or specialist price offer.
+- [Ask Keryx](https://keryx.cc/): try sponsored public research without a wallet or deposit. Keryx covers admitted source purchases, eligible creator rewards and operating fees within its usage, prefunding and spending limits. Availability is bounded; this is not unlimited free research.
+- [Pricing](https://keryx.cc/pricing): explains the sponsored trial, personal source budgets and paid research packages. A source-spend cap is not the price of every Keryx service. An active personal research budget uses the caller's USDC; check the payer in the composer before submitting.
+- [About and support](https://keryx.cc/about): product purpose, public source code, support and current limitations.
+- [Recorded walkthrough](https://keryx.cc/walkthrough): inspect a labelled walkthrough and its evidence before asking your own question.
+- [Reviewer start](https://github.com/tang-vu/keryx/blob/main/docs/reviewer-start.md): follow the canonical review guide and its labelled evidence.
+
+Sponsored trial reports have public links. Submit only questions you can share publicly. Account saving does not make an already published report private. Separately labelled private research has its own availability, payment and processing disclosures.
+
+## Evidence and sources
+
+- [Public proof](https://keryx.cc/proof): inspect recorded research and payment evidence. Settled, pending, failed and simulated payments are distinct states; a planned reward is not proof of settlement. Mainnet and historical testnet figures remain separate.
+- [Answer archive](https://keryx.cc/answers): past cited reports, including labelled historical entries. Each report retains its sources, decisions, limitations and payment states. Synthetic demo material is illustrative, not factual research evidence.
+- [Source directory](https://keryx.cc/sources): registered creator content and free public references. Reading a free public reference does not itself pay its publisher. A creator reward requires qualifying evidence, distribution permission and verified payout authority.
+- [Publish a source](https://keryx.cc/register): list content you have permission to provide, prove ownership and review access/reward policy. Listing does not guarantee purchases or earnings.
+- [Literature workspace](https://keryx.cc/literature): prepare related-work questions and inspect recorded references. Preparation alone does not dispatch research or authorize payment.
+
+Answers can be incomplete or mistaken. Citations, evidence assessments and payment receipts help readers inspect the result; they do not guarantee that every assertion is correct. Unverified ownership, unavailable sources and missing evidence can withhold a purchase, answer claim or creator reward.
+
+## For agents and developers
+
+- [Paid research workspace](https://keryx.cc/research): review Quick/Deep packages. The fixed package price includes a service fee plus a bounded creator-spend reserve. Packages are non-refundable; unused creator reserve stays in the package. The payment challenge at purchase is authoritative. Availability and purchase admission remain gated.
+- [Developer portal](https://keryx.cc/dev): API integration, wallet-bound keys and supported account scopes. A key identifies and scopes its caller; it does not create new funding or bypass payment authority.
+- [OpenAPI reference](https://keryx.cc/api/docs) and [machine-readable spec](https://keryx.cc/api/openapi.json): current endpoint contracts and authentication requirements.
+- [OpenAI-compatible API](https://keryx.cc/api/v1/chat/completions): POST research through the hosted ordinary-answer contract. The sponsored tier is subject to caller and shared service limits; an API key is not prepaid research credit. See [integration guidance](https://github.com/tang-vu/keryx/blob/main/docs/openai-compatible-api.md).
+- [Agent-to-agent research](https://keryx.cc/api/agent/ask): caller-funded x402 research with a quoted fixed package and creator-spend cap. Review the current quote and preserve original purchase/recovery evidence after an uncertain response.
+- [Remote MCP](https://keryx.cc/integrations/mcp): supported hosted tools, scopes and research limits. [Stdio MCP](https://www.npmjs.com/package/keryx-mcp) has its own caller-funded buyer and recovery role; installation alone does not fund a wallet or authorize a purchase.
+- [Browser extension](https://github.com/tang-vu/keryx/tree/main/extension) and [desktop Operator](https://keryx.cc/operator): separate hosted-page and local task/receipt roles. Their capabilities and installed versions are not inferred from the web deployment.
+
+## Trust, operations and policies
+
+- [Service status](https://keryx.cc/status): current public service status and readiness disclosures.
+- [Source code](https://github.com/tang-vu/keryx): implementation, documentation and release evidence.
+- [Contact support](mailto:support@keryx.cc): questions about the service, content rights or a purchase. Include the relevant report, source or receipt identifier; never send private keys or recovery secrets.
+- [Privacy](https://keryx.cc/privacy) and [terms](https://keryx.cc/terms): publication, processing, wallet recovery, payment and support disclosures.
+
+Source access tolls, creator rewards, Keryx operating fees and network fees can be separate charges. Operating fees are recorded separately from creator rewards. Browser-funded research retains its authorized source/creator grants; a sponsored operating fee does not add a service charge to those grants. Circle Gateway references can identify batch settlement rather than an individual Arc transaction. Historical receipts retain their original network and payee.
+
+## Research guides and free tools
+
+- [Research guides](https://keryx.cc/guides): Practical, source-linked research workflows.
+- [Literature review matrix guide](https://keryx.cc/guides/literature-review-matrix): Columns, illustrative example, screening and synthesis workflow.
+- [Verify AI citations](https://keryx.cc/guides/verify-ai-citations): Source identity, claim support and publication updates.
+- [Free literature review matrix](https://keryx.cc/tools/literature-review-matrix): Browser-only notes worksheet and CSV export. No sign-up, paper retrieval or AI verification; export before leaving.

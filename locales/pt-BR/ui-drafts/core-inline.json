@@ -1,0 +1,72 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "lib/i18n/messages.ts",
+  "sourceSha256": "f3d85eef26e994ae7defeb90a5a1c21f47e98cb93ec04a938f7046f71138acaf",
+  "entries": {
+    "researchEntry.ask": {
+      "source": "Ask Keryx",
+      "text": "Perguntar ao Keryx"
+    },
+    "researchEntry.question": {
+      "source": "What do you want to know?",
+      "text": "O que você quer saber?"
+    },
+    "researchEntry.placeholder": {
+      "source": "Ask a question worth reading for...",
+      "text": "Faça uma pergunta que valha a pesquisa..."
+    },
+    "researchEntry.depth": {
+      "source": "Research depth",
+      "text": "Profundidade da pesquisa"
+    },
+    "researchEntry.quick": {
+      "source": "quick",
+      "text": "rápida"
+    },
+    "researchEntry.deep": {
+      "source": "deep",
+      "text": "aprofundada"
+    },
+    "researchEntry.researching": {
+      "source": "Researching...",
+      "text": "Pesquisando..."
+    },
+    "researchEntry.moreOptions": {
+      "source": "More options",
+      "text": "Mais opções"
+    },
+    "researchEntry.model": {
+      "source": "AI model",
+      "text": "Modelo de IA"
+    },
+    "researchEntry.savedReports": {
+      "source": "My saved reports",
+      "text": "Meus relatórios salvos"
+    },
+    "researchEntry.keyboardHint": {
+      "source": "Enter for a new line · Ctrl/⌘ + Enter to ask",
+      "text": "Enter para uma nova linha · Ctrl/⌘ + Enter para perguntar"
+    },
+    "researchEntry.metadataLookup": {
+      "source": "Look up free paper metadata",
+      "text": "Consultar metadados gratuitos de artigos"
+    },
+    "researchEntry.metadataLookupLabel": {
+      "source": "Look up free paper metadata: title, authors or DOI",
+      "text": "Consultar metadados gratuitos de artigos: título, autores ou DOI"
+    },
+    "researchEntry.quickHint": {
+      "source": "Quick: up to 2 focused reads.",
+      "text": "Rápida: até 2 leituras focadas na pergunta."
+    },
+    "researchEntry.deepHint": {
+      "source": "Deep: up to 4 reads, including marketplace discovery and a coverage check.",
+      "text": "Aprofundada: até 4 leituras, incluindo busca no catálogo de fontes e verificação de cobertura."
+    },
+    "researchEntry.examplesLabel": {
+      "source": "Example questions",
+      "text": "Exemplos de perguntas"
+    }
+  }
+}

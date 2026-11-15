@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# Hermetic deployment orchestration: fake SSH/sleep, no hosts or app files touched.
+set -euo pipefail
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+temporary_root=${TMPDIR:-/tmp}
+temporary_root=$(cd -- "$temporary_root" && pwd)
+fixture=$(mktemp -d "$temporary_root/keryx-redeploy.XXXXXX")
+[[ "$fixture" == "$temporary_root"/keryx-redeploy.* ]] || exit 1
+trap 'rm -rf -- "$fixture"' EXIT
+export DEPLOY_TEST_TRACE="$fixture/trace"
+export DEPLOY_TEST_DIR="$fixture"
+expected=$(printf 'c%.0s' {1..40})
+export DEPLOY_TEST_REMOTE_SHA="$expected"
+cat > "$fixture/ssh" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+args="$*"
+input=""
+if [[ "$args" == *'bash -s'* || "$args" == *'/usr/bin/node --input-type=module - '* ]]; then input=$(cat); fi
+printf '%s\n' "$args" >> "$DEPLOY_TEST_TRACE"
+case "$args" in
+  *'cd /root/keryx && git fetch'*)
+    # Execute the actual remote shell gate, with Git isolated below. Merely seeing
+    # a compare in the trace would not prove that mismatch prevents reset.
+    cd "$DEPLOY_TEST_DIR"
+    bash -c "${2#cd /root/keryx && }" ;;
+  *'cd /root/keryx && test ! -e .next.tmp'*)
+    cd "$DEPLOY_TEST_DIR"
+    bash -c "${2#cd /root/keryx && }" ;;
+  *'npm run typecheck'*)
+    cd "$DEPLOY_TEST_DIR"
+    node() { :; }
+    npm() {
+      printf 'NPM %s\n' "$*" >> "$DEPLOY_TEST_TRACE"
+      [[ "$*" != 'run typecheck' || "${DEPLOY_TEST_BAD_TYPECHECK:-0}" != 1 ]]
+    }
+    export -f node npm
+    bash -c "${2#cd /root/keryx && }" ;;
+  *'bash -se')
+    # Execute the actual remote install block against stubbed node/npm. Each word of
+    # DEPLOY_TEST_INSTALL is one npm ci outcome: `ok` or the npm error code it reports.
+    # Other remote heredocs keep their previous inert handling.
+    [[ "$input" == *'dependency-state.mjs check'* ]] || exit 0
+    cd "$DEPLOY_TEST_DIR"
+    node() {
+      printf 'NODE %s
+' "$*" >> "$DEPLOY_TEST_TRACE"
+      [[ "$*" != *' check' || -z "${DEPLOY_TEST_INSTALL:-}" ]]
+    }
+    npm() {
+      printf 'NPM %s
+' "$*" >> "$DEPLOY_TEST_TRACE"
+      local count outcome
+      count=$(( $(cat "$DEPLOY_TEST_DIR/npm-ci-count" 2>/dev/null || echo 0) + 1 ))
+      echo "$count" > "$DEPLOY_TEST_DIR/npm-ci-count"
+      outcome=$(cut -d' ' -f"$count" <<< "$DEPLOY_TEST_INSTALL")
+      [[ "$outcome" != ok ]] || return 0
+      echo "npm error code $outcome" >&2
+      return 1
+    }
+    export -f node npm
+    bash -c "${input//cd \/root\/keryx/cd .}" ;;
+  *'/usr/bin/node --input-type=module - '*)
+    [[ "$input" == *'export function deployReviewedRole'* ]] || exit 1
+    if [[ "$args" == *' artifact '* && "${DEPLOY_TEST_BAD_ARTIFACT:-0}" == 1 ]]; then exit 1; fi
+    [[ "${DEPLOY_TEST_BAD_CONFIG:-0}" != 1 ]] || exit 1 ;;
+  *'bash -s -- stop'*)
+    if [[ "$input" == *'keryx-private-worker.service'* ]]; then echo inactive; else echo inactive; fi ;;
+  *'git rev-parse --short HEAD'*) echo abc1234 ;;
+  *'curl -fsS '*)
+    [[ "${DEPLOY_TEST_BAD_HEALTH:-0}" != 1 ]] || exit 1
+    if [[ "${KERYX_REDEPLOY_STAGED_RELEASE:-0}" == 1 ]]; then
+      printf '{"commit":"%s"}\n' "$DEPLOY_TEST_REMOTE_SHA"
+    else echo '{"commit":"abc1234"}'; fi ;;
+esac
+FAKE
+cat > "$fixture/git" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'GIT %s\n' "$*" >> "$DEPLOY_TEST_TRACE"
+case "$*" in
+  'fetch -q origin'|'log -1 --oneline') ;;
+  'rev-parse origin/main') printf '%s\n' "$DEPLOY_TEST_REMOTE_SHA" ;;
+  'reset -q --hard '*)
+    if [[ "${DEPLOY_TEST_LATE_BUILD:-0}" == 1 ]]; then mkdir "$DEPLOY_TEST_DIR/.next.tmp"; fi ;;
+  *) exit 1 ;;
+esac
+FAKE
+cat > "$fixture/sleep" <<'FAKE'
+#!/usr/bin/env bash
+printf 'SLEEP %s
+' "$*" >> "$DEPLOY_TEST_TRACE"
+FAKE
+chmod +x "$fixture/ssh" "$fixture/git" "$fixture/sleep"
+export PATH="$fixture:$PATH" KERYX_SSH_BIN="$fixture/ssh"
+run() { bash "$script_dir/redeploy-vps.sh" > "$fixture/output" 2>&1; }
+managed() {
+  KERYX_REDEPLOY_PRESERVE_HELD_SCHEDULER=1 \
+  KERYX_REDEPLOY_REVIEWED_PM2_CONFIG=/root/.local/share/release/roles.json \
+  KERYX_REDEPLOY_REVIEWED_PM2_SHA256=$(printf 'a%.0s' {1..64}) \
+  KERYX_REDEPLOY_EXPECTED_COMMIT="${DEPLOY_TEST_EXPECTED_SHA-$expected}" run
+}
+clear_trace() { : > "$DEPLOY_TEST_TRACE"; }
+# Staged transitions must not reset serving source, install dependencies, rewrite
+# ENV, swap/delete builds, resume held writers or add schedules.
+clear_trace
+KERYX_REDEPLOY_STAGED_RELEASE=1 managed
+[[ $(grep -c 'roles.json .* artifact ' "$DEPLOY_TEST_TRACE") == 2 ]]
+grep -q 'roles.json .* a2a ' "$DEPLOY_TEST_TRACE"
+grep -q 'roles.json .* web ' "$DEPLOY_TEST_TRACE"
+grep -q 'curl -fsS' "$DEPLOY_TEST_TRACE"
+! grep 'curl -fsS' "$DEPLOY_TEST_TRACE" | grep -v "Host: keryx.cc.*X-Forwarded-Proto: https"
+! grep -Eq 'git fetch|GIT reset|KERYX_COMMIT=|npm run|bash -se|mv .next|rm -rf|bash -s -- (stop|resume)|crontab' "$DEPLOY_TEST_TRACE"
+first_artifact=$(grep -n 'roles.json .* artifact ' "$DEPLOY_TEST_TRACE" | head -1 | cut -d: -f1)
+first_validate=$(grep -n 'roles.json .* validate ' "$DEPLOY_TEST_TRACE" | head -1 | cut -d: -f1)
+(( first_artifact < first_validate ))
+clear_trace
+if DEPLOY_TEST_BAD_ARTIFACT=1 KERYX_REDEPLOY_STAGED_RELEASE=1 managed; then exit 1; fi
+! grep -Eq 'roles.json .* (validate|a2a|web) |pm2|git fetch|npm run' "$DEPLOY_TEST_TRACE"
+# Reviewed ordinary delivery is refused before SSH, even when historical
+# dependency/build recovery objects exist. No prebuild may enter this path.
+clear_trace
+if managed; then exit 1; fi
+grep -q 'prepared staged release' "$fixture/output"
+[[ ! -s "$DEPLOY_TEST_TRACE" ]]
+# Staged delivery never modifies or deletes the ordinary serving/cold slots.
+for retained in .next.tmp .next.bak; do
+  mkdir "$fixture/$retained"
+  printf 'retained' > "$fixture/$retained/original"
+  clear_trace
+  KERYX_REDEPLOY_STAGED_RELEASE=1 managed
+  [[ $(cat "$fixture/$retained/original") == retained ]]
+  ! grep -Eq 'git fetch|KERYX_COMMIT=|npm run|mv .next|rm -rf|bash -s -- (stop|resume)|crontab' "$DEPLOY_TEST_TRACE"
+  rm -- "$fixture/$retained/original"
+  rmdir "$fixture/$retained"
+done
+if [[ "$(uname -s)" != MINGW* && "$(uname -s)" != MSYS* ]]; then
+  for retained in .next.tmp .next.bak; do
+    ln -s "$fixture/absent-build" "$fixture/$retained"
+    clear_trace
+    KERYX_REDEPLOY_STAGED_RELEASE=1 managed
+    [[ -L "$fixture/$retained" && $(readlink "$fixture/$retained") == "$fixture/absent-build" ]]
+    rm -- "$fixture/$retained"
+  done
+fi
+clear_trace
+if DEPLOY_TEST_BAD_CONFIG=1 KERYX_REDEPLOY_STAGED_RELEASE=1 managed; then exit 1; fi
+! grep -Eq 'git fetch|npm run|roles.json .* (a2a|web)|bash -s -- stop|pm2|mv .next' "$DEPLOY_TEST_TRACE"
+clear_trace
+if DEPLOY_TEST_BAD_HEALTH=1 KERYX_REDEPLOY_STAGED_RELEASE=1 managed; then exit 1; fi
+grep -q 'hold current processes' "$fixture/output"
+! grep -Eq 'rm -rf .next|pm2 (restart|reload)|bash -s -- resume|crontab' "$DEPLOY_TEST_TRACE"
+# Legacy unreviewed installation behavior remains tested separately. It cannot
+# establish admission for the reviewed mainnet path.
+# Its explicit exact-commit control still refuses branch drift before reset.
+clear_trace
+if KERYX_REDEPLOY_EXPECTED_COMMIT="$expected" DEPLOY_TEST_REMOTE_SHA=$(printf 'd%.0s' {1..40}) run; then exit 1; fi
+grep -qx 'GIT rev-parse origin/main' "$DEPLOY_TEST_TRACE"
+! grep -Eq '^GIT reset|KERYX_COMMIT=|bash -se|npm run typecheck|mv .next' "$DEPLOY_TEST_TRACE"
+# One dropped registry connection is repeated; the stamp follows the successful install.
+install() { rm -f "$fixture/npm-ci-count"; clear_trace; DEPLOY_TEST_INSTALL="$1" run; }
+install 'ECONNRESET ok'
+[[ $(grep -cx 'NPM ci --no-audit --no-fund' "$DEPLOY_TEST_TRACE") == 2 ]]
+grep -qx 'SLEEP 15' "$DEPLOY_TEST_TRACE"
+[[ $(grep -cx 'NODE scripts/dependency-state.mjs record' "$DEPLOY_TEST_TRACE") == 1 ]]
+last_install=$(grep -nx 'NPM ci --no-audit --no-fund' "$DEPLOY_TEST_TRACE" | tail -1 | cut -d: -f1)
+recorded=$(grep -nx 'NODE scripts/dependency-state.mjs record' "$DEPLOY_TEST_TRACE" | cut -d: -f1)
+invalidated=$(grep -nx 'NODE scripts/dependency-state.mjs invalidate' "$DEPLOY_TEST_TRACE" | cut -d: -f1)
+(( invalidated < last_install && last_install < recorded ))
+grep -q 'pm2 reload' "$DEPLOY_TEST_TRACE"
+# Integrity or lockfile failures are never repeated, and nothing is recorded, built or started.
+if install 'EINTEGRITY ok'; then exit 1; fi
+[[ $(grep -cx 'NPM ci --no-audit --no-fund' "$DEPLOY_TEST_TRACE") == 1 ]]
+! grep -Eq '^SLEEP|dependency-state.mjs record|npm run typecheck|roles.json .* (a2a|web)|mv .next' "$DEPLOY_TEST_TRACE"
+# Persistent network failure stops after three attempts with the same retained refusal.
+if install 'ECONNRESET ETIMEDOUT EAI_AGAIN ok'; then exit 1; fi
+[[ $(grep -cx 'NPM ci --no-audit --no-fund' "$DEPLOY_TEST_TRACE") == 3 ]]
+grep -q 'npm ci failed on attempt 3' "$fixture/output"
+! grep -Eq 'dependency-state.mjs record|npm run typecheck|roles.json .* (a2a|web)|mv .next' "$DEPLOY_TEST_TRACE"
+# A verified unchanged install is still reused without touching the registry.
+clear_trace
+run
+! grep -Eq '^NPM ci|dependency-state.mjs (invalidate|record)' "$DEPLOY_TEST_TRACE"
+# A failed legacy typecheck preserves temporary output and cannot reach the swap.
+mkdir "$fixture/.next.tmp"
+clear_trace
+if DEPLOY_TEST_BAD_TYPECHECK=1 run; then exit 1; fi
+[[ -d "$fixture/.next.tmp" ]]
+grep -qx 'NPM run typecheck' "$DEPLOY_TEST_TRACE"
+! grep -Eq '^NPM run build|pm2 (restart|reload)|mv .next|bash -s -- resume|crontab' "$DEPLOY_TEST_TRACE"
+rmdir "$fixture/.next.tmp"
+# Default path still pauses/resumes workers and uses its existing reload behavior.
+clear_trace
+run
+grep -Fqx 'keryx-vps cd /root/keryx && node --max-old-space-size=1536 scripts/check-next-worker-memory.cjs && NODE_OPTIONS=--max-old-space-size=4096 npm run typecheck && rm -rf .next.tmp && NODE_OPTIONS=--max-old-space-size=1536 NEXT_DIST_DIR=.next.tmp npm run build' "$DEPLOY_TEST_TRACE"
+grep -q 'bash -s -- stop' "$DEPLOY_TEST_TRACE"
+grep -q 'bash -s -- resume' "$DEPLOY_TEST_TRACE"
+grep -q 'pm2 reload' "$DEPLOY_TEST_TRACE"
+grep -qx 'GIT reset -q --hard origin/main' "$DEPLOY_TEST_TRACE"
+# Invalid inputs refuse before the SSH sanity call.
+for bad in '' abc1234 "$(printf 'A%.0s' {1..40})" 'main;false'; do
+  clear_trace
+  if DEPLOY_TEST_EXPECTED_SHA="$bad" managed; then exit 1; fi
+  [[ ! -s "$DEPLOY_TEST_TRACE" ]]
+done
+for bad in 2 yes ''; do
+  clear_trace
+  if KERYX_REDEPLOY_PRESERVE_HELD_SCHEDULER="$bad" \
+      KERYX_REDEPLOY_REVIEWED_PM2_CONFIG=/tmp/roles.json run; then exit 1; fi
+  [[ ! -s "$DEPLOY_TEST_TRACE" ]]
+done
+clear_trace
+if KERYX_REDEPLOY_REVIEWED_PM2_SHA256=$(printf 'a%.0s' {1..64}) run; then exit 1; fi
+[[ ! -s "$DEPLOY_TEST_TRACE" ]]
+echo 'Redeploy orchestration checks passed: prepared reviewed handover, early legacy refusal, unchanged cold slots, held schedules, health hold and separate legacy installation failures.'

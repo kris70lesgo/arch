@@ -1,0 +1,72 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "lib/i18n/messages.ts",
+  "sourceSha256": "f3d85eef26e994ae7defeb90a5a1c21f47e98cb93ec04a938f7046f71138acaf",
+  "entries": {
+    "researchEntry.ask": {
+      "source": "Ask Keryx",
+      "text": "Keryx से पूछें"
+    },
+    "researchEntry.question": {
+      "source": "What do you want to know?",
+      "text": "आप क्या जानना चाहते हैं?"
+    },
+    "researchEntry.placeholder": {
+      "source": "Ask a question worth reading for...",
+      "text": "ऐसा प्रश्न पूछें जिसके लिए शोध करना उपयोगी हो..."
+    },
+    "researchEntry.depth": {
+      "source": "Research depth",
+      "text": "शोध की गहराई"
+    },
+    "researchEntry.quick": {
+      "source": "quick",
+      "text": "त्वरित"
+    },
+    "researchEntry.deep": {
+      "source": "deep",
+      "text": "गहन"
+    },
+    "researchEntry.researching": {
+      "source": "Researching...",
+      "text": "शोध जारी है..."
+    },
+    "researchEntry.moreOptions": {
+      "source": "More options",
+      "text": "अन्य विकल्प"
+    },
+    "researchEntry.model": {
+      "source": "AI model",
+      "text": "AI मॉडल"
+    },
+    "researchEntry.savedReports": {
+      "source": "My saved reports",
+      "text": "मेरी सहेजी गई रिपोर्ट"
+    },
+    "researchEntry.keyboardHint": {
+      "source": "Enter for a new line · Ctrl/⌘ + Enter to ask",
+      "text": "नई पंक्ति के लिए Enter · पूछने के लिए Ctrl/⌘ + Enter"
+    },
+    "researchEntry.metadataLookup": {
+      "source": "Look up free paper metadata",
+      "text": "शोधपत्रों का निःशुल्क मेटाडेटा खोजें"
+    },
+    "researchEntry.metadataLookupLabel": {
+      "source": "Look up free paper metadata: title, authors or DOI",
+      "text": "शोधपत्रों का निःशुल्क मेटाडेटा खोजें: शीर्षक, लेखक या DOI"
+    },
+    "researchEntry.quickHint": {
+      "source": "Quick: up to 2 focused reads.",
+      "text": "त्वरित शोध: प्रश्न पर केंद्रित अधिकतम 2 स्रोतों को पढ़ता है।"
+    },
+    "researchEntry.deepHint": {
+      "source": "Deep: up to 4 reads, including marketplace discovery and a coverage check.",
+      "text": "गहन शोध: अधिकतम 4 स्रोतों को पढ़ता है, जिसमें मार्केटप्लेस में स्रोतों की खोज और शोध के दायरे की जाँच शामिल है।"
+    },
+    "researchEntry.examplesLabel": {
+      "source": "Example questions",
+      "text": "प्रश्नों के उदाहरण"
+    }
+  }
+}

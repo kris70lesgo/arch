@@ -1,0 +1,751 @@
+import type { AccountMembershipStore } from "../accounts/contracts";
+import type { PublicHealthSnapshot } from "./public-health-snapshot";
+import type { PublicReference } from "../public-references/catalog";
+import type { PublicReferenceArchiveDb } from "../public-references/archive";
+import type { PrivateProfilesStore } from "../profiles/private-profile";
+import type { PrivateBibliographiesStore } from "../bibliographies/private-bibliography";
+import type { TopicWatchesPort } from "./topic-watches-sqlite";
+import type { ZoteroStore } from "../references/zotero-contract";
+import type { ProfileIdentitiesStore } from "../profiles/verified-identities";
+import type { SourceClaim, SourceClaimChallenge, IssueSourceClaimChallenge, VerifySourceClaim, BindSourceClaim, UpdateSourceClaimPolicy } from "../sources/public-source-claim";
+/**
+ * KeryxDB — persistence interface shared by the SQLite (dev) and Supabase (prod) adapters.
+ * All amounts are USDC numbers. Metrics are computed only from real rows.
+ */
+
+import type { WithdrawalHistoryCursor, WithdrawalHistoryPage } from "./creator-withdrawal-history";
+import type { SourceUpkeepClaim, SourceUpkeepSummary } from "./source-upkeep";
+import type { BrowserAuthorizationIntent, BrowserAdmissionResult } from "./browser-authorization-admission";
+import type { PrivateCreatorConfirmation, PrivateCreatorConfirmationRecord } from "./private-creator-confirmations";
+import type { PrivateTreasuryPolicy, PrivateTreasuryReservation } from "./private-treasury-capacity";
+import type { PrivateTreasuryRelease } from "./private-treasury-release";
+import type { PrivateResearchInterruption } from "./private-research-interruptions";
+import type { WithdrawalRequestRecord } from "../gateway/withdrawal-request";
+import type { WithdrawalTransferClaim } from "./creator-withdrawal-requests";
+import type { SavedWithdrawalAttestation } from "./creator-withdrawal-attestations";
+import type { PrivateTreasurySummary } from "./private-treasury-summary";
+import type { PrivateCreatorSubmission, PrivateCreatorSubmissionRecord } from "./private-creator-submissions";
+import type { PrivateResearchResult } from "./private-research-results";
+import type { PrivateExecutionClaim } from "./private-research-executions";
+import type { LedgerAccount } from "../gateway/settlement-parity";
+import type { EconomicsSnapshot } from "../economics/testnet-economics";
+import type { A2aOrder, A2aOrderResolutionUpdate } from "../a2a/order";
+import type { A2aOriginalClaim } from "../a2a/original-claim";
+import type { MonthlyPurchase, MonthlyRedemption, MonthlyRedemptionInput, ResearchPurchaseClaim } from "./research-monthly";
+import type { PrivateResearchIntent } from "../a2a/private-research-intent";
+import type { PrivatePaymentConfirmation, PrivatePaymentState } from "../a2a/private-payment-state";
+import type { A2aOperationsSnapshot } from "../a2a/operations";
+import type {
+  ActivationEvent,
+  ActivationFunnel,
+  ArticleOffer,
+  DailyVolume,
+  DashboardMetrics,
+  GapIntent,
+  PaymentRecord,
+  QueryRun,
+  Source,
+  SourceItem,
+  WithdrawalRecord,
+} from "../types";
+
+export interface WebSessionRecord {
+  hash: string;
+  wallet: string;
+  /** Unix milliseconds, matching the JWT's second-rounded timestamps. */
+  issuedAt: number;
+  expiresAt: number;
+}
+
+export interface CreatorEarnings {
+  sourceId: string;
+  sourceName: string;
+  walletAddress: string;
+  totalEarnedUsdc: number;
+  paymentCount: number;
+  citationCount: number;
+}
+
+/** Human-readable off-chain metadata for a source (name, description, url).
+ *  Stored separately from the on-chain record so the indexer can merge them
+ *  without clobbering payment-critical chain data. */
+export interface SourceMeta {
+  /** Immutable origin sidecar retained without changing the source_meta schema. */
+  registryAuthority?: import("../registry/source-registry-authority").SourceRegistryAuthority;
+  name: string;
+  description: string;
+  url: string;
+  /** The feed the creator listed, when it differs from `url`. Not on-chain, and the only place a
+   *  freshly-indexed source can learn it: without it, feed-ownership verification would run
+   *  against the site's homepage and never find the token the creator put in the feed. */
+  rssUrl?: string;
+}
+
+/** A source's notify-on-citation webhook: the URL Keryx POSTs when the source is cited+paid,
+ *  plus the per-source HMAC secret used to sign `X-Keryx-Signature`. Private off-chain config —
+ *  never returned in public source listings; the secret is echoed to the owner only at set time. */
+export interface SourceNotify {
+  url: string;
+  secret: string;
+}
+
+/** A source's citation email alert: the human channel beside the webhook. `unsubToken` is the
+ *  per-row secret embedded in every mail's unsubscribe link (unauthenticated by design — the
+ *  recipient must always be able to stop delivery); `lastSentAt` rate-caps sends per source. */
+export interface SourceNotifyEmail {
+  email: string;
+  unsubToken: string;
+  lastSentAt: string | null;
+}
+
+/** A browser co-sign spending session: the user funded a session EOA and authorised Keryx to
+ *  request signatures from it up to `cap` USDC. Persisted so a deploy or crash does not strand a
+ *  funded session, and — more importantly — so `spent` survives a restart: an in-memory counter
+ *  reset the cap accounting every time the process bounced. There is no private key here; the key
+ *  lives only in the browser tab that derived it. */
+export interface SessionGrantRecord {
+  /** Lowercased SIWE address of the owner; one active grant per wallet. */
+  sessionId: string;
+  /** The session EOA whose Gateway balance backs these payments. */
+  sessAddr: string;
+  ownerAddr: string;
+  /** Total USDC the user funded — the hard spending ceiling. */
+  cap: number;
+  /** USDC reserved/consumed under this grant; definitive pre-settle failures may release it. */
+  spent: number;
+  /** Unix ms at which this grant lapses. */
+  expiry: number;
+  /** On-chain tx that funded the session EOA, or "recovered". Record-keeping only. */
+  txHash: string;
+  /** Changes on every create/recover, binding later reservation release to one cap generation. */
+  grantEpoch: string;
+}
+
+export interface FailedPendingPaymentResult {
+  resolved: boolean;
+  reservationReleased: boolean;
+}
+
+/** A row from api_keys (safe to return to the owner — no hash, no raw key). */
+export interface ApiKeyRow {
+  id: string;
+  prefix: string;
+  wallet: string;
+  label: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  /** Comma-separated operations this key may perform. Null on keys minted before scopes
+   *  existed, which means every scope — see lib/api-key-scopes.ts. */
+  scopes: string | null;
+  /** Comma-separated source ids this key is pinned to. Null = every source the wallet owns. */
+  sourceIds: string | null;
+}
+
+/** Daily usage aggregate for a single key. */
+export interface ApiKeyUsage {
+  day: string;   // ISO date "YYYY-MM-DD"
+  count: number;
+}
+
+/** Outcome of consuming one point from a fixed-window rate-limit bucket. */
+export interface RateLimitDecision {
+  /** False when the bucket is exhausted for the current window. */
+  allowed: boolean;
+  /** Milliseconds until the window resets — the Retry-After the caller should advertise. */
+  msBeforeNext: number;
+}
+
+/** Durable health for one `(provider, reasoning step)` circuit. No prompt, response, or key data
+ * is stored; only bounded failure counters and unix-ms scheduling state. */
+export interface ReasoningCircuitRecord {
+  key: string;
+  failures: number;
+  openUntil: number;
+  probeUntil: number;
+  updatedAt: number;
+}
+
+/** Result of atomically checking an open circuit or leasing its single half-open probe. */
+export interface ReasoningCircuitDecision {
+  allowed: boolean;
+  retryAfterMs: number;
+}
+
+export type OnrampReservation = "reserved" | "already-funded" | "daily-cap";
+
+/** A user account, keyed by wallet address (lowercased). Created on first SIWE
+ *  sign-in. Non-custodial: an identity/profile index only — no funds, no keys,
+ *  no credentials. Access control still re-derives the role live (see resolveRole). */
+export interface UserRecord {
+  walletAddress: string;
+  /** Role snapshot at last sign-in (asker|creator|dev). For display only. */
+  role: string;
+  /** Compact display handle, e.g. "0x3844…97cd". */
+  displayHandle: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+/** A single query memory: which sources a past run could have cited, and which it did. */
+export interface QueryMemoryEntry {
+  id: string;
+  /** Per-source citation data from a past run — cited sources only. */
+  sourceScores: Record<string, { name: string; weight: number; reward: number }>;
+  /**
+   * Every source the run actually read, cited or not — the denominator behind any claim about how
+   * often a source earns its toll. Deliberately not "every source that was listed": a source the
+   * agent skipped was never given the chance to be cited, and counting that as a miss would let one
+   * skip justify the next. Absent on entries written before it was recorded.
+   */
+  sourcesRead?: string[];
+  /** Topic keywords extracted from the question */
+  topics: string[];
+  createdAt: string;
+}
+
+/** Aggregated feedback for a query (or all queries). */
+export interface FeedbackStats {
+  total: number;
+  up: number;
+  down: number;
+  rate: number; // up / total, 0 when no feedback
+}
+
+export interface KeryxDB extends PublicReferenceArchiveDb {
+  /** Private hidden explicit chat consent port. Ownership only; no financial grants. */
+  readonly chatAccountLinks?: import("../chat-accounts/contracts").ChatAccountLinksStore;
+  /** Qualified recipient-only assignment metadata; no owner capability or private-run authority. */
+  readonly ownerRunAssignments?: import("../owner-run-assignments/contracts").OwnerRunAssignmentsPort
+    | import("../owner-run-assignments/contracts").AsyncOwnerRunAssignmentsPort;
+  /** Exact pre-existing ordinary account namespace only. No install, fallback or pooled financial authority.
+   * Absent on unsupported/native/enrolled/archive facades; interactive callers authenticate the durable login first. */
+  readonly accountMembership?: AccountMembershipStore;
+  /** Opt-in ordinary publication; absent on sealed/native stores and when privacy is inactive. */
+  readonly publicProfiles?: import("../profiles/public-profile").PublicProfilesStore;
+  /** Explicitly admitted ordinary run text privacy. Public callers must never fall back to raw originals. */
+  readonly runPrivacy?: import("../run-privacy/contracts").RunPrivacyStore;
+  /** Optional native owner-filtered metadata reader; no ordinary fallback. */
+  readonly pendingJobOwners?: import("./pending-job-owners-sqlite").PendingJobOwnersStore;
+  createOwnedA2aOrder?(order: A2aOrder, proof: import("../a2a/pending-owner-session").PendingOwnerSessionProof): Promise<{ created: boolean; order: A2aOrder }>;
+  /** Captured staged activation; false preserves existing admitted readers, true requires the privacy port. */
+  readonly runPrivacyActive?: boolean;
+  /** Optional ordinary-storage classified usage. Enrolled/native profiles expose no fallback. */
+  readonly publicUsage?: import("../usage/contracts").PublicUsageStore;
+  /** Selected native public ledger metadata only; absent readers retain the bounded generic path. */
+  readonly publicLedgerRuns?: import("../operator-ledger/native-runs").PublicLedgerRunReader;
+  /** Default-off anonymous ownership-only sidecar; exact pre-existing ordinary schema only.
+   * Absent on enrolled/native/archive/private facades; grants no payment or original authority. */
+  readonly runClaims?: import("../run-claims/contracts").RunClaimsStore;
+  /** Gated ordinary ownership-only history; saved originals and financial attribution stay unchanged. */
+  readonly runOwnershipHistory?: import("../run-claims/history").RunOwnershipHistoryStore;
+  /** Additive ordinary customer-request journal; no native/enrolled, execution or financial capability. */
+  readonly deliverableAcceptance?: import("../deliverable-acceptance/contracts").DeliverableAcceptanceStore;
+  /** Additive ordinary-storage domain. Absent on sealed/native adapters; never restore by fallback. */
+  readonly privateProfiles?: PrivateProfilesStore;
+  /** Explicit owner-controlled metadata snapshots; absent on unsupported/enrolled adapters. */
+  readonly privateBibliographies?: PrivateBibliographiesStore;
+  /** Hidden selected-native manual metadata port; no ordinary or remote fallback. */
+  readonly topicWatches?: TopicWatchesPort;
+  /** Explicitly enabled ordinary encrypted reference integration only. */
+  readonly zotero?: ZoteroStore;
+  /** Bounded ordinary current-store attribution only; absent on sealed/native/archive readers. */
+  readonly personalHistory?: import("../history/personal-history").PersonalHistoryStore;
+  /** Optional CURRENT stored-membership read port supplied by #267. No write/login or pooled authority. */
+  readonly historyMembership?: import("../history/owned-history").HistoryMembershipStore;
+  /** Ordinary-only decision opinions/admission sidecars; never payment authority. */
+  readonly decisionReviews?: import("../research/decision-review-types").DecisionReviewsStore;
+  /** Atomic creator gas originals; absent on storage without a reviewed sponsor journal. */
+  admitRegistrationSponsor?(policy: import("../sources/registration-sponsor-protocol").ActiveRegistrationSponsorPolicy,
+    row: import("../sources/registration-sponsor-protocol").SponsoredRegistration, now?: number,
+    fundingObservation?: import("../sources/registration-sponsor-protocol").RegistrationSponsorFundingObservation): Promise<import("../sources/registration-sponsor-protocol").SponsoredRegistration>;
+  inspectRegistrationSponsorFunding?(policy: import("../sources/registration-sponsor-protocol").ActiveRegistrationSponsorPolicy,
+    observation: import("../sources/registration-sponsor-protocol").RegistrationSponsorFundingObservation,
+    now?: number): Promise<import("./registration-sponsor").RegistrationSponsorFundingInspection>;
+  getRegistrationSponsor?(input: { wallet: string; id?: string; canonicalUrl?: string }): Promise<import("../sources/registration-sponsor-protocol").SponsoredRegistration | null>;
+  transitionRegistrationSponsor?(input: import("./registration-sponsor").RegistrationSponsorTransition): Promise<import("../sources/registration-sponsor-protocol").SponsoredRegistration>;
+  /** Server-only registration execution authority; never expose in API projections. */
+  getRegistrationSponsorExecution?(input: { wallet: string; id: string }): Promise<import("./registration-sponsor").RegistrationSponsorExecution | null>;
+  /** Private verified-identity domain; ordinary admitted profiles only, absent on sealed/native storage. */
+  readonly profileIdentities?: ProfileIdentitiesStore;
+  /** Supervised SQLite scholarly pilot capability; absent on unsupported backends. */
+  getPaperState?(sourceId: string): Promise<import("../scholarly/rights-protocol").PaperState | null>;
+  beginPaperEnrollment?(sourceId: string, creator: string): Promise<void>;
+  submitPaper?(submission: import("../scholarly/rights-protocol").SignedPaperDeclaration): Promise<import("../scholarly/rights-protocol").PaperState>;
+  reviewPaper?(review: import("../scholarly/rights-protocol").SignedPaperDecision): Promise<import("../scholarly/rights-protocol").PaperState>;
+  getPaperAdmission?(nonce: string): Promise<import("./scholarly-rights").PaperAdmission | null>;
+  init(): Promise<void>;
+
+  // ── sources & content ──
+  upsertSource(source: Source): Promise<void>;
+  /** Atomic ownership proof update bound to the observed payout and effective feed. */
+  verifySourceIfUnchanged(input: { sourceId: string; walletAddress: string; feedUrl: string }): Promise<boolean>;
+  listPublicReferences?(): Promise<PublicReference[]>;
+  getPublicReference?(id: string): Promise<PublicReference | null>;
+  upsertPublicReference?(reference: PublicReference): Promise<void | { added: number; updated: number }>;
+  listSources(): Promise<Source[]>;
+  /** Every source row, including ones deactivated on-chain. Discovery must NEVER use this —
+   *  it exists for owner-facing history (an audit export of what a wallet earned must still
+   *  account for a source the creator has since retired). */
+  listAllSources(): Promise<Source[]>;
+  getSource(id: string): Promise<Source | null>;
+  /** Look up a source by its on-chain registry id (bytes32). The indexer uses this to update the
+   *  row a source already has, instead of minting a second one keyed by the hash. */
+  getSourceByOnchainId(onchainId: string): Promise<Source | null>;
+  /** Store off-chain human-readable metadata keyed by source id.
+   *  Called by POST /api/sources at register time so the indexer can merge
+   *  name/description/url into the on-chain cache row. */
+  setSourceMeta(id: string, meta: SourceMeta): Promise<void>;
+  /** Retrieve off-chain metadata for a source. Returns null if not set. */
+  getSourceMeta(id: string): Promise<SourceMeta | null>;
+  addItems(items: SourceItem[]): Promise<void>;
+  getItems(sourceId: string): Promise<SourceItem[]>;
+  /** Resolve one article only within its owning registry source. */
+  getItem(sourceId: string, itemId: string): Promise<SourceItem | null>;
+  /** Exact catalog membership only. Duplicate source/link rows refuse selection. */
+  getSourceItemByLink(sourceId: string, exactItemUrl: string): Promise<SourceItem | null>;
+  /** Current immutable offer revision for one article, if the creator has published one. */
+  getArticleOffer(sourceId: string, itemId: string): Promise<ArticleOffer | null>;
+  /** Current offer revisions. Passing no source id returns the public marketplace book. */
+  listArticleOffers(sourceId?: string): Promise<ArticleOffer[]>;
+  /** Atomically replaces the current revision for `(sourceId,itemId)`. */
+  setArticleOffer(offer: ArticleOffer): Promise<void>;
+  /** Revoke the current offer for one article. No-op when none exists. */
+  deleteArticleOffer(sourceId: string, itemId: string): Promise<void>;
+  /** Posts each of `sourceIds` published inside (`sinceIso`, `untilIso`], keyed by source id;
+   *  sources with none are absent rather than zero. Backs the freshness note on a dispatch —
+   *  "what have these sources published since this answer settled". Undated rows never count
+   *  (they cannot prove they are new) and `untilIso` exists so a feed with a future-dated post
+   *  cannot pin an answer to "stale" forever. */
+  countItemsPublishedBetween(
+    sourceIds: string[],
+    sinceIso: string,
+    untilIso: string,
+  ): Promise<Record<string, number>>;
+  /** Newest publication date per source, for the sources that have one. One round trip for a whole
+   *  list of dispatches — a ledger of 50 rows must not cost 50 count queries. */
+  newestItemDates(sourceIds: string[]): Promise<Record<string, string>>;
+
+  // ── creator offers against demand-board gaps ──
+  /** Atomically admit at most one treasury-retry offer per measured gap and owner wallet. */
+  createGapIntent(
+    intent: Omit<
+      GapIntent,
+      | "id"
+      | "status"
+      | "attempts"
+      | "leaseExpiresAt"
+      | "retryRunId"
+      | "coverage"
+      | "rewardUsdc"
+      | "lastError"
+      | "createdAt"
+      | "updatedAt"
+    >,
+  ): Promise<GapIntent>;
+  /** Public coordination view; contains no secrets or payout authority. */
+  listGapIntents(limit?: number): Promise<GapIntent[]>;
+  /** Atomically lease one pending intent whose source is active + verified. */
+  claimGapIntent(now: number, leaseMs: number): Promise<GapIntent | null>;
+  /** Complete a leased intent after its bounded treasury retry finishes. */
+  finishGapIntent(
+    id: string,
+    result: {
+      status: Extract<GapIntent["status"], "filled" | "missed" | "unpaid">;
+      retryRunId: string;
+      coverage: number;
+      rewardUsdc: number;
+      lastError?: string;
+    },
+  ): Promise<void>;
+  /** Release a failed lease for bounded retry, or make it terminal after max attempts. */
+  failGapIntent(id: string, error: string, maxAttempts: number): Promise<void>;
+  /** Close a leased offer without spending because its demand gap is no longer open. */
+  expireGapIntent(id: string, reason: string): Promise<void>;
+
+  // ── notify-on-citation webhooks (off-chain, private to the source owner) ──
+  /** Set or rotate a source's citation webhook (url + HMAC secret). Upsert keyed by source id. */
+  setSourceNotify(id: string, url: string, secret: string): Promise<void>;
+  /** Get a source's notify config, or null if none set. Carries the secret — owner-only path. */
+  getSourceNotify(id: string): Promise<SourceNotify | null>;
+  /** Remove a source's notify config (disable notifications). No-op if none set. */
+  deleteSourceNotify(id: string): Promise<void>;
+
+  // ── citation email alerts (off-chain, private to the source owner) ──
+  /** Set or replace a source's alert email + unsubscribe token. Upsert keyed by source id. */
+  setSourceNotifyEmail(id: string, email: string, unsubToken: string): Promise<void>;
+  /** Get a source's email-alert config, or null if none set. Owner/dispatcher-only path. */
+  getSourceNotifyEmail(id: string): Promise<SourceNotifyEmail | null>;
+  /** Remove a source's email-alert config (unsubscribe / disable). No-op if none set. */
+  deleteSourceNotifyEmail(id: string): Promise<void>;
+  /** Record a successful delivery so the per-source rate cap has a reference point. */
+  markSourceNotifyEmailSent(id: string, at: string): Promise<void>;
+
+  /** Set a source's free-preview depth ("full" | "excerpt" | "locked"). Owner-gated by callers. */
+  setSourcePreviewDepth(id: string, depth: string): Promise<void>;
+
+  // ── cache (skip-repay decisions) ──
+  getCached(sourceId: string): Promise<string | null>;
+  /** When the cached copy was taken, or null if nothing is cached. The agent compares this against
+   *  the source's newest post: a copy the source has published past is not a free read of it any
+   *  more, it is a stale one (see lib/agent/cache-freshness.ts). */
+  getCachedAt(sourceId: string): Promise<string | null>;
+  setCached(sourceId: string, text: string): Promise<void>;
+
+  // ── sync state (registry indexer checkpoint) ──
+  /** Get a named sync-state value (e.g. "lastSyncedBlock"). Returns null if not set. */
+  getSyncState(key: string): Promise<string | null>;
+  /** Fresh bounded sync-state read. Optional for adapters with only scalar reads. */
+  getSyncStates?(keys: readonly string[]): Promise<ReadonlyMap<string, string | null>>;
+  /** Source claims are atomic SQLite-only state; unsupported adapters expose no mutation fallback. */
+  issueSourceClaimChallenge?(input: IssueSourceClaimChallenge): Promise<SourceClaimChallenge>;
+  getSourceClaimChallenge?(id: string): Promise<SourceClaimChallenge | null>;
+  reserveSourceClaimVerification?(challengeId: string, wallet: string, now?: number): Promise<SourceClaimChallenge>;
+  verifySourceClaim?(input: VerifySourceClaim): Promise<SourceClaim>;
+  getSourceClaim?(id: string): Promise<SourceClaim | null>;
+  getSourceClaimForSource?(sourceId: string): Promise<SourceClaim | null>;
+  listSourceClaims?(wallet?: string): Promise<SourceClaim[]>;
+  bindSourceClaim?(input: BindSourceClaim): Promise<SourceClaim>;
+  updateSourceClaimPolicy?(input: UpdateSourceClaimPolicy): Promise<SourceClaim>;
+  /** SQLite-only scheduled maintenance. Other adapters fail closed until equivalent atomic claims exist. */
+  claimSourceUpkeep?(now: number): Promise<SourceUpkeepClaim | null>;
+  finishSourceUpkeep?(claim: SourceUpkeepClaim, summary: SourceUpkeepSummary, now: number): Promise<void>;
+  /** Upsert a named sync-state value. */
+  setSyncState(key: string, value: string): Promise<void>;
+  /** Atomically reserve one address claim and increment the shared daily faucet total. */
+  reserveOnramp(
+    addressKey: string,
+    dayKey: string,
+    amount: number,
+    dailyCap: number,
+    now: number,
+  ): Promise<OnrampReservation>;
+  /** Undo a reservation when the chain transfer definitely failed. */
+  releaseOnramp(addressKey: string, dayKey: string, amount: number): Promise<void>;
+
+  // ── browser co-sign session grants (no keys, only caps + accounting) ──
+  /** Create or replace the active grant. Journal mode retains cumulative signer spend
+   *  and original epochs; pre-cutover legacy writers retain their historical behavior. */
+  upsertSessionGrant(grant: Omit<SessionGrantRecord, "spent">): Promise<void>;
+  issueSessionGrantConsent(consent: import("../payments/session-grant-consent").SessionGrantConsent): Promise<void>;
+  consumeSessionGrantConsent(consent: import("../payments/session-grant-consent").SessionGrantConsent, signature: string, sessionSignature: string): Promise<void>;
+  getSessionGrantConsent(owner: string, epoch: string): Promise<import("./session-grant-consents").SessionGrantConsentRecord | null>;
+  /** Fetch a grant. Returns null when absent; expiry is the caller's to interpret. */
+  getSessionGrant(sessionId: string): Promise<SessionGrantRecord | null>;
+  /** Atomically reserve only against the captured grant generation and session signer. */
+  addSessionGrantSpend(sessionId: string, grantEpoch: string, sessAddr: string, amount: number): Promise<boolean>;
+  /** Historical immutable admission substrate; blocked by the active writer fence. */
+  admitBrowserAuthorization(input: BrowserAuthorizationIntent): Promise<BrowserAdmissionResult>;
+  browserJournalActive(): Promise<boolean>;
+  admitBrowserQueryPolicy(proof:import("../payments/browser-query-policy").BrowserQueryPolicyProof,sessionId:string):Promise<import("./browser-signing-originals").BrowserQueryAdmissionResult>;
+  admitBrowserSigningOriginal(input:import("./browser-signing-originals").BrowserOriginalAdmission):Promise<import("./browser-signing-originals").BrowserOriginalAdmissionResult>;
+  admitBrowserSourceSigningOriginal(input:import("./browser-signing-originals").BrowserSourceOriginalAdmission):Promise<import("./browser-signing-originals").BrowserOriginalAdmissionResult>;
+  readExposedBrowserSigningSnapshotForSigner(signer:string,sessionId:string,requestId:string):Promise<import("./browser-signing-originals").BrowserSigningSnapshot|null>;
+  readBrowserSigningSnapshot(owner:string,sessionId:string,requestId:string):Promise<import("./browser-signing-originals").BrowserSigningSnapshot|null>;
+  signBrowserSigningOriginal(sessionId:string,requestId:string,header:string):Promise<boolean>;
+  browserSignerConfirmedSpendMicro(signer:string): Promise<number>;
+  browserSignerRetainedSpendMicro(signer:string): Promise<number>;
+  sessionFundingAccounting(signer:string,after?:string): Promise<import("./session-funding-accounting").SessionFundingAccounting>;
+  sessionWithdrawalAccounting(signer:string): Promise<{heldPaymentMicroUsdc:string;heldWithdrawalMicroUsdc:string;confirmedSpentMicroUsdc:string}>;
+  creatorOwnerWithdrawalAccounting(owner:string):Promise<import("../gateway/creator-owner-withdrawal-protocol").CreatorOwnerWithdrawalAccounting>;
+  admitCreatorOwnerWithdrawal(record:WithdrawalRequestRecord,accounting:import("../gateway/creator-owner-withdrawal-protocol").CreatorOwnerWithdrawalAccounting,availableMicroUsdc:string):Promise<WithdrawalRequestRecord>;
+  getCreatorOwnerWithdrawalCompletion(id:string,owner:string):Promise<import("../gateway/creator-owner-withdrawal-protocol").CreatorOwnerWithdrawalCompletion|null>;
+  completeCreatorOwnerWithdrawal(completion:import("../gateway/creator-owner-withdrawal-protocol").CreatorOwnerWithdrawalCompletion):Promise<import("../gateway/creator-owner-withdrawal-protocol").CreatorOwnerWithdrawalCompletion>;
+  reserveSessionWithdrawal(preparation:import("../gateway/session-withdrawal-protocol").SessionWithdrawalPreparation):Promise<import("../gateway/session-withdrawal-protocol").SessionWithdrawalPreparation>;
+  getSessionWithdrawal(id:string,owner:string):Promise<import("../gateway/session-withdrawal-protocol").SessionWithdrawalPreparation|null>;
+  pendingSessionWithdrawal(owner:string,signer:string):Promise<import("../gateway/session-withdrawal-protocol").SessionWithdrawalPreparation|null>;
+  getSessionWithdrawalSigningPhase(id:string,owner:string):Promise<import("../gateway/session-withdrawal-protocol").SessionWithdrawalSigningPhase|null>;
+  authorizeSessionWithdrawal(id:string,owner:string):Promise<import("../gateway/session-withdrawal-protocol").SessionWithdrawalPreparation|null>;
+  cancelSessionWithdrawal(id:string,owner:string):Promise<import("../gateway/session-withdrawal-protocol").SessionWithdrawalCancellation|null>;
+  getSessionWithdrawalAbort(id:string,owner:string):Promise<import("../gateway/session-withdrawal-abort").SessionWithdrawalAbort|null>;
+  abortSessionWithdrawal(id:string,owner:string,proof:import("../gateway/session-withdrawal-abort").SessionWithdrawalAbort):Promise<import("../gateway/session-withdrawal-abort").SessionWithdrawalAbort|null>;
+  admitHostedTreasuryPolicy(policy:import("../payments/hosted-treasury-policy").HostedTreasuryPolicy,role:"public"|"private"):Promise<string>;
+  hostedTreasuryAccounting(signer:string,role?:"public"|"private"):Promise<import("./hosted-treasury-journal").HostedTreasuryAccounting>;
+  admitHostedAuthorization(input:import("./hosted-treasury-journal").HostedAuthorizationAdmission):Promise<string>;
+  submitHostedAuthorization(signer:string,submission:Readonly<import("../payments/server-x402-client").ServerX402Submission>,headerHash:string):Promise<void>;
+  confirmHostedAuthorization(signer:string,nonce:string,transaction:string):Promise<void>;
+  getSessionWithdrawalCompletion(id:string,owner:string):Promise<import("../gateway/session-withdrawal-completion").SessionWithdrawalCompletion|null>;
+  completeSessionWithdrawal(id:string,owner:string,outcome:import("../gateway/session-withdrawal-completion").SessionWithdrawalCompletion):Promise<import("../gateway/session-withdrawal-completion").SessionWithdrawalCompletion>;
+  listSessionWithdrawalPayments(signer:string,afterNonce?:string,limit?:number):Promise<{payments:import("./browser-authorization-journal").BrowserAuthorizationJournal[];nextCursor:string|null}>;
+  activateBrowserJournal(): Promise<void>;
+  admitBrowserJournal(input: import("./browser-authorization-journal").BrowserJournalAdmission): Promise<import("./browser-authorization-journal").BrowserJournalAdmissionResult>;
+  getBrowserJournal(sessionId: string, requestId: string): Promise<import("./browser-authorization-journal").BrowserAuthorizationJournal | null>;
+  exposeBrowserJournal(sessionId: string, requestId: string): Promise<boolean>;
+  cancelPreparedBrowserJournal(sessionId: string, requestId: string): Promise<boolean>;
+  signBrowserJournal(sessionId: string, requestId: string, metadata: import("./browser-authorization-journal").BrowserSignedMetadata): Promise<boolean>;
+  submitBrowserJournal(sessionId: string, requestId: string): Promise<boolean>;
+  /** Release only into the grant generation that held the unused reservation. */
+  releaseSessionGrantSpend(sessionId: string, grantEpoch: string, sessAddr: string, amount: number): Promise<void>;
+  deleteSessionGrant(sessionId: string): Promise<void>;
+  /** Disable only the captured generation; never erase retained payment/capacity history. */
+  revokeSessionGrant(sessionId: string, grantEpoch: string, sessAddr: string): Promise<boolean>;
+  /** Legacy pruning only; journal mode preserves lapsed financial state. */
+  deleteExpiredSessionGrants(now: number): Promise<void>;
+
+  // ── rate-limit counters (durable, shared across processes) ──
+  /** Atomically consume one point from `bucket`, opening a fresh `windowMs` window when the
+   *  stored one has lapsed at `now` (unix ms). Must be a single statement: two callers hitting
+   *  the same bucket concurrently is the normal case, and a read-modify-write would let both
+   *  through. `allowed` is false once the window's `points` are spent. */
+  consumeRateLimit(
+    bucket: string,
+    points: number,
+    windowMs: number,
+    now: number,
+  ): Promise<RateLimitDecision>;
+  /** Drop every counter whose window closed at or before `now` (unix ms). */
+  deleteExpiredRateLimits(now: number): Promise<void>;
+
+  // Reasoning-provider circuits: durable and shared across processes.
+  /** Allow normal calls while closed; after a cooldown, atomically lease one half-open probe so
+   *  the web process and short-lived volume workers do not all retry the same unhealthy tier. */
+  acquireReasoningCircuit(
+    key: string,
+    now: number,
+    probeLeaseMs: number,
+  ): Promise<ReasoningCircuitDecision>;
+  /** Retain the failure streak across cooldowns and reopen with exponential backoff. */
+  recordReasoningCircuitFailure(
+    key: string,
+    transient: boolean,
+    now: number,
+    failureThreshold: number,
+    baseCooldownMs: number,
+    maxCooldownMs: number,
+  ): Promise<ReasoningCircuitRecord>;
+  /** A real provider success is the only event that closes and forgets the circuit. */
+  clearReasoningCircuit(key: string): Promise<void>;
+
+  // ── query runs ──
+  /** Private signed intent only, never payment evidence or a runnable order. First writer wins. */
+  reservePrivateResearchIntent(intent: PrivateResearchIntent): Promise<PrivateResearchIntent>;
+  /** Backend-only candidate hints; each execution still requires validated atomic admission. */
+  listPrivateWorkerCandidates(signer: string, after?: string): Promise<import("./private-worker-candidates").PrivateWorkerCandidate[]>;
+  listPrivateReconciliationCandidates(signer: string, after?: string): Promise<import("./private-worker-candidates").PrivateWorkerCandidate[]>;
+  reservePrivateTreasury(id: string, payer: string, policy: PrivateTreasuryPolicy): Promise<boolean>;
+  getPrivateTreasury(id: string, payer: string): Promise<PrivateTreasuryReservation | null>;
+  getPrivateTreasurySummary(signer: string): Promise<PrivateTreasurySummary | null>;
+  /** Backend-only, once per sealed job. Every admitted creator leg remains allocated. */
+  releasePrivateTreasury(id: string, payer: string, signer: string): Promise<PrivateTreasuryRelease | null>;
+  getPrivateResearchInterruption(id: string, payer: string): Promise<PrivateResearchInterruption | null>;
+  /** Internal operator authority, never a public cancellation/refund endpoint. */
+  interruptPrivateResearch(id: string, payer: string, workerId: string): Promise<PrivateResearchInterruption | null>;
+  /** Caller must supply an independently authenticated payer. Never expose via bearer-ID lookup. */
+  getPrivateResearchIntent(id: string, payer: string): Promise<PrivateResearchIntent | null>;
+  listPrivateResearchHistory(payer: string, before?: import("./private-research-intents").PrivateHistoryCursor): Promise<import("./private-research-intents").PrivateHistoryEntry[]>;
+  /** Trusted facilitator observation only. Persistence errors must not discard an observed receipt. */
+  confirmPrivateCreatorSubmission(id: string, payer: string, workerId: string, confirmation: PrivateCreatorConfirmation): Promise<PrivateCreatorConfirmationRecord>;
+  getPrivateCreatorConfirmation(id: string, payer: string, authorizationId: string): Promise<PrivateCreatorConfirmationRecord | null>;
+  /** Only true admits signed I/O. Caller must bind source payout authority and authenticate the owner. */
+  admitPrivateCreatorSubmission(id: string, payer: string, workerId: string, data: PrivateCreatorSubmission): Promise<boolean>;
+  listPrivateCreatorSubmissions(id: string, payer: string): Promise<PrivateCreatorSubmissionRecord[]>;
+  /** Backend-only immutable snapshots; authenticate payer independently before reading. */
+  savePrivateResearchResult(id: string, payer: string, workerId: string, run: QueryRun): Promise<PrivateResearchResult>;
+  getPrivateResearchResult(id: string, payer: string): Promise<PrivateResearchResult | null>;
+  /** Only a fresh non-null claim authorizes execution. Never replay from a stored worker ID. */
+  claimPrivateResearchExecution(id: string, payer: string): Promise<PrivateExecutionClaim | null>;
+  /** Backend diagnosis only; caller must authenticate the payer separately. */
+  getPrivateResearchExecution(id: string, payer: string): Promise<PrivateExecutionClaim | null>;
+  /** Only claimed:true may cross the submission boundary; retries must recover the existing attempt. */
+  claimPrivatePaymentSubmission(id: string, payer: string): Promise<{ claimed: boolean; state: PrivatePaymentState }>;
+  getPrivatePaymentState(id: string, payer: string): Promise<PrivatePaymentState | null>;
+  /** Internal trusted facilitator evidence only, never a caller-provided confirmation body. */
+  confirmPrivatePayment(id: string, payer: string, confirmation: PrivatePaymentConfirmation): Promise<PrivatePaymentState>;
+  saveQueryRun(run: QueryRun, publication?: { visibility: import("../run-privacy/contracts").RunVisibility }): Promise<void>;
+  getQueryRun(id: string): Promise<QueryRun | null>;
+  listRecentQueries(limit: number): Promise<QueryRun[]>;
+  /** Bounded-memory read, newest first with id as timestamp tie-breaker. */
+  iterateRecentQueries(limit: number): AsyncIterable<QueryRun>;
+  /** Dispatches asked as follow-ups to `parentId`, oldest first. */
+  listFollowUps(parentId: string): Promise<QueryRun[]>;
+  /** Dispatches a wallet ran while signed in, newest first. Address match is case-insensitive:
+   *  runs are stamped lowercased, but callers hand over whatever casing the session carries. */
+  listQueryRunsByAsker(wallet: string, limit: number): Promise<QueryRun[]>;
+  /** Selected-rail recorded settlement observations and usage estimates. Not reconciled profit. */
+  economics(): Promise<EconomicsSnapshot>;
+
+  // ── privacy-preserving activation telemetry ──
+  /** Atomically increment one aggregate UTC-day counter. No actor, wallet, IP, or cookie. */
+  recordActivationEvent(event: ActivationEvent, day: string): Promise<void>;
+  /** Aggregate coarse event totals for a bounded UTC-day window. Counts are not unique users. */
+  activationFunnel(days: number): Promise<ActivationFunnel>;
+
+  // ── auth helpers ──
+  /** True when any source in the registry has this wallet address (case-insensitive). */
+  isCreatorWallet(addr: string): Promise<boolean>;
+
+  /** Persist a newly issued SIWE challenge hash; duplicate active hashes never replace a row. */
+  createAuthChallenge(hash: string, issuedAt: number, expiresAt: number): Promise<void>;
+  /** Atomically consume one issued, unexpired challenge across processes; missing/replayed is false. */
+  consumeAuthChallenge(hash: string, now: number): Promise<boolean>;
+  createWebSession(record: WebSessionRecord): Promise<void>;
+  getWebSession(hash: string): Promise<WebSessionRecord | null>;
+  listWebSessions(wallet: string, now: number): Promise<WebSessionRecord[]>;
+  revokeOtherWebSessions(wallet: string, keepHash: string): Promise<void>;
+  /** Idempotent owner-scoped removal; absence also proves this token cannot authenticate. */
+  revokeWebSession(hash: string, wallet: string): Promise<void>;
+
+  // ── users (account index; non-custodial identity, no funds) ──
+  /** Create the account on first sign-in, else refresh role + last_seen. Returns
+   *  the stored record and whether it was newly created (true on first sign-in). */
+  upsertUser(addr: string, role: string): Promise<{ user: UserRecord; created: boolean }>;
+  /** Fetch a user by wallet (case-insensitive). Null if the wallet never signed in. */
+  getUser(addr: string): Promise<UserRecord | null>;
+
+  // ── api keys (identity + rate-limit; no fund custody) ──
+  /** Insert a new key row. Returns { rawKey (echoed once), prefix, id }.
+   *  `scopes` is stored comma-separated; `sourceIds` null means "every source the wallet owns". */
+  mintApiKey(
+    wallet: string,
+    prefix: string,
+    keyHash: string,
+    label?: string,
+    scopes?: string,
+    sourceIds?: string | null,
+  ): Promise<{ rawKey: string; prefix: string; id: string }>;
+  /** Prefix-lookup + timing-safe hash compare. Returns identity context or null.
+   *  `scopes`/`sourceIds` come back raw (null on pre-scopes keys) — see lib/api-key-scopes.ts. */
+  verifyApiKey(
+    prefix: string,
+    incomingHash: string,
+  ): Promise<{
+    walletAddress: string;
+    keyId: string;
+    scopes: string | null;
+    sourceIds: string | null;
+  } | null>;
+  /** List all non-revoked (and revoked) keys for a wallet. */
+  listApiKeys(wallet: string): Promise<ApiKeyRow[]>;
+  /** Soft-delete: set revoked_at. No-op if key already revoked or not owned by wallet. */
+  revokeApiKey(id: string, wallet: string): Promise<void>;
+  /** Increment daily call counter for a key (fire-and-forget). */
+  incrementUsage(keyId: string): Promise<void>;
+  /** Return per-day call counts for a key over the last N days (default 30). */
+  getUsage(keyId: string, days?: number): Promise<ApiKeyUsage[]>;
+
+  // ── payments ──
+  recordPayment(p: PaymentRecord): Promise<void>;
+  /** Insert a deterministic ledger row once. False means the id already exists. */
+  recordPaymentOnce(p: PaymentRecord): Promise<boolean>;
+  listPayments(limit: number): Promise<PaymentRecord[]>;
+  /** Real authorizations that crossed the submission boundary without a Circle receipt. */
+  listPendingPayments(limit: number): Promise<PaymentRecord[]>;
+  /**
+   * Promote exactly one still-pending authorization after Circle's transfer API independently
+   * confirms its nonce, payer, payee, amount, and network. Compare-and-set semantics make the
+   * operation idempotent and prevent a late reconciler from overwriting newer state.
+   */
+  settlePendingPayment(
+    id: string,
+    authorizationId: string,
+    circleTransferId: string,
+  ): Promise<boolean>;
+  /** Resolve a Circle-terminal failure and release browser capacity only for the same grant epoch. */
+  failPendingPayment(
+    id: string,
+    authorizationId: string,
+    circleTransferId: string,
+  ): Promise<FailedPendingPaymentResult>;
+  /** Citation payouts for one dispatch, oldest→newest. Carries real settlement
+   *  state (settled / tx) so permalinks reflect on-chain truth, not a reconstruction. */
+  listPaymentsByQuery(queryId: string): Promise<PaymentRecord[]>;
+  /** Portable receipts: all outbound attempts, including separately classified operating fees. */
+  listCreatorPaymentAttemptsByQuery(queryId: string): Promise<PaymentRecord[]>;
+  /** All earning payouts for one source (newest first), excluding inbound funding.
+   *  Full-table — the creator page derives its totals from this so they match the
+   *  all-time leaderboard instead of a capped recent-feed slice. */
+  listPaymentsBySource(sourceId: string): Promise<PaymentRecord[]>;
+  metrics(): Promise<DashboardMetrics>;
+  /** Optional fixed read composition. Unavailable data reads may return undefined
+   * after current admission succeeds; a revoked adapter must still throw. */
+  readPublicHealthSnapshot?(nowMs: number, includeRegistry: boolean): Promise<PublicHealthSnapshot | undefined>;
+  /** Per payee wallet: settled USDC in, recorded cash-outs out. The settlement-parity watchdog
+   *  reconciles these against what Circle's Gateway says it holds for the same address, so both
+   *  sides must be all-time totals — a capped slice would read as a shortfall. Inbound platform
+   *  fees are excluded: they are revenue, not a balance held for a creator. */
+  settlementLedger(): Promise<LedgerAccount[]>;
+  /** Settled USDC per UTC day over the last `days` days, zero-filled, oldest→today. Full-table
+   *  aggregation — independent of the capped live feed, so older days aren't undercounted. */
+  dailySettled(days: number): Promise<DailyVolume[]>;
+  creatorLeaderboard(): Promise<CreatorEarnings[]>;
+
+  // Durable A2A authorization state: one settled inbound authorization may run creators once.
+  /** Ordinary TypeScript SQLite/Supabase authority only; enrolled/native storage refuses this domain.
+   * Immutable admission of a verified signed debit before settlement; never grants delivery. */
+  /** Read-only proof of actual purchase writer capability before offering a paid quote. */
+  assertResearchPurchaseAuthority(network: string): Promise<void>;
+  claimResearchPurchase(input: ResearchPurchaseClaim): Promise<void>;
+  createResearchMonthly(purchase: MonthlyPurchase): Promise<{ created: boolean; purchase: MonthlyPurchase }>;
+  getResearchMonthly(id: string): Promise<{ purchase: MonthlyPurchase; redemptions: MonthlyRedemption[] } | null>;
+  /** Atomically consumes one of four requests and enqueues its private A2A order. */
+  redeemResearchMonthly(input: MonthlyRedemptionInput): Promise<{ created: boolean; order: A2aOrder }>;
+  createA2aOrder(order: A2aOrder): Promise<{ created: boolean; order: A2aOrder }>;
+  getA2aOrder(id: string): Promise<A2aOrder | null>;
+  /** Payer-authorized inventory, newest first; 26 rows allow a 25-row page plus sentinel. */
+  listA2aOrdersByPayer(wallet: string, before?: { createdAt: string; id: string }): Promise<A2aOrder[]>;
+  /** Private operator observation of running/failed originals, oldest accepted first. Read-only: it
+   * claims, requeues, signs and settles nothing. A row that cannot be decoded is counted, never
+   * dropped. Optional: storage without a reviewed bounded queue read refuses. Incomplete reads
+   * explicitly report truncation; they never assert an exhaustive queue. */
+  listUnfinishedA2aOrders?(limit: number): Promise<import("../a2a/overdue-escalation-queue").UnfinishedA2aOrders>;
+  /** Atomically claims the oldest never-started job, or only the supplied bound original.
+   * A mismatch never claims another job; started jobs are never auto-requeued. */
+  claimNextA2aOrder(workerId: string, startedAt: string, expectedOriginal?: A2aOriginalClaim): Promise<A2aOrder | null>;
+  /** Exact native purchase+settled inbound proof, readonly. False is not replay/refund authority;
+   * unsupported or unknown storage/transport throws. */
+  hasA2aOriginalSettlement?(expected: A2aOriginalClaim): Promise<boolean>;
+  /** Private finite recovery, never a requeue. Optional lanes explicitly refuse unsupported backends. */
+  claimA2aFailedOriginalFulfillment?(input: import("../a2a/failed-original-fulfillment-protocol").FulfillmentClaimInput): Promise<import("../a2a/failed-original-fulfillment-protocol").A2aFulfillmentClaim | null>;
+  getA2aFailedOriginalFulfillment?(originalId: string): Promise<import("../a2a/failed-original-fulfillment-protocol").A2aFulfillmentRecord | null>;
+  /** Atomic insert-only QueryRun + exact failed-original completion; no financial write.
+   * Supplemental results require an opaque, independently verified evidence capability. */
+  completeA2aFailedOriginalFulfillment?(input: import("../a2a/failed-original-fulfillment-protocol").A2aFulfillmentCompletion,
+    evidenceCapability?: import("../a2a/fulfillment-supplement-evidence").FulfillmentEvidenceCapability): Promise<boolean>;
+  /** Readonly exact delivery proof; supplemental evidence capability grants no supplier admission. */
+  hasA2aFailedOriginalFulfillment?(authority: import("../a2a/failed-original-fulfillment-protocol").FulfillmentAuthority,
+    evidenceCapability?: import("../a2a/fulfillment-supplement-evidence").FulfillmentEvidenceCapability): Promise<boolean>;
+  /** Durably crosses the creator-payment boundary before any gateway authorization can begin. */
+  markA2aOrderPaymentStarted(id: string, startedAt: string): Promise<boolean>;
+  /** Durably crosses the QueryRun-save boundary before a no-payment result can appear. */
+  markA2aOrderResultSaving(id: string, startedAt: string): Promise<boolean>;
+  completeA2aOrder(
+    id: string,
+    response: Record<string, unknown>,
+    updatedAt: string,
+  ): Promise<boolean>;
+  failA2aOrder(id: string, errorCode: string, updatedAt: string): Promise<boolean>;
+  /** Evidence-gated terminal CAS. It never runs research or mutates payment settlement state. */
+  resolveA2aOrder(id: string, update: A2aOrderResolutionUpdate): Promise<boolean>;
+  /** Identifier-free aggregate queue, terminal outcome, and recent latency health. */
+  a2aOperationsSnapshot(nowMs: number): Promise<A2aOperationsSnapshot>;
+  /** Private whole-inventory observation. It grants no claim, signature or funding authority. */
+  operatorInventory(input: import("../business-operator/inventory").OperatorInventoryInput): Promise<import("../business-operator/contracts").OperatorInventory>;
+  operatorPublicSnapshot(nowMs: number): Promise<import("../business-operator/contracts").OperatorPublicSnapshot>;
+
+  // ── query memory (cross-query learning — agent remembers which sources work) ──
+  /** Save a query memory entry after a successful run. */
+  saveQueryMemory(entry: QueryMemoryEntry): Promise<void>;
+  /** Load recent query memories (newest first). The agent uses these to learn source quality. */
+  loadQueryMemories(limit: number): Promise<QueryMemoryEntry[]>;
+
+  // ── answer feedback (thumbs up/down on completed dispatches) ──
+  /** Record a thumbs-up or thumbs-down vote for a dispatch. Optional free-text comment. */
+  recordFeedback(queryId: string, rating: "up" | "down", comment?: string): Promise<void>;
+  /** Aggregate feedback counts. Pass queryId for per-dispatch stats; omit for global. */
+  getFeedbackStats(queryId?: string): Promise<FeedbackStats>;
+
+  // ── creator cash-outs (on-chain Gateway withdraws) ──
+  /** Persist a settled withdraw. Keyed by EVM tx hash, so re-recording the same tx is a no-op. */
+  recordWithdrawal(w: WithdrawalRecord): Promise<void>;
+  /** Backend-only signed-request journal. Never expose bearer signatures in public feeds. */
+  reserveCreatorWithdrawal(value: WithdrawalRequestRecord): Promise<WithdrawalRequestRecord>;
+  listCreatorWithdrawalHistory(owner: string, cursor?: WithdrawalHistoryCursor, limit?: number): Promise<WithdrawalHistoryPage>;
+  getCreatorWithdrawal(id: string, owner: string): Promise<WithdrawalRequestRecord | null>;
+  /** Single initial transfer admission; an existing claim is never execution permission. */
+  claimCreatorWithdrawalTransfer(id: string, owner: string): Promise<WithdrawalTransferClaim | null>;
+  getCreatorWithdrawalTransferClaim(id: string, owner: string): Promise<WithdrawalTransferClaim | null>;
+  saveCreatorWithdrawalAttestation(id: string, owner: string, claimId: string, value: unknown): Promise<SavedWithdrawalAttestation>;
+  getCreatorWithdrawalAttestation(id: string, owner: string): Promise<SavedWithdrawalAttestation | null>;
+  /** Recent cash-outs, newest first — each carries a real /tx/-resolvable EVM hash. */
+  listWithdrawals(limit: number): Promise<WithdrawalRecord[]>;
+}

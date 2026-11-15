@@ -1,0 +1,83 @@
+"use client";
+
+import { DisplayTime } from "@/components/keryx/display-time";
+import { createRichMessages } from "@/lib/i18n/rich-messages";
+
+
+import { useEffect, useId, useState } from "react";
+import { ResearchJobDetails } from "./research-job-details";
+import { a2aQueryIdSchema, buyerJobSchema, shouldPollBuyerJob, type BuyerJob } from "@/lib/a2a/buyer-workspace";
+import { useUiMessages } from "@/lib/i18n/ui-copy";
+
+
+
+
+
+const control = "border border-ink px-4 py-2 font-mono text-xs disabled:opacity-40";
+
+export function ResearchJob({ initialId }: { initialId?: string } = {}) {
+  const message = useUiMessages();
+  const fieldId = useId();
+  const initial = a2aQueryIdSchema.safeParse(initialId);
+  const [input, setInput] = useState(initial.success ? initial.data : "");
+  const [lookup, setLookup] = useState<{ id: string; revision: number } | null>(initial.success ? { id: initial.data, revision: 0 } : null);
+  const [job, setJob] = useState<BuyerJob | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(initial.success);
+  const [updated, setUpdated] = useState("");
+
+  useEffect(() => {
+    if (!lookup) return;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let calls = 0;
+    async function poll() {
+      if (!lookup) return;
+      const timeout = setTimeout(() => abort.abort(), 20_000);
+      try {
+        const response = await fetch(`/api/agent/ask?queryId=${encodeURIComponent(lookup.id)}`, { signal: abort.signal, cache: "no-store", redirect: "error", credentials: "omit" });
+        if (!response.ok) throw new Error(message("researchJob.httpFailure", { status: response.status }));
+        const parsed = buyerJobSchema.safeParse(await response.json());
+        if (!parsed.success || parsed.data.queryId !== lookup.id) throw new Error(message("researchJob.responseUnverified"));
+        if (abort.signal.aborted) return;
+        setJob(parsed.data); setUpdated(new Date().toISOString()); setLoading(false);
+        calls++;
+        if (shouldPollBuyerJob(parsed.data.status)) {
+          if (calls < 150) timer = setTimeout(poll, 4_000);
+          else setError(message("researchJob.refreshPaused"));
+        }
+      } catch (cause) {
+        if (!abort.signal.aborted) {
+          setError(cause instanceof Error ? cause.message : message("researchJob.failed"));
+          setLoading(false);
+        }
+      } finally { clearTimeout(timeout); }
+    }
+    // Timeout and unmount both abort fetch; only a live effect may update the UI.
+    const onAbort = () => { setLoading(false); setError(message("researchJob.lookupStopped")); };
+    abort.signal.addEventListener("abort", onAbort);
+    void poll();
+    return () => { abort.signal.removeEventListener("abort", onAbort); abort.abort(); clearTimeout(timer); };
+  }, [lookup]);
+
+  function openJob() {
+    const parsed = a2aQueryIdSchema.safeParse(input.trim());
+    if (!parsed.success) { setError(message("researchJob.invalidId")); return; }
+    setError(""); setJob(null); setUpdated(""); setLoading(true);
+    setLookup((previous) => ({ id: parsed.data, revision: (previous?.revision ?? 0) + 1 }));
+  }
+
+  return <section aria-labelledby={`${fieldId}-heading`} className="border border-line bg-paper p-6">
+    <h2 id={`${fieldId}-heading`} className="font-display text-3xl">{message("researchJob.title")}</h2>
+    <p className="mt-3 font-serif text-ink-3">{message("researchJob.privacyNotice")}</p>
+    <form onSubmit={(event) => { event.preventDefault(); openJob(); }} className="mt-5 flex flex-wrap gap-3">
+      <label htmlFor={fieldId} className="sr-only">{message("researchJob.idLabel")}</label>
+      <input id={fieldId} value={input} onChange={(event) => setInput(event.target.value)} placeholder="a2a_…" autoComplete="off" spellCheck={false} className="min-w-0 flex-1 basis-full border border-line bg-paper-2 p-3 font-mono text-xs sm:basis-auto" />
+      <button className={control}>{message("researchJob.open")}</button>
+      {lookup && <button type="button" className={control} onClick={() => { setLookup(null); setInput(""); setJob(null); setError(""); setUpdated(""); setLoading(false); }}>{message("researchJob.clear")}</button>}
+    </form>
+    <div role="status" aria-live="polite" className="mt-4 font-mono text-xs">{loading ? message("researchJob.loading") : job ? createRichMessages("en")("researchJob.updated", { status: job.status.replaceAll("_", " "), time: <DisplayTime value={updated} /> }) : ""}</div>
+    {error && <p role="alert" className="mt-3 font-serif text-seal">{error}</p>}
+    {job && <ResearchJobDetails job={job} />}
+  </section>;
+}

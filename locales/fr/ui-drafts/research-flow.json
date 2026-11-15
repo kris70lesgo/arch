@@ -1,0 +1,164 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "locales/en/research-flow.ts",
+  "sourceSha256": "08624b2d69b1e55478bca2ec23697acc8155b21698c9019762c07581a9487014",
+  "entries": {
+    "researchTour.open": {
+      "source": "How it works",
+      "text": "Comment ça marche"
+    },
+    "researchTour.label": {
+      "source": "How Keryx works",
+      "text": "Comment fonctionne Keryx"
+    },
+    "researchTour.questionTitle": {
+      "source": "Ask a question",
+      "text": "Poser une question"
+    },
+    "researchTour.questionBody": {
+      "source": "Enter the research question you want answered. You can inspect decisions as the answer streams.",
+      "text": "Saisissez la question de recherche à laquelle vous souhaitez répondre. Vous pouvez examiner les décisions pendant la génération de la réponse."
+    },
+    "researchTour.startTitle": {
+      "source": "Start research",
+      "text": "Lancer la recherche"
+    },
+    "researchTour.closeLabel": {
+      "source": "Close tour",
+      "text": "Fermer le guide"
+    },
+    "researchTour.close": {
+      "source": "Close",
+      "text": "Fermer"
+    },
+    "researchTour.back": {
+      "source": "Back",
+      "text": "Retour"
+    },
+    "researchTour.done": {
+      "source": "Done",
+      "text": "Terminer"
+    },
+    "researchTour.next": {
+      "source": "Next",
+      "text": "Suivant"
+    },
+    "researchTour.step": {
+      "source": "Step {number} of {total}",
+      "text": "Étape {number} sur {total}"
+    },
+    "decisionLog.jumpToLatest": {
+      "source": "Jump to latest",
+      "text": "Aller aux dernières étapes"
+    },
+    "decisionLog.followingLatest": {
+      "source": "Following latest steps",
+      "text": "Suivi des dernières étapes"
+    },
+    "decisionLog.readingEarlier": {
+      "source": "Reading earlier steps",
+      "text": "Lecture des étapes précédentes"
+    },
+    "decisionLog.scrollHint": {
+      "source": "Scroll inside the log to read earlier steps. Jump to latest to follow new steps.",
+      "text": "Faites défiler le journal pour lire les étapes précédentes. Allez aux dernières étapes pour suivre les nouvelles."
+    },
+    "decisionLog.title": {
+      "source": "The decision",
+      "text": "La décision"
+    },
+    "decisionLog.label": {
+      "source": "Decision log",
+      "text": "Journal des décisions"
+    },
+    "researchChat.label": {
+      "source": "Research conversation",
+      "text": "Conversation de recherche"
+    },
+    "researchChat.kicker": {
+      "source": "Research with Keryx",
+      "text": "Rechercher avec Keryx"
+    },
+    "researchChat.title": {
+      "source": "Ask Keryx",
+      "text": "Interroger Keryx"
+    },
+    "researchChat.introduction": {
+      "source": "Get a cited answer. Inspect source decisions.",
+      "text": "Obtenez une réponse avec des citations. Examinez les décisions concernant les sources."
+    },
+    "researchChat.turnsLabel": {
+      "source": "Conversation turns",
+      "text": "Échanges de la conversation"
+    },
+    "researchChat.followUpContext": {
+      "source": "Follow-ups use the previous question only, not its answer or the full chat. Include the details you want researched.",
+      "text": "Les questions complémentaires utilisent uniquement la question précédente, pas sa réponse ni toute la conversation. Incluez les détails que vous souhaitez étudier."
+    },
+    "researchChat.newResearch": {
+      "source": "New research",
+      "text": "Nouvelle recherche"
+    },
+    "researchChat.stopResearch": {
+      "source": "Stop research",
+      "text": "Arrêter la recherche"
+    },
+    "researchChat.toolsLabel": {
+      "source": "Research tools",
+      "text": "Outils de recherche"
+    },
+    "researchChat.savedReports": {
+      "source": "My saved reports",
+      "text": "Mes rapports enregistrés"
+    },
+    "researchTurn.inProgress": {
+      "source": "Keryx · Research in progress",
+      "text": "Keryx · Recherche en cours"
+    },
+    "researchTurn.findingSources": {
+      "source": "Finding sources worth reading…",
+      "text": "Recherche de sources pertinentes à lire…"
+    },
+    "decisionLog.deciding": {
+      "source": "deciding",
+      "text": "décision en cours"
+    },
+    "decisionLog.connecting": {
+      "source": "Waiting for research updates…",
+      "text": "En attente des mises à jour de la recherche…"
+    },
+    "decisionLog.newSteps.one": {
+      "source": "{count} new step",
+      "text": "{count} nouvelle étape"
+    },
+    "decisionLog.newSteps.other": {
+      "source": "{count} new steps",
+      "text": "{count} nouvelles étapes"
+    },
+    "decisionLog.steps.one": {
+      "source": "{count} steps",
+      "text": "{count} étape"
+    },
+    "decisionLog.steps.other": {
+      "source": "{count} steps",
+      "text": "{count} étapes"
+    },
+    "followUp.title": {
+      "source": "Ask a follow-up",
+      "text": "Poser une question complémentaire"
+    },
+    "followUp.questionLabel": {
+      "source": "Your follow-up question",
+      "text": "Votre question complémentaire"
+    },
+    "followUp.placeholder": {
+      "source": "How does that compare to…?",
+      "text": "Comment cela se compare-t-il à… ?"
+    },
+    "followUp.submit": {
+      "source": "Dispatch follow-up",
+      "text": "Envoyer la question complémentaire"
+    }
+  }
+}

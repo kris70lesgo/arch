@@ -1,0 +1,334 @@
+/**
+ * Resilience must never cost honesty. A run that fell back has to be labelled by the engine that
+ * actually answered it — the failure this pins down is a real one: a retired model id upstream had
+ * every reasoning step dropping to the heuristic while each run was still stamped `llm:deepseek:…`
+ * on its permalink, in the archive and in the API response, for days, with nothing saying so.
+ */
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ResilientEngine,
+  effectiveEngineName,
+  reasoningAttempts,
+  resetReasoningCircuitBreakers,
+} from "./resilient-engine";
+import type { ReasoningEngine } from "./reasoning-engine";
+import { ResearchAdmissionHeldError } from "../research/availability-contract";
+
+/** An engine whose every call rejects with the given status (undefined = network error). */
+function brokenEngine(name: string, status?: number): ReasoningEngine {
+  const err = Object.assign(new Error(`LLM ${status ?? "network"}`), { status });
+  return {
+    name,
+    decompose: () => Promise.reject(err),
+    decide: () => Promise.reject(err),
+    sufficiency: () => Promise.reject(err),
+    reevaluate: () => Promise.reject(err),
+    synthesize: () => Promise.reject(err),
+    attribute: () => Promise.reject(err),
+  } as unknown as ReasoningEngine;
+}
+
+function workingEngine(name: string): ReasoningEngine {
+  return {
+    name,
+    decompose: () => Promise.resolve(["claim"]),
+    decide: () => Promise.resolve([]),
+    sufficiency: () => Promise.resolve({ sufficient: true, rationale: "" }),
+    reevaluate: () => Promise.resolve({ buyMore: [], rationale: "" }),
+    synthesize: () => Promise.resolve({ answer: "a", markers: [] }),
+    attribute: () => Promise.resolve([]),
+  } as unknown as ReasoningEngine;
+}
+
+describe("ResilientEngine labelling", () => {
+  it("stops a local admission pause without retry, fallback or provider circuit mutation", async () => {
+    const held = new ResearchAdmissionHeldError("private retained original diagnostic");
+    const primary = workingEngine("llm:held-fixture");
+    primary.decompose = vi.fn(async () => { throw held; });
+    const fallback = workingEngine("llm:fallback-fixture");
+    fallback.decompose = vi.fn();
+    const circuit = { acquire: vi.fn(async () => ({ allowed: true, retryAfterMs: 0 })), succeeded: vi.fn(), failed: vi.fn() };
+    const engine = new ResilientEngine(primary, fallback, 0, circuit);
+    await expect(engine.decompose("original question")).rejects.toBe(held);
+    expect(primary.decompose).toHaveBeenCalledOnce(); expect(fallback.decompose).not.toHaveBeenCalled();
+    expect(circuit.failed).not.toHaveBeenCalled(); expect(circuit.succeeded).not.toHaveBeenCalled();
+    expect(engine.telemetry).toMatchObject([{ outcome: "failed", error: "internal" }]);
+    expect(JSON.stringify(engine.telemetry)).not.toContain("private retained");
+  });
+  beforeEach(() => {
+    resetReasoningCircuitBreakers();
+    vi.restoreAllMocks();
+  });
+
+  it("keeps the pick's name when the pick answers", async () => {
+    const e = new ResilientEngine(workingEngine("llm:deepseek:deepseek-v4-flash"));
+    await e.decompose("q");
+    expect(e.effectiveName).toBe("llm:deepseek:deepseek-v4-flash");
+  });
+
+  it("keeps provider-echoed private content out of fallback logs and structured attempts", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const marker = "synthetic-private-question-and-token";
+    for (const status of [400, marker, { body: marker }, Infinity]) {
+      resetReasoningCircuitBreakers();
+      const engine = new ResilientEngine({ ...workingEngine("synthetic-primary"),
+        decompose: async () => { throw Object.assign(new Error(marker), { status, body: marker, stack: marker }); },
+      }, workingEngine("synthetic-fallback"));
+      expect(await engine.decompose(marker)).toEqual(["claim"]);
+      const attempts = reasoningAttempts(engine);
+      expect(attempts.some(attempt => attempt.outcome === "failed")).toBe(true);
+      expect(JSON.stringify(attempts)).not.toContain(marker);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(marker);
+    }
+    expect(JSON.stringify(warn.mock.calls)).toContain("HTTP 400");
+  });
+
+  it("names the heuristic when nothing the pick produced survived", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const e = new ResilientEngine(brokenEngine("llm:deepseek:deepseek-chat", 400));
+    await e.decompose("q");
+    // Real fallback: the heuristic engine actually runs, so the input must be a real one.
+    await e.synthesize({ question: "q", subClaims: [], gathered: [] });
+    expect(e.effectiveName).toBe("heuristic (fallback from llm:deepseek:deepseek-chat)");
+  });
+
+  it("says how many steps fell back when the pick answered some of them", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let calls = 0;
+    const flaky = {
+      ...workingEngine("llm:deepseek:deepseek-v4-pro"),
+      decompose: () => (++calls === 1 ? Promise.resolve(["ok"]) : Promise.reject(hardError())),
+    } as unknown as ReasoningEngine;
+    const e = new ResilientEngine(flaky);
+    await e.decompose("q"); // served by the pick
+    await e.decompose("q"); // falls back
+    expect(e.effectiveName).toBe("llm:deepseek:deepseek-v4-pro + heuristic on 1 step");
+  });
+
+  /** A non-default pick falls back to Flash, which falls back to the heuristic. A run served by the
+   *  middle tier must name that tier — not the pick above it, and not the heuristic below. */
+  it("reports the tier that answered in a chained fallback", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const flash = new ResilientEngine(workingEngine("llm:deepseek:deepseek-v4-flash"));
+    const e = new ResilientEngine(brokenEngine("llm:deepseek:deepseek-v4-pro", 404), flash);
+    await e.decompose("q");
+    expect(e.effectiveName).toBe(
+      "llm:deepseek:deepseek-v4-flash (fallback from llm:deepseek:deepseek-v4-pro)",
+    );
+    expect(reasoningAttempts(e)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          engine: "llm:deepseek:deepseek-v4-pro",
+          outcome: "failed",
+          error: "invalid_request",
+          status: 404,
+        }),
+        expect.objectContaining({
+          engine: "llm:deepseek:deepseek-v4-flash",
+          outcome: "served",
+        }),
+      ]),
+    );
+  });
+
+  it("retries a transient failure before giving up on the pick", async () => {
+    let attempts = 0;
+    const flaky = {
+      ...workingEngine("llm:deepseek:deepseek-v4-flash"),
+      decompose: () =>
+        ++attempts < 3
+          ? Promise.reject(Object.assign(new Error("LLM 429"), { status: 429 }))
+          : Promise.resolve(["ok"]),
+    } as unknown as ReasoningEngine;
+    const e = new ResilientEngine(flaky);
+    expect(await e.decompose("q")).toEqual(["ok"]);
+    expect(attempts).toBe(3);
+    expect(e.effectiveName).toBe("llm:deepseek:deepseek-v4-flash"); // never fell back
+  });
+
+  it("rotates after one transient failure when another real provider is available", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let primaryAttempts = 0;
+    let fallbackAttempts = 0;
+    const flaky = {
+      ...workingEngine("llm:deepseek:deepseek-v4-flash"),
+      decompose: () => {
+        primaryAttempts++;
+        return Promise.reject(Object.assign(new Error("LLM 429"), { status: 429 }));
+      },
+    } as unknown as ReasoningEngine;
+    const alternate = {
+      ...workingEngine("llm:mimo:mimo-v2.5"),
+      decompose: () => {
+        fallbackAttempts++;
+        return Promise.resolve(["served by alternate"]);
+      },
+    } as unknown as ReasoningEngine;
+    const e = new ResilientEngine(flaky, alternate);
+
+    await expect(e.decompose("q")).resolves.toEqual(["served by alternate"]);
+    expect(primaryAttempts).toBe(1);
+    expect(fallbackAttempts).toBe(1);
+    expect(reasoningAttempts(e)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          engine: "llm:deepseek:deepseek-v4-flash",
+          attempt: 1,
+          outcome: "failed",
+          error: "rate_limited",
+        }),
+        expect.objectContaining({
+          engine: "llm:mimo:mimo-v2.5",
+          attempt: 1,
+          outcome: "served",
+        }),
+      ]),
+    );
+  });
+
+  it("fails over immediately after a full timeout instead of repeating the deadline", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let attempts = 0;
+    const timedOut = {
+      ...workingEngine("llm:deepseek:deepseek-v4-flash"),
+      decompose: () => {
+        attempts++;
+        return Promise.reject(Object.assign(new Error("timed out"), { status: 408 }));
+      },
+    } as unknown as ReasoningEngine;
+    const e = new ResilientEngine(timedOut, workingEngine("llm:mimo:mimo-v2.5"));
+
+    await expect(e.decompose("q")).resolves.toEqual(["claim"]);
+    expect(attempts).toBe(1);
+    expect(reasoningAttempts(e)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ engine: "llm:deepseek:deepseek-v4-flash", outcome: "failed" }),
+        expect.objectContaining({ engine: "llm:mimo:mimo-v2.5", outcome: "served" }),
+      ]),
+    );
+  });
+
+  it("reads a plain engine's name straight through", () => {
+    expect(effectiveEngineName(workingEngine("heuristic"))).toBe("heuristic");
+  });
+
+  it("opens a provider-configuration circuit and skips the dead provider on the next step", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let primaryCalls = 0;
+    const broken = {
+      ...brokenEngine("llm:deepseek:bad-model", 400),
+      decompose: () => {
+        primaryCalls++;
+        return Promise.reject(Object.assign(new Error("LLM 401"), { status: 401 }));
+      },
+    } as unknown as ReasoningEngine;
+    const fallback = workingEngine("llm:mimo:mimo-v2.5");
+    const e = new ResilientEngine(broken, fallback);
+
+    await e.decompose("first");
+    await e.decompose("second");
+
+    expect(primaryCalls).toBe(1);
+    expect(reasoningAttempts(e)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          engine: "llm:deepseek:bad-model",
+          outcome: "circuit-open",
+          attempt: 0,
+        }),
+        expect.objectContaining({
+          engine: "llm:mimo:mimo-v2.5",
+          outcome: "served",
+        }),
+      ]),
+    );
+  });
+
+  it("opens a failed tier immediately when a real alternate can serve that step", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let decideCalls = 0;
+    let decomposeCalls = 0;
+    const primary = {
+      ...workingEngine("llm:deepseek:deepseek-v4-flash"),
+      decompose: () => {
+        decomposeCalls++;
+        return Promise.resolve(["primary still healthy here"]);
+      },
+      decide: () => {
+        decideCalls++;
+        return Promise.reject(Object.assign(new Error("provider overloaded"), { status: 503 }));
+      },
+    } as unknown as ReasoningEngine;
+    const e = new ResilientEngine(primary, workingEngine("llm:mimo:mimo-v2.5"));
+    const input = {
+      question: "q",
+      subClaims: [],
+      candidates: [],
+      budget: 0.05,
+      spentSoFar: 0,
+    };
+
+    // A real alternate makes one exhausted call enough to open this step. Successful decompose
+    // calls in between clear only their own key and cannot erase decide's failure history.
+    await e.decide(input);
+    await expect(e.decompose("q")).resolves.toEqual(["primary still healthy here"]);
+    await e.decide(input);
+    await expect(e.decompose("q")).resolves.toEqual(["primary still healthy here"]);
+    await e.decide(input);
+
+    expect(decideCalls).toBe(1);
+    expect(decomposeCalls).toBe(2);
+    expect(reasoningAttempts(e)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          step: "decide",
+          engine: "llm:deepseek:deepseek-v4-flash",
+          outcome: "circuit-open",
+          attempt: 0,
+        }),
+        expect.objectContaining({
+          step: "decompose",
+          engine: "llm:deepseek:deepseek-v4-flash",
+          outcome: "served",
+        }),
+      ]),
+    );
+  });
+
+  it("keeps the configured threshold before a lone provider falls to the heuristic", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let decideCalls = 0;
+    const timedOut = {
+      ...workingEngine("llm:deepseek:deepseek-v4-flash"),
+      decide: () => {
+        decideCalls++;
+        return Promise.reject(Object.assign(new Error("timed out"), { status: 408 }));
+      },
+    } as unknown as ReasoningEngine;
+    const e = new ResilientEngine(timedOut);
+    const input = {
+      question: "q",
+      subClaims: [],
+      candidates: [],
+      budget: 0.05,
+      spentSoFar: 0,
+    };
+
+    await e.decide(input);
+    await e.decide(input);
+    await e.decide(input);
+
+    expect(decideCalls).toBe(2);
+    expect(reasoningAttempts(e)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ step: "decide", outcome: "circuit-open", attempt: 0 }),
+      ]),
+    );
+  });
+});
+
+/** A non-transient error: retrying a 400 would just burn the same wall clock three times. */
+function hardError(): Error {
+  return Object.assign(new Error("LLM 400"), { status: 400 });
+}

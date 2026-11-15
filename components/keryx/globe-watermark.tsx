@@ -1,0 +1,228 @@
+"use client";
+
+/**
+ * Spinning-globe watermark — the signature flourish behind the hero headline.
+ * Real country outlines on an orthographic projection (d3-geo + world-atlas),
+ * drawn monochrome on the ivory paper, wrapped in orbiting "whirl" arcs. The
+ * parent fades it (low opacity) so it reads as an engraved watermark, not art.
+ *
+ * d3-geo, topojson-client, and the country atlas are loaded lazily on the
+ * client so they never touch the SSR bundle. The atlas ships with the app:
+ * relying on a runtime CDN fetch makes the countries disappear under CSP or
+ * when that third party is unavailable.
+ */
+
+import { useEffect, useRef } from "react";
+import type { GeometryObject, Topology } from "topojson-specification";
+import { cn } from "@/lib/utils";
+
+export function GlobeWatermark({ className }: { className?: string }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    let raf = 0;
+    let mounted = true;
+    let G = 0;
+    // Rotation has two layers: a slow ever-advancing idle spin (baseRot) and a
+    // cursor-driven nudge the globe eases toward. Drift runs only while visible
+    // and motion is enabled; pausing keeps the last engraved frame in place.
+    let baseRot = 0; // idle longitude while animation is active
+    let curYaw = 0; // eased longitude actually rendered
+    let curPitch = -18; // eased latitude actually rendered
+    let targetYawOffset = 0; // cursor-driven longitude lean (deg)
+    let targetPitch = -18; // cursor-driven latitude (deg)
+    let ctx: CanvasRenderingContext2D | null = null;
+    // d3-geo types are loose here; the geo objects are intentionally untyped.
+    let projection: any = null;
+    let path: any = null;
+    let graticule: any = null;
+    let land: any = null;
+    let borders: any = null;
+
+    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let reduced = motionPreference.matches;
+    let inView = typeof IntersectionObserver === "undefined";
+    const canAnimate = () => !reduced && inView && !document.hidden;
+
+    const sizeNow = () => {
+      const root = rootRef.current;
+      const canvas = canvasRef.current;
+      if (!root || !canvas || !projection) return;
+      const S = Math.max(140, Math.round(root.clientWidth || 280));
+      G = Math.round(S * 0.78);
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(G * dpr);
+      canvas.height = Math.round(G * dpr);
+      canvas.style.width = `${G}px`;
+      canvas.style.height = `${G}px`;
+      const c = canvas.getContext("2d");
+      if (!c) return;
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx = c;
+      projection.scale(S * 0.36).translate([G / 2, G / 2]);
+    };
+
+    const draw = (advance = false) => {
+      if (!mounted || !ctx || !path) return;
+      if (advance) {
+        baseRot += 0.22;
+        // ease the rendered rotation toward (idle spin + cursor lean)
+        curYaw += (baseRot + targetYawOffset - curYaw) * 0.06;
+        curPitch += (targetPitch - curPitch) * 0.06;
+      }
+      ctx.clearRect(0, 0, G, G);
+      projection.rotate([curYaw, curPitch]);
+      ctx.beginPath();
+      path({ type: "Sphere" });
+      ctx.fillStyle = "#f1e9d7";
+      ctx.fill();
+      ctx.beginPath();
+      path(graticule);
+      ctx.strokeStyle = "rgba(27,23,18,0.13)";
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+      if (land) {
+        ctx.beginPath();
+        path(land);
+        ctx.fillStyle = "#22190f";
+        ctx.fill();
+        ctx.beginPath();
+        path(borders);
+        ctx.strokeStyle = "rgba(241,233,215,0.85)";
+        ctx.lineWidth = 0.55;
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      path({ type: "Sphere" });
+      ctx.strokeStyle = "#1b1712";
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    };
+
+    const frame = () => {
+      raf = 0;
+      if (!mounted || !canAnimate() || !ctx || !path) return;
+      draw(true);
+      raf = requestAnimationFrame(frame);
+    };
+    const syncMotion = () => {
+      if (!mounted) return;
+      const active = canAnimate();
+      rootRef.current?.style.setProperty("--globe-play-state", active ? "running" : "paused");
+      if (!active) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      } else if (mounted && ctx && path && raf === 0) {
+        raf = requestAnimationFrame(frame);
+      }
+    };
+
+    (async () => {
+      const [{ geoOrthographic, geoPath, geoGraticule10 }, topojson, atlas] =
+        await Promise.all([
+          import("d3-geo"),
+          import("topojson-client"),
+          import("world-atlas/countries-110m.json"),
+        ]);
+      if (!mounted) return;
+      projection = geoOrthographic().clipAngle(90).precision(0.4);
+      graticule = geoGraticule10();
+      sizeNow();
+      path = geoPath(projection, ctx!);
+      // JSON modules widen their discriminant strings, so restore the package's
+      // Topology type after loading the trusted atlas shipped in node_modules.
+      const w = atlas.default as unknown as Topology;
+      const countries = w.objects.countries as GeometryObject;
+      land = topojson.feature(w, countries);
+      borders = topojson.mesh(w, countries, (a, b) => a !== b);
+      draw(); // Static atlas remains visible even while motion is paused.
+      syncMotion();
+    })();
+
+    const onResize = () => {
+      sizeNow();
+      draw();
+    };
+
+    // Steer the globe toward the cursor: map pointer position (viewport-relative,
+    // [-1,1]) onto a longitude lean and latitude tilt. The draw loop eases into it.
+    const onPointerMove = (e: PointerEvent) => {
+      if (!canAnimate()) return;
+      const nx = (e.clientX / window.innerWidth) * 2 - 1;
+      const ny = (e.clientY / window.innerHeight) * 2 - 1;
+      targetYawOffset = Math.max(-1, Math.min(1, nx)) * 34;
+      targetPitch = -18 + Math.max(-1, Math.min(1, ny)) * 22;
+    };
+    // Cursor left the window — drift back to the neutral idle pose.
+    const onMouseLeave = () => {
+      targetYawOffset = 0;
+      targetPitch = -18;
+    };
+
+    const onMotionChange = () => {
+      reduced = motionPreference.matches;
+      syncMotion();
+    };
+    const observer = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver(entries => {
+      const entry = entries[0];
+      if (!entry) return;
+      inView = entry.isIntersecting;
+      syncMotion();
+    });
+    if (rootRef.current) observer?.observe(rootRef.current);
+    motionPreference.addEventListener("change", onMotionChange);
+    document.addEventListener("visibilitychange", syncMotion);
+    syncMotion();
+
+    window.addEventListener("resize", onResize);
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    document.addEventListener("mouseleave", onMouseLeave);
+    return () => {
+      mounted = false;
+      cancelAnimationFrame(raf);
+      observer?.disconnect();
+      motionPreference.removeEventListener("change", onMotionChange);
+      document.removeEventListener("visibilitychange", syncMotion);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("mouseleave", onMouseLeave);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={rootRef}
+      aria-hidden
+      className={cn(
+        "pointer-events-none relative flex aspect-square items-center justify-center",
+        className,
+      )}
+    >
+      <svg
+        viewBox="0 0 200 200"
+        className="absolute inset-0 h-full w-full overflow-visible"
+      >
+        <g style={{ transformOrigin: "100px 100px", animation: "kxSpinCW 17s linear infinite", animationPlayState: "var(--globe-play-state, running)" }}>
+          <circle cx="100" cy="100" r="96" fill="none" stroke="#1b1712" strokeOpacity="0.16" strokeWidth="1" strokeDasharray="1.2 7.5" />
+        </g>
+        <g style={{ transformOrigin: "100px 100px", animation: "kxSpinCCW 5.5s linear infinite", animationPlayState: "var(--globe-play-state, running)" }}>
+          <path d="M100 11 A89 89 0 0 1 189 100" fill="none" stroke="#1b1712" strokeOpacity="0.5" strokeWidth="1.7" strokeLinecap="round" />
+          <path d="M100 189 A89 89 0 0 1 11 100" fill="none" stroke="#1b1712" strokeOpacity="0.24" strokeWidth="1.7" strokeLinecap="round" />
+        </g>
+        <g style={{ transformOrigin: "100px 100px", animation: "kxSpinCW 9s linear infinite", animationPlayState: "var(--globe-play-state, running)" }}>
+          <path d="M158 33 A82 82 0 0 1 178 64" fill="none" stroke="#1b1712" strokeOpacity="0.3" strokeWidth="1.2" strokeLinecap="round" />
+          <path d="M42 167 A82 82 0 0 1 22 136" fill="none" stroke="#1b1712" strokeOpacity="0.3" strokeWidth="1.2" strokeLinecap="round" />
+        </g>
+        <g style={{ transformOrigin: "100px 100px", animation: "kxSpinCW 3.6s linear infinite", animationPlayState: "var(--globe-play-state, running)" }}>
+          <circle cx="100" cy="16" r="2.1" fill="#1b1712" />
+          <circle cx="184" cy="100" r="1.4" fill="#1b1712" fillOpacity="0.55" />
+        </g>
+        <g style={{ transformOrigin: "100px 100px", animation: "kxSpinCCW 6.8s linear infinite", animationPlayState: "var(--globe-play-state, running)" }}>
+          <circle cx="100" cy="183" r="1.5" fill="#1b1712" fillOpacity="0.5" />
+        </g>
+      </svg>
+      <canvas ref={canvasRef} className="relative z-[1] block aspect-square w-[78%]" />
+    </div>
+  );
+}

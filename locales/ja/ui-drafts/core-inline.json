@@ -1,0 +1,72 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "lib/i18n/messages.ts",
+  "sourceSha256": "f3d85eef26e994ae7defeb90a5a1c21f47e98cb93ec04a938f7046f71138acaf",
+  "entries": {
+    "researchEntry.ask": {
+      "source": "Ask Keryx",
+      "text": "Keryxに質問"
+    },
+    "researchEntry.question": {
+      "source": "What do you want to know?",
+      "text": "何を知りたいですか？"
+    },
+    "researchEntry.placeholder": {
+      "source": "Ask a question worth reading for...",
+      "text": "調べる価値のある質問を入力してください..."
+    },
+    "researchEntry.depth": {
+      "source": "Research depth",
+      "text": "調査の深さ"
+    },
+    "researchEntry.quick": {
+      "source": "quick",
+      "text": "簡易"
+    },
+    "researchEntry.deep": {
+      "source": "deep",
+      "text": "詳細"
+    },
+    "researchEntry.researching": {
+      "source": "Researching...",
+      "text": "調査中..."
+    },
+    "researchEntry.moreOptions": {
+      "source": "More options",
+      "text": "その他のオプション"
+    },
+    "researchEntry.model": {
+      "source": "AI model",
+      "text": "AIモデル"
+    },
+    "researchEntry.savedReports": {
+      "source": "My saved reports",
+      "text": "保存したレポート"
+    },
+    "researchEntry.keyboardHint": {
+      "source": "Enter for a new line · Ctrl/⌘ + Enter to ask",
+      "text": "Enter で改行 · Ctrl/⌘ + Enter で質問"
+    },
+    "researchEntry.metadataLookup": {
+      "source": "Look up free paper metadata",
+      "text": "論文の無料メタデータを調べる"
+    },
+    "researchEntry.metadataLookupLabel": {
+      "source": "Look up free paper metadata: title, authors or DOI",
+      "text": "論文の無料メタデータを調べる：タイトル、著者、DOI"
+    },
+    "researchEntry.quickHint": {
+      "source": "Quick: up to 2 focused reads.",
+      "text": "簡易調査：質問に絞った資料を最大2件読みます。"
+    },
+    "researchEntry.deepHint": {
+      "source": "Deep: up to 4 reads, including marketplace discovery and a coverage check.",
+      "text": "詳細調査：資料を最大4件読み、マーケットプレイスでの資料検索と調査範囲の確認を行います。"
+    },
+    "researchEntry.examplesLabel": {
+      "source": "Example questions",
+      "text": "質問の例"
+    }
+  }
+}

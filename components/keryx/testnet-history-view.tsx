@@ -1,0 +1,82 @@
+import { formatNumber, formatUsdcMicros } from "@/lib/i18n/format";
+import Link from "next/link";
+import { createMessages } from "@/lib/i18n/messages";
+import type { TestnetArchiveInfo, TestnetArchiveSummary, TestnetCreatorEntry } from "@/lib/history/testnet-archive";
+import { shortAddr } from "./phase-style";
+import { UiElement, UiMessage, UiText } from "@/lib/i18n/ui-copy";
+
+
+
+const message = createMessages("en");
+
+function CreatorRows({ rows, start = 0 }: { rows: TestnetCreatorEntry[]; start?: number }) {
+  return <ol start={start + 1} className="divide-y divide-line">
+    {rows.map((row, index) => <li key={`${row.sourceId}:${row.walletAddress}`} className="grid grid-cols-[20px_minmax(0,1fr)] items-start gap-x-3 gap-y-1 py-3 sm:grid-cols-[20px_minmax(0,1fr)_auto]">
+      <span className="mt-1 w-5 shrink-0 font-mono text-xs text-seal">{start + index + 1}</span>
+      <div className="min-w-0 flex-1">
+        <p className="break-words font-serif text-base text-ink">{row.sourceName}</p>
+        <p className="mt-1 font-mono text-[11px] leading-relaxed text-ink-3">
+          {/^(?:0x)[a-fA-F0-9]{40}$/.test(row.walletAddress)
+            ? <UiElement as="a" names={["aria-label"]} attributes={{ "href": `https://testnet.arcscan.app/address/${row.walletAddress}`, "target": "_blank", "rel": "noopener noreferrer", "className": "underline", "aria-label": message("ledgerHistory.inspectWallet", { wallet: row.walletAddress }) }}>{shortAddr(row.walletAddress)} ↗</UiElement>
+            : <span>{shortAddr(row.walletAddress)}</span>}
+          {" · "}<UiMessage messageKey={"ledgerHistory.paymentCounts"} values={{ cites: formatNumber(row.citationCount), payments: formatNumber(row.paymentCount) }} />
+        </p>
+      </div>
+      <span className="col-start-2 font-mono text-xs tabular-nums text-paid sm:col-start-3 sm:row-start-1 sm:mt-1">{formatUsdcMicros(row.totalEarnedMicroUsdc, { denomination: "test USDC" })}</span>
+    </li>)}
+  </ol>;
+}
+
+export function TestnetCreatorLeaderboard({ rows, expanded = false }: { rows: TestnetCreatorEntry[]; expanded?: boolean }) {
+  return <div id="testnet-creators" className="mt-5 border-t border-line pt-5">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h3 className="font-display text-xl text-ink"><UiMessage messageKey={"ledgerHistory.creatorLeaderboard"} /></h3>
+      <a href="/api/history/testnet/creators" className="min-h-11 py-3 font-mono text-xs text-seal underline"><UiMessage messageKey={"ledgerHistory.downloadCreators"} /></a>
+    </div>
+    <p className="text-xs leading-relaxed text-ink-3"><UiMessage messageKey={"ledgerHistory.rankingNotice"} /></p>
+    {rows.length ? <>
+      <CreatorRows rows={expanded ? rows : rows.slice(0, 5)} />
+      {!expanded && rows.length > 5 && <details className="mt-2 border-t border-line">
+        <summary className="min-h-11 cursor-pointer py-3 text-sm text-seal"><UiMessage messageKey={"ledgerHistory.allEntries"} values={{ count: rows.length }} /></summary>
+        <CreatorRows rows={rows.slice(5)} start={5} />
+      </details>}
+    </> : <p className="mt-3 text-sm text-ink-2"><UiMessage messageKey={"ledgerHistory.emptyCreators"} /></p>}
+  </div>;
+}
+
+export function TestnetHistorySummary({ info, summary, creators, expandedCreators = false }: {
+  info: TestnetArchiveInfo; summary: TestnetArchiveSummary; creators?: TestnetCreatorEntry[] | null; expandedCreators?: boolean;
+}) {
+  const inbound = summary.paymentKinds.find(kind => kind.kind === "inbound");
+  return <UiElement as="section" names={["aria-label"]} attributes={{ "id": "testnet-history", "className": "mt-8 border-t-2 border-seal bg-paper-2 p-5 sm:p-6", "aria-label": message("ledgerHistory.evidenceLabel") }}>
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div><p className="font-mono text-[11px] uppercase tracking-[0.15em] text-seal"><UiMessage messageKey={"ledgerHistory.trackRecord"} /></p><h2 className="mt-2 font-display text-2xl text-ink"><UiMessage messageKey={"ledgerHistory.title"} /></h2></div>
+      <Link href="/history/testnet" className="min-h-11 border border-ink px-4 py-3 text-sm text-ink hover:underline"><UiMessage messageKey={"ledgerHistory.browseQuestions"} /></Link>
+    </div>
+    <p className="mt-3 text-sm leading-relaxed text-ink-2"><UiMessage messageKey={"ledgerHistory.period"} values={{ from: summary.earliestQueryAt?.slice(0, 10) ?? "", to: summary.latestQueryAt?.slice(0, 10) ?? "" }} /></p>
+    <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-6 lg:grid-cols-4">
+      <div><dt className="text-xs text-ink-3"><UiMessage messageKey={"ledgerHistory.recordedQuestions"} /></dt><dd className="mt-1 font-display text-3xl text-ink">{formatNumber(summary.totalQueryRuns)}</dd></div>
+      <div><dt className="text-xs text-ink-3"><UiMessage messageKey={"ledgerHistory.settledCreatorPayments"} /></dt><dd className="mt-1 font-display text-3xl text-ink">{formatNumber(summary.settledCreatorPaymentCount)}</dd></div>
+      <div><dt className="text-xs text-ink-3"><UiMessage messageKey={"ledgerHistory.settledToCreators"} /></dt><dd className="mt-1 break-words font-display text-2xl text-paid">{formatUsdcMicros(summary.settledCreatorMicroUsdc, { denomination: "test USDC" })}</dd></div>
+      <div><dt className="text-xs text-ink-3"><UiMessage messageKey={"ledgerHistory.creatorWallets"} /></dt><dd className="mt-1 font-display text-3xl text-ink">{formatNumber(summary.settledCreatorCount)}</dd></div>
+    </dl>
+    <p className="mt-4 text-xs leading-relaxed text-ink-3"><UiMessage messageKey={"ledgerHistory.historicalNotice"} /></p>
+    {creators !== undefined && (creators === null
+      ? <p role="status" className="mt-5 text-sm text-ink-2"><UiMessage messageKey={"ledgerHistory.creatorUnavailable"} /> <Link href="/history/testnet" className="text-seal underline"><UiMessage messageKey={"ledgerHistory.retry"} /></Link></p>
+      : <TestnetCreatorLeaderboard rows={creators} expanded={expandedCreators} />)}
+    <details className="mt-5 border-t border-line pt-1">
+      <summary className="min-h-11 cursor-pointer py-3 text-sm text-ink-2"><UiMessage messageKey={"ledgerHistory.inspectTotals"} /></summary>
+      <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 text-xs text-ink-2">
+        {(["settled", "pending", "failed", "simulated"] as const).map(status => <div key={status} className="contents"><dt className="capitalize">{status}<UiMessage messageKey={"ledgerHistory.paymentRecordsSuffix"} /></dt><dd className="text-right font-mono">{formatNumber(summary.payments[status].count)} · {formatUsdcMicros(summary.payments[status].amountMicroUsdc, { denomination: "test USDC" })}</dd></div>)}
+        {inbound && <><dt><UiMessage messageKey={"ledgerHistory.serviceReceipts"} /></dt><dd className="font-mono">{formatNumber(inbound.count)}</dd></>}
+        {summary.paymentKinds.map(kind => <div key={kind.kind} className="contents"><dt>{kind.kind}<UiMessage messageKey={"ledgerHistory.settledRecordsSuffix"} /></dt><dd className="text-right font-mono">{formatNumber(kind.count)} · {formatUsdcMicros(kind.settledMicroUsdc, { denomination: "test USDC" })}</dd></div>)}
+        {summary.origins.map(channel => <div key={channel.origin ?? "unknown"} className="contents"><dt>{channel.origin ?? <UiMessage messageKey="ledgerHistory.unknownChannel" />}<UiMessage messageKey={"ledgerHistory.questionsSuffix"} /></dt><dd className="font-mono">{formatNumber(channel.count)}</dd></div>)}
+      </dl>
+      <p className="mt-4 break-words text-xs leading-relaxed text-ink-3"><UiMessage messageKey={"ledgerHistory.snapshotNotice"} values={{ capturedAt: info.capturedAt }} /></p>
+      <div className="mt-3 flex flex-wrap gap-x-5 text-xs text-seal">
+        <a href="/api/history/testnet" className="min-h-11 py-3 underline"><UiMessage messageKey={"ledgerHistory.archiveData"} /></a>
+        <a href="https://github.com/tang-vu/keryx/blob/main/docs/tameion-submission.md" className="min-h-11 py-3 underline"><UiMessage messageKey={"ledgerHistory.eventEvidence"} /></a>
+      </div>
+    </details>
+  </UiElement>;
+}

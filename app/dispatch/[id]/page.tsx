@@ -1,0 +1,255 @@
+import { formatRecordedAmount } from "@/lib/i18n/format";
+import { createMessages } from "@/lib/i18n/messages";
+import type { Metadata } from "next";
+import { Suspense } from "react";
+import { closedDispatchMetadata, publicDispatchMetadata } from "@/lib/i18n/report-metadata";
+import { recordedReportPreview } from "@/lib/i18n/recorded-report-preview";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { getDb } from "@/lib/db";
+import { config } from "@/lib/config";
+import { loadDispatchThread, resolveDispatch } from "@/lib/history/read-dispatch";
+import { HistoricalDispatchNote } from "@/components/keryx/historical-dispatch-note";
+import { cleanText, metadataAnswerExcerpt } from "@/lib/answers-archive";
+import { RelatedDispatchesStream } from "@/components/keryx/related-dispatches-stream";
+import { FollowUpForm } from "@/components/keryx/follow-up-form";
+import { FreshnessNote } from "@/components/keryx/freshness-note";
+import { loadFreshness } from "@/lib/answers-freshness";
+import { compareAnswerReceipts } from "@/lib/answers-delta";
+import { AnswerDeltaPanel } from "@/components/keryx/answer-delta";
+import { PortableReceiptPanel } from "@/components/keryx/portable-receipt-panel";
+import { PurchaseOutcomesPanel } from "@/components/keryx/purchase-outcomes";
+import { projectPurchaseOutcomes } from "@/lib/research/purchase-outcomes-projector";
+import { deriveConfidence } from "@/lib/agent/confidence";
+import { projectBibliographicTask } from "@/lib/research/bibliographic-task-result";
+import { breadcrumbJsonLd, crumbLabel } from "@/lib/seo-structured-data";
+import { safeInlineJson } from "@/lib/safe-json";
+import { DispatchView } from "./dispatch-view";
+import { publicQueryRun } from "@/lib/research/public-query-run";
+import { DeliverableAcceptance } from "@/components/keryx/deliverable-acceptance";
+import { pagePrivacyActor } from "@/lib/run-privacy/auth";
+import { runPrivacyCopy } from "@/locales/en/run-privacy";
+import { ProductEntryNote } from "@/components/keryx/product-guide";
+import { recordedAnswerLanguage } from "@/lib/research/answer-language-provenance";
+import { UiMessage, UiText } from "@/lib/i18n/ui-copy";
+
+
+
+const copy = createMessages("en");
+
+const BASE = process.env.BASE_URL || "https://keryx.cc";
+const CURRENT_NETWORK_LABEL = config.profile.testnet ? "Arc testnet" : "Arc mainnet";
+
+// Owner visibility and erasure are checked on every request. No stale permalink
+// render may survive a privacy change.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+/**
+ * Empty on purpose: no permalink is worth prerendering at build (there are hundreds, and the
+ * newest ones are minted minutes later anyway). Dynamic rendering still checks
+ * visibility for every requested ID.
+ */
+export function generateStaticParams(): { id: string }[] {
+  return [];
+}
+
+interface PageProps {
+  params: Promise<{ id: string }>;
+}
+
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const { id } = await params;
+  try {
+    const dispatch = await resolveDispatch(id);
+    if (!dispatch || dispatch.visibility!=="public") return closedDispatchMetadata();
+    const { run, archive } = dispatch;
+    const preview = recordedReportPreview(run);
+    const snippet = metadataAnswerExcerpt(run.answer);
+    const cited = run.citations.length;
+    const conf = deriveConfidence(run);
+    const descriptions = preview.metadataCopy({
+      historical: Boolean(archive), bibliographic: Boolean(projectBibliographicTask(run.bibliography)),
+      confidence: conf ? String(conf.level) : undefined, count: cited, spent: formatRecordedAmount(run.totalSpent, { minimumFractionDigits: 4 }),
+      creators: formatRecordedAmount(run.totalToCreators, { minimumFractionDigits: 4 }), excerpt: snippet,
+    });
+    const metadata = publicDispatchMetadata({ id, title: preview.title(run.question),
+      description: descriptions.description, openGraphDescription: descriptions.openGraph });
+    return { ...metadata, other: { ...metadata.other, "DC.language": preview.answerLanguage } };
+  } catch {
+    return closedDispatchMetadata();
+  }
+}
+
+export default async function DispatchPage({ params }: PageProps) {
+  const { id } = await params;
+  const db = await getDb();
+  const actor=await pagePrivacyActor(db);
+  const dispatch = await resolveDispatch(id, db,actor);
+  if (!dispatch) notFound();
+  const { run, reader, archive } = dispatch;
+  // Original outbound rows include creator payments and separate operating fees.
+  // Their ledger states, rather than allocations, establish settlement truth.
+  const payments = await reader.listCreatorPaymentAttemptsByQuery(id);
+
+  // The thread this dispatch sits in: what it followed from, and what followed from it — plus
+  // whether the sources it cited have published since it settled (see lib/answers-freshness).
+  // Freshness enrichment is computed only after this request's visibility check.
+  const [thread, freshness] = await Promise.all([
+    loadDispatchThread(dispatch, db,actor),
+    archive ? Promise.resolve(null) : loadFreshness(db, run),
+  ]);
+  const { parent: parentDispatch, followUps } = thread;
+  // Optional read-only enrichment from this exact retained public record. No
+  // additional ledger/source/private-sidecar lookup or immutable receipt change.
+  const purchaseOutcomes = (() => {
+    try { return projectPurchaseOutcomes({ ...publicQueryRun(run), archive: archive ?? null }, config.networkId); }
+    catch { return null; }
+  })();
+  const parent = parentDispatch?.run ?? null;
+  const sameNetwork = parentDispatch !== null &&
+    (parentDispatch.archive?.network ?? config.networkId) === (archive?.network ?? config.networkId);
+  const comparison = await (async () => {
+    if (!parentDispatch || !parent || !sameNetwork) return { delta: null, unavailable: false };
+    try {
+      const parentPayments = await parentDispatch.reader.listCreatorPaymentAttemptsByQuery(parentDispatch.run.id);
+      return { delta: compareAnswerReceipts(parent, run, { previous: parentPayments, current: payments }), unavailable: false };
+    } catch {
+      return { delta: null, unavailable: true };
+    }
+  })();
+
+  // QAPage structured data — lets search + AI crawlers read this permalink as a
+  // question with an accepted answer, and surface the sources it credited.
+  const answerText = cleanText(run.answer);
+  const answerLanguage = recordedAnswerLanguage(run);
+  const jsonLd = [
+    {
+      "@context": "https://schema.org",
+      "@type": "QAPage",
+      mainEntity: {
+        "@type": "Question",
+        name: run.question,
+        answerCount: answerText ? 1 : 0,
+        // The answer's own date, so a result can show when this was settled rather than guessing.
+        dateCreated: run.createdAt,
+        ...(answerText
+          ? {
+              acceptedAnswer: {
+                "@type": "Answer",
+                ...(answerLanguage ? { inLanguage: answerLanguage } : {}),
+                text: answerText,
+                url: `${BASE}/dispatch/${id}`,
+                dateCreated: run.createdAt,
+                ...(run.citations.length
+                  ? { citation: run.citations.map((c) => c.sourceName).filter(Boolean) }
+                  : {}),
+              },
+            }
+          : {}),
+      },
+    },
+    // A dispatch id says nothing about where the page sits; the trail is what a result shows
+    // instead of the raw URL, and it matches the links in this page's own header.
+    breadcrumbJsonLd(BASE, [
+      { name: "Keryx", path: "/" },
+      { name: copy("reportDispatch.archiveCrumb"), path: "/answers" },
+      { name: crumbLabel(run.question) },
+    ]),
+  ];
+
+  return (
+    <div className="min-h-screen bg-paper-2">
+      {dispatch.visibility==="public" && <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: safeInlineJson(jsonLd) }}
+      />}
+      {/* Minimal header */}
+      <header className="border-b border-ink bg-paper">
+        <div className="mx-auto flex max-w-[1180px] items-center justify-between px-4 py-3 sm:px-[30px]">
+          <Link
+            href="/"
+            className="font-display text-[15px] font-semibold tracking-tight text-ink"
+          >
+            KERYX
+          </Link>
+          <div className="flex items-center gap-5">
+            <Link
+              href="/answers"
+              className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3 transition-colors hover:text-ink"
+            >
+              <UiMessage messageKey={"reportDispatch.archive"} />
+            </Link>
+            <Link
+              href="/"
+              className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3 transition-colors hover:text-ink"
+            >
+              <UiMessage messageKey={"reportDispatch.new"} />
+            </Link>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-[1180px] px-4 pb-20 pt-10 sm:px-[30px]">
+        {dispatch.visibility === "public" && <ProductEntryNote />}
+        {archive ? <HistoricalDispatchNote archive={archive} /> : null}
+        {thread.parentUnavailable ? <p role="status" className="mb-6 max-w-[860px] font-serif text-sm text-ink-3"><UiMessage messageKey={"reportDispatch.parentUnavailable"} /></p> : null}
+        {parent ? (
+          <Link
+            href={`/dispatch/${parent.id}`}
+            className="mb-6 flex max-w-[860px] items-baseline gap-2.5 border-l-2 border-line pl-4 transition-colors hover:border-ink"
+          >
+            <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-3">
+              <UiMessage messageKey={parentDispatch?.archive ? "reportDispatch.followsHistorical" : "reportDispatch.follows"} />
+            </span>
+            <span className="font-serif text-[15px] leading-[1.5] text-ink-2">
+              {parent.question}
+            </span>
+          </Link>
+        ) : null}
+
+        <DispatchView run={publicQueryRun(run)} answerLanguage={answerLanguage} payments={payments} historical={Boolean(archive)} historicalNetwork={archive?.network} visibility={dispatch.visibility} recoveryWallet={actor?.wallet ?? null} />
+
+        <PortableReceiptPanel dispatchId={id} />
+        <Link href={`/me/run-privacy?run=${encodeURIComponent(id)}`} className="text-sm underline"><UiText source={runPrivacyCopy.manage} namespaces={["run-privacy"]} /></Link>
+        {!archive && <DeliverableAcceptance id={id} answer={run.answer} />}
+        <PurchaseOutcomesPanel dispatchId={id} report={purchaseOutcomes} />
+
+        {comparison.delta ? <AnswerDeltaPanel delta={comparison.delta} /> : null}
+        {comparison.unavailable ? <p role="status" className="mt-6 max-w-[860px] font-serif text-sm text-ink-3"><UiMessage messageKey={"reportDispatch.comparisonUnavailable"} /></p> : null}
+
+        {freshness ? <FreshnessNote freshness={freshness} dispatchId={id} question={run.question} /> : null}
+
+        {followUps.length ? (
+          <section className="mt-8 max-w-[860px]">
+            <h2 className="mb-3.5 border-b border-line pb-2 font-mono text-[10.5px] uppercase tracking-[0.18em] text-ink-3">
+              <UiMessage messageKey={"reportDispatch.followedBy"} />
+            </h2>
+            <ul className="space-y-2.5">
+              {followUps.map((f) => (
+                <li key={f.run.id}>
+                  <Link
+                    href={`/dispatch/${f.run.id}`}
+                    className="font-serif text-[15px] leading-[1.5] text-ink-2 underline decoration-line underline-offset-4 transition-colors hover:text-ink hover:decoration-ink"
+                  >
+                    {f.run.question}
+                  </Link>
+                  {archive ? <span className="ml-2 font-mono text-[10px] text-ink-3">{f.archive ? <UiMessage messageKey={"reportDispatch.historicalNetwork"} /> : CURRENT_NETWORK_LABEL}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+        {thread.followUpsUnavailable ? <p role="status" className="mt-6 max-w-[860px] font-serif text-sm text-ink-3"><UiMessage messageKey={"reportDispatch.followUpsUnavailable"} /></p> : null}
+
+        {archive ? <p className="mt-8 font-serif text-sm text-ink-2"><UiMessage messageKey={"reportDispatch.historicalFollowUp"} values={{ network: CURRENT_NETWORK_LABEL }} /></p> : null}
+        <FollowUpForm parentId={id} />
+        {/* Optional archive discovery must not hold back the authorized report. */}
+        <Suspense fallback={null}>
+          <RelatedDispatchesStream current={{ id, question: run.question,
+            sourceNames: run.citations.map((c) => c.sourceName).filter(Boolean) }} />
+        </Suspense>
+      </main>
+    </div>
+  );
+}

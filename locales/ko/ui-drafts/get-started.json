@@ -1,0 +1,420 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "locales/en/get-started.ts",
+  "sourceSha256": "9450616cf1959d638de574cbeec2f3a445dbdea9d93bc8dcd67301299373e2fa",
+  "entries": {
+    "navigation.start": {
+      "source": "Get started",
+      "text": "시작하기"
+    },
+    "navigation.download": {
+      "source": "Download",
+      "text": "다운로드"
+    },
+    "navigation.integrations": {
+      "source": "Integrations",
+      "text": "연동"
+    },
+    "navigation.label": {
+      "source": "Ways to use Keryx",
+      "text": "Keryx 사용 방법"
+    },
+    "navigation.downloadAction": {
+      "source": "Get the app or extension",
+      "text": "앱 또는 확장 프로그램 받기"
+    },
+    "navigation.connectAction": {
+      "source": "Connect MCP, API or CLI",
+      "text": "MCP, API 또는 CLI 연결"
+    },
+    "start.title": {
+      "source": "Your research. Wherever you work.",
+      "text": "어디서 일하든 함께하는 리서치."
+    },
+    "start.body": {
+      "source": "Ask in your browser, research a page you are reading, connect your AI assistant, or build Keryx into your own workflow. Pick a starting point below.",
+      "text": "브라우저에서 질문하거나, 읽고 있는 페이지를 조사하거나, AI 어시스턴트를 연결하거나, Keryx를 자신의 도구에 통합하세요. 시작할 방법을 선택하세요."
+    },
+    "start.try": {
+      "source": "Try Keryx in the browser",
+      "text": "브라우저에서 Keryx 사용해 보기"
+    },
+    "start.browse": {
+      "source": "Browse downloads",
+      "text": "다운로드 보기"
+    },
+    "start.firstTitle": {
+      "source": "Your first cited answer",
+      "text": "첫 출처 인용 답변"
+    },
+    "start.choose": {
+      "source": "Choose how you use Keryx",
+      "text": "Keryx 사용 방법 선택"
+    },
+    "common.steps": {
+      "source": "Get set up",
+      "text": "설정하기"
+    },
+    "common.requirements": {
+      "source": "What you need",
+      "text": "필요한 사항"
+    },
+    "common.help": {
+      "source": "Need a hand?",
+      "text": "도움이 필요하신가요?"
+    },
+    "common.support": {
+      "source": "Contact support",
+      "text": "지원 문의"
+    },
+    "common.docs": {
+      "source": "Read the full guide",
+      "text": "전체 가이드 읽기"
+    },
+    "common.copy": {
+      "source": "Copy",
+      "text": "복사"
+    },
+    "common.copied": {
+      "source": "Copied",
+      "text": "복사됨"
+    },
+    "navigation.entryBody": {
+      "source": "Use Keryx in your browser, on Windows, from an AI assistant or inside your own tools. Find the right setup and see what each option supports.",
+      "text": "브라우저, Windows, AI 도우미 또는 직접 만든 도구에서 Keryx를 사용하세요. 알맞은 설정 방법을 찾고 각 옵션에서 지원하는 기능을 확인하세요."
+    },
+    "common.status": {
+      "source": "Service status",
+      "text": "서비스 상태"
+    },
+    "common.version": {
+      "source": "Version",
+      "text": "버전"
+    },
+    "common.release": {
+      "source": "Release notes & checksums",
+      "text": "릴리스 노트 및 체크섬"
+    },
+    "start.accountTitle": {
+      "source": "An account is optional for the trial",
+      "text": "체험에는 계정이 필수가 아닙니다"
+    },
+    "start.accountAction": {
+      "source": "Sign in & account setup",
+      "text": "로그인 및 계정 설정"
+    },
+    "start.faqTitle": {
+      "source": "Before you install",
+      "text": "설치하기 전에"
+    },
+    "start.faq.0.question": {
+      "source": "Which option should I choose?",
+      "text": "어떤 옵션을 선택해야 하나요?"
+    },
+    "start.faq.2.question": {
+      "source": "Can I use Keryx on my phone, Mac or Linux?",
+      "text": "휴대전화, Mac 또는 Linux에서 Keryx를 사용할 수 있나요?"
+    },
+    "start.faq.2.answer": {
+      "source": "Use the web app in a supported browser. The downloadable Operator alpha currently supports Windows x64. There are no Keryx mobile, macOS or Linux installers offered here; compatible MCP and API clients have their own platform requirements.",
+      "text": "지원되는 브라우저에서 웹 앱을 사용하세요. 다운로드 가능한 Operator 알파 버전은 현재 Windows x64를 지원합니다. 여기서는 모바일, macOS 또는 Linux용 Keryx 설치 프로그램을 제공하지 않습니다. 호환되는 MCP 및 API 클라이언트에는 각각 별도의 플랫폼 요구 사항이 있습니다."
+    },
+    "surfaces.0.title": {
+      "source": "Web app",
+      "text": "웹 앱"
+    },
+    "surfaces.0.tag": {
+      "source": "No install",
+      "text": "설치 불필요"
+    },
+    "surfaces.0.body": {
+      "source": "Ask a shareable question, inspect source choices and reopen a cited report.",
+      "text": "공유할 수 있는 질문을 하고, 출처 선택을 확인하고, 인용이 포함된 보고서를 다시 열어 보세요."
+    },
+    "surfaces.0.action": {
+      "source": "Open the web app",
+      "text": "웹 앱 열기"
+    },
+    "surfaces.1.title": {
+      "source": "Windows desktop",
+      "text": "Windows 데스크톱"
+    },
+    "surfaces.1.tag": {
+      "source": "Operator alpha",
+      "text": "Operator alpha"
+    },
+    "surfaces.1.action": {
+      "source": "Download & install",
+      "text": "다운로드 및 설치"
+    },
+    "surfaces.2.title": {
+      "source": "Browser extension",
+      "text": "브라우저 확장 프로그램"
+    },
+    "surfaces.2.tag": {
+      "source": "Manual install",
+      "text": "수동 설치"
+    },
+    "surfaces.2.body": {
+      "source": "Highlight text, ask from your toolbar and keep the original source links close by.",
+      "text": "텍스트를 선택하고 도구 모음에서 질문하며 원본 출처 링크를 가까이 두세요."
+    },
+    "surfaces.2.action": {
+      "source": "Install the extension",
+      "text": "확장 프로그램 설치"
+    },
+    "surfaces.3.title": {
+      "source": "MCP for AI assistants",
+      "text": "AI 도우미용 MCP"
+    },
+    "surfaces.3.tag": {
+      "source": "Remote or local",
+      "text": "원격 또는 로컬"
+    },
+    "surfaces.3.body": {
+      "source": "Bring Keryx tools into Codex, Claude Code, Cursor or a compatible MCP client.",
+      "text": "Codex, Claude Code, Cursor 또는 호환 MCP 클라이언트에 Keryx 도구를 추가하세요."
+    },
+    "surfaces.3.action": {
+      "source": "Choose an MCP connection",
+      "text": "MCP 연결 선택"
+    },
+    "surfaces.4.title": {
+      "source": "API for developers",
+      "text": "개발자용 API"
+    },
+    "surfaces.4.tag": {
+      "source": "OpenAI compatible",
+      "text": "OpenAI 호환"
+    },
+    "surfaces.4.body": {
+      "source": "Integrate cited research and streamed source decisions into your own application.",
+      "text": "인용을 포함한 리서치와 실시간으로 전달되는 출처 선택 결정을 직접 만든 앱에 통합하세요."
+    },
+    "surfaces.4.action": {
+      "source": "Explore the API",
+      "text": "API 살펴보기"
+    },
+    "surfaces.5.title": {
+      "source": "Command line",
+      "text": "명령줄"
+    },
+    "surfaces.5.tag": {
+      "source": "From source",
+      "text": "소스 코드에서 사용"
+    },
+    "surfaces.5.body": {
+      "source": "Inspect Operator tasks or use the documented research and buyer commands.",
+      "text": "Operator 작업을 확인하거나 문서에 안내된 리서치 및 구매 명령을 사용하세요."
+    },
+    "surfaces.5.action": {
+      "source": "Set up the CLI",
+      "text": "CLI 설정"
+    },
+    "surfaces.6.title": {
+      "source": "Chat bots",
+      "text": "채팅 봇"
+    },
+    "surfaces.6.tag": {
+      "source": "Telegram · Discord · Slack",
+      "text": "Telegram · Discord · Slack"
+    },
+    "surfaces.6.body": {
+      "source": "Ask Keryx from a chat or a community workspace.",
+      "text": "채팅이나 커뮤니티 작업 공간에서 Keryx에 질문하세요."
+    },
+    "surfaces.6.action": {
+      "source": "Find your chat app",
+      "text": "채팅 앱 찾기"
+    },
+    "download.title": {
+      "source": "Bring Keryx to your workflow.",
+      "text": "Keryx를 업무 흐름에 더하세요."
+    },
+    "download.desktopTitle": {
+      "source": "Keryx Operator for Windows",
+      "text": "Windows용 Keryx Operator"
+    },
+    "download.desktopTag": {
+      "source": "Windows x64 · Alpha",
+      "text": "Windows x64 · 알파 버전"
+    },
+    "download.desktopRequirements": {
+      "source": "Windows x64 and Microsoft Edge WebView2 Runtime. Node is bundled; a separate Node installation is not required. Updates are manual in this alpha.",
+      "text": "Windows x64와 Microsoft Edge WebView2 Runtime이 필요합니다. Node가 포함되어 있어 별도로 설치할 필요가 없습니다. 이 알파 버전의 업데이트는 수동으로 진행합니다."
+    },
+    "download.installer": {
+      "source": "Choose Windows installer",
+      "text": "Windows 설치 프로그램 선택"
+    },
+    "download.portable": {
+      "source": "Choose portable ZIP",
+      "text": "포터블 ZIP 선택"
+    },
+    "download.manifest": {
+      "source": "Release manifest and checksums",
+      "text": "릴리스 매니페스트 및 체크섬"
+    },
+    "download.webview": {
+      "source": "Get WebView2 Runtime",
+      "text": "WebView2 Runtime 받기"
+    },
+    "download.desktopSteps.0": {
+      "source": "Open the release assets and choose the -setup.exe installer or -win32-x64.zip portable build. Review the matching -release.json manifest and -SHA256SUMS.txt checksums.",
+      "text": "릴리스 파일을 열고 -setup.exe 설치 프로그램 또는 -win32-x64.zip 포터블 버전을 선택하세요. 해당 버전의 -release.json 매니페스트와 -SHA256SUMS.txt 체크섬을 확인하세요."
+    },
+    "download.desktopSteps.1": {
+      "source": "Run the installer in your normal Windows user session. Install WebView2 Runtime if it is missing. For the portable build, extract and keep the whole folder together.",
+      "text": "평소 사용하는 Windows 사용자 세션에서 설치 프로그램을 실행하세요. WebView2 Runtime이 없으면 설치하세요. 포터블 버전은 압축을 풀고 폴더 전체를 함께 보관하세요."
+    },
+    "download.extensionTitle": {
+      "source": "Keryx in your browser",
+      "text": "브라우저에서 사용하는 Keryx"
+    },
+    "download.extensionTag": {
+      "source": "Chromium · Manual install",
+      "text": "Chromium · 수동 설치"
+    },
+    "download.extensionBody": {
+      "source": "Ask about selected text from the toolbar or right-click menu. Inspect the research trace, open cited sources and export recorded references from a completed report.",
+      "text": "도구 모음이나 마우스 오른쪽 버튼 메뉴에서 선택한 텍스트에 관해 질문하세요. 리서치 과정을 살펴보고, 인용 출처를 열고, 완료된 보고서에 기록된 참고 자료를 내보낼 수 있습니다."
+    },
+    "download.extensionDownload": {
+      "source": "Download extension ZIP",
+      "text": "확장 프로그램 ZIP 다운로드"
+    },
+    "download.extensionRequirements": {
+      "source": "Use Chrome or Edge on desktop, or another compatible Chromium browser. For the ZIP, follow the unpacked-install steps below and enable Developer mode. The public Chrome Web Store listing is also available; check its displayed version before installing.",
+      "text": "컴퓨터에서 Chrome이나 Edge 또는 다른 호환 Chromium 브라우저를 사용하세요. ZIP은 아래의 압축 해제 설치 절차에 따라 설치하고 개발자 모드(Developer mode)를 켜세요. 공개 Chrome Web Store 페이지도 이용할 수 있습니다. 설치하기 전에 표시된 버전을 확인하세요."
+    },
+    "download.extensionSteps.0": {
+      "source": "Download and extract the extension ZIP. The extracted directory contains manifest.json directly.",
+      "text": "확장 프로그램 ZIP을 다운로드하고 압축을 푸세요. 압축을 푼 폴더 바로 안에 manifest.json이 있습니다."
+    },
+    "download.extensionSteps.1": {
+      "source": "Open chrome://extensions in Chrome or edge://extensions in Edge, then turn on Developer mode.",
+      "text": "Chrome에서 chrome://extensions 또는 Edge에서 edge://extensions를 연 다음 개발자 모드(Developer mode)를 켜세요."
+    },
+    "download.extensionSteps.2": {
+      "source": "Choose Load unpacked and select the extracted directory containing manifest.json. Pin Keryx to your toolbar.",
+      "text": "압축해제된 확장 프로그램을 로드합니다(Load unpacked)를 선택하고 manifest.json이 있는 압축 해제 폴더를 지정하세요. Keryx를 도구 모음에 고정하세요."
+    },
+    "download.alternativeTitle": {
+      "source": "Use Keryx without a download",
+      "text": "다운로드 없이 Keryx 사용하기"
+    },
+    "download.alternativeBody": {
+      "source": "The web app works on desktop and mobile browsers. AI assistants can connect through remote MCP; developers can use the hosted API.",
+      "text": "웹 앱은 컴퓨터와 모바일 브라우저에서 작동합니다. AI 도우미는 원격 MCP로 연결할 수 있고, 개발자는 호스팅 API를 사용할 수 있습니다."
+    },
+    "integrations.title": {
+      "source": "Keryx, connected.",
+      "text": "Keryx를 연결하세요."
+    },
+    "integrations.mcpTitle": {
+      "source": "Connect an AI assistant with MCP",
+      "text": "MCP로 AI 도우미 연결"
+    },
+    "integrations.remoteTitle": {
+      "source": "Remote MCP",
+      "text": "원격 MCP"
+    },
+    "integrations.remoteAction": {
+      "source": "Open remote MCP setup",
+      "text": "원격 MCP 설정 열기"
+    },
+    "integrations.remoteEndpoint": {
+      "source": "Hosted MCP endpoint",
+      "text": "호스팅된 MCP 엔드포인트"
+    },
+    "integrations.stdioTitle": {
+      "source": "Local stdio MCP",
+      "text": "로컬 stdio MCP"
+    },
+    "integrations.stdioConfig": {
+      "source": "Stdio client configuration",
+      "text": "Stdio 클라이언트 설정"
+    },
+    "integrations.apiTitle": {
+      "source": "Build with the API",
+      "text": "API로 개발하기"
+    },
+    "integrations.apiBase": {
+      "source": "Chat Completions base URL",
+      "text": "Chat Completions 기본 URL"
+    },
+    "integrations.apiModel": {
+      "source": "Model",
+      "text": "모델"
+    },
+    "integrations.apiConfigTitle": {
+      "source": "Connect an OpenAI-compatible client",
+      "text": "OpenAI 호환 클라이언트 연결"
+    },
+    "integrations.apiReadOnly": {
+      "source": "Check available models (Bash, read-only)",
+      "text": "사용 가능한 모델 확인 (Bash, 읽기 전용)"
+    },
+    "integrations.apiReference": {
+      "source": "OpenAPI reference",
+      "text": "OpenAPI 참조 문서"
+    },
+    "integrations.apiRecipes": {
+      "source": "SDK examples & streaming guide",
+      "text": "SDK 예제 및 스트리밍 가이드"
+    },
+    "integrations.cliTitle": {
+      "source": "Work from the command line",
+      "text": "명령줄에서 작업하기"
+    },
+    "integrations.cliBody": {
+      "source": "The source checkout includes Operator, research and buyer commands. The CLI is currently distributed with the repository; keryx-mcp is the separate npm MCP package.",
+      "text": "소스 코드에는 Operator, 리서치 및 구매자용 명령이 포함되어 있습니다. CLI는 현재 저장소와 함께 배포되며, keryx-mcp는 별도의 npm MCP 패키지입니다."
+    },
+    "integrations.cliRequirements": {
+      "source": "Git, Node 22.19+ or 24+, and the pinned npm 11.19.0 installer. Clone the project and install dependencies before running commands.",
+      "text": "Git, Node 22.19+ 또는 24+, 지정된 버전의 npm 11.19.0이 필요합니다. 명령을 실행하기 전에 프로젝트를 복제하고 의존성을 설치하세요."
+    },
+    "integrations.cliSetup": {
+      "source": "Install from source & inspect help",
+      "text": "소스에서 설치하고 도움말 확인"
+    },
+    "integrations.cliGuide": {
+      "source": "CLI commands & configuration",
+      "text": "CLI 명령 및 설정"
+    },
+    "integrations.botsTitle": {
+      "source": "Ask from your chat app",
+      "text": "채팅 앱에서 질문하기"
+    },
+    "integrations.telegramBody": {
+      "source": "Open the Keryx bot and send a question. In a group, use /ask followed by your question.",
+      "text": "Keryx 봇을 열고 질문을 보내세요. 그룹에서는 /ask 뒤에 질문을 입력하세요."
+    },
+    "integrations.telegramAction": {
+      "source": "Open Telegram bot",
+      "text": "Telegram 봇 열기"
+    },
+    "integrations.discordAction": {
+      "source": "Add to Discord",
+      "text": "Discord에 추가"
+    },
+    "integrations.slackAction": {
+      "source": "Slack administrator setup",
+      "text": "Slack 관리자 설정"
+    },
+    "integrations.selfHost": {
+      "source": "Self-hosting guide",
+      "text": "자체 호스팅 가이드"
+    },
+    "integrations.discordBody": {
+      "source": "Add the Keryx application to a server you manage, then use /ask with your question. Review Discord's requested permissions before installing.",
+      "text": "관리하는 서버에 Keryx 앱을 추가한 다음 /ask 뒤에 질문을 입력하세요. 설치 전에 Discord가 요청하는 권한을 확인하세요."
+    },
+    "integrations.slackBody": {
+      "source": "A workspace administrator creates the Slack app from Keryx's documented manifest and configures /keryx. A public one-click OAuth installer is not offered here.",
+      "text": "워크스페이스 관리자가 Keryx 문서에 있는 매니페스트로 Slack 앱을 만들고 /keryx를 설정합니다. 여기서는 공개 원클릭 OAuth 설치 도구를 제공하지 않습니다."
+    }
+  }
+}

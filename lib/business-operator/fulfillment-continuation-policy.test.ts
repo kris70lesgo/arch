@@ -1,0 +1,1032 @@
+import fs from "node:fs";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fulfillmentFixture, fixtureNow, fixtureCommit, fixtureFlush, cleanFulfillmentFixtures } from "./fulfillment-test-fixture";
+import { beginFailedOriginalFulfillment, closeFulfillmentCapability, fulfillmentDirectory, fulfillmentProviderLedger,
+  fulfillmentStep, reserveFulfillmentModel } from "./fulfillment-policy";
+import { beginOriginalContinuation, closeContinuationCapability, continuationAuthorizationSchema,
+  continuationDirectory, continuationModel, continuationProviderLedger, readContinuationAuthorization,
+  assertContinuationSupplierAdmission, continuationSupplierSignal, prepareContinuationResult,
+  completePreparedContinuation, verifyPreparedContinuation, retainedContinuationDeliveryResolution,
+  recordContinuationDiagnostic, type ContinuationAuthorization, type ContinuationCapability } from "./fulfillment-continuation-policy";
+import { continuationQualityProtocol, continuationQualityEvidenceCapability, continuationQualityEvidenceProtocol,
+  continuationReadOnlyQualityEvidenceCapability, type ContinuationQualityEvidenceCapability } from "./fulfillment-continuation-policy";
+import { inspectOriginalContinuation, activateOriginalContinuationEpoch } from "./fulfillment-continuation-policy";
+import { fixedPaths } from "./continuation-epoch";
+import { continuationOwnerRepairReceiptSchema } from "./continuation-failed-quality-epoch";
+import { syntheticQualityFailureClosure } from "./continuation-failed-quality-closure-fixture";
+import { businessCanaryHostIdentity, retainedBusinessCanaryClosure } from "./canary-policy";
+import { fulfillmentSha256 as hash, fulfillmentObjectSha256 as hashObject } from "../a2a/failed-original-fulfillment-protocol";
+import { syntheticFulfilledRun } from "../db/a2a-fulfillment-fixture";
+import { renderFulfilledOriginalAnswer } from "../a2a/original-fulfillment-answer";
+import { readBoundSupplementaryContext, supplementaryInputSchema } from "../a2a/fulfillment-supplement-evidence";
+import * as supplementaryEvidence from "../a2a/fulfillment-supplement-evidence";
+import * as continuationPolicy from "./fulfillment-continuation-policy";
+import { completeOriginalContinuation, preflightOriginalContinuation } from "../a2a/continue-original";
+import { ReasoningInputLimitError } from "../llm/reasoning-engine";
+
+const git = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", async importOriginal => ({ ...await importOriginal<typeof import("node:child_process")>(), execFileSync: git }));
+beforeEach(() => {
+  vi.useFakeTimers(); vi.setSystemTime(fixtureNow);
+  git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${fixtureCommit}\n`);
+  vi.stubGlobal("fetch", vi.fn(() => { throw Error("No network in continuation policy tests"); }));
+});
+afterEach(() => { cleanFulfillmentFixtures(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers(); });
+const receipt = "2026-10-07T12:00:00.000Z", expiresAt = "2026-10-08T12:00:00.000Z";
+async function fixture(fiveTargets = false) {
+  const value = await fulfillmentFixture(fiveTargets), original = await beginFailedOriginalFulfillment(value.db, value.binding, fixtureFlush);
+  await fulfillmentStep(original.capability, "sufficiency", async () => reserveFulfillmentModel(original.capability, "fixture", "old sufficiency", 1));
+  await fulfillmentStep(original.capability, "synthesize", async () => reserveFulfillmentModel(original.capability, "fixture", "old generation", 1));
+  closeFulfillmentCapability(original.capability); vi.setSystemTime(receipt);
+  const ledger = fulfillmentProviderLedger(value.binding), tariffFile = path.join(value.root, "current-tariff.txt");
+  fs.writeFileSync(tariffFile, "Synthetic current tariff capture", { mode: 0o600 });
+  fs.mkdirSync(continuationDirectory(), { mode: 0o700 });
+  const authorization: ContinuationAuthorization = { format: "keryx-original-continuation-authorization-v1",
+    approvalId: "operator-business-20261006", approvedAt: receipt, ownerAuthorizationReceivedAt: receipt,
+    ownerAuthorizationSha256: hash("Synthetic explicit owner permission"), expiresAt, maximumDurationMs: 86_400_000,
+    executionHostSha256: businessCanaryHostIdentity(), executorCommit: fixtureCommit,
+    originalAuthorizationSha256: value.authorizationDigest, originalClaimSha256: hash(fs.readFileSync(path.join(fulfillmentDirectory(), "claim.json"))),
+    nativeClaimSha256: hashObject(original.claim), originalFulfillmentProviderLedgerSha256: ledger.sha256,
+    policySha256: value.old.policySha256, failedClosureSha256: value.old.failedClosureSha256,
+    originalEvidenceSha256: value.old.originalEvidenceSha256, originalProviderLedgerSha256: value.old.originalProviderLedgerSha256,
+    inputSemanticSha256: value.packet.inputSemanticSha256, packetSha256: value.packet.packetSha256,
+    tariffFile, tariffBodySha256: hash(fs.readFileSync(tariffFile)), tariffRetrievedAt: receipt,
+    tariffUrl: "https://api-docs.deepseek.com/quick_start/pricing/", tariffInputUsdPerMillion: 0.30, tariffOutputUsdPerMillion: 1.20,
+    provider: "deepseek", endpoint: "https://api.deepseek.com/chat/completions", model: "deepseek-v4-flash", reserveMicroUsd: 20_660,
+    maximumNewModelCalls: 8, historicalReservedMicroUsd: 77_980, maximumCombinedMicroUsd: 243_260,
+    searches: "forbidden", creatorPayments: "forbidden", newInboundPayment: "forbidden" };
+  const file = path.join(value.root, "continuation-authorization.json");
+  fs.writeFileSync(file, JSON.stringify(authorization), { mode: 0o600 });
+  return { ...value, original, file, sha256: hash(fs.readFileSync(file)), continuationAuthorization: authorization };
+}
+async function epochFixture(fiveTargets = false) {
+  const value = await fixture(fiveTargets), parentDirectory = continuationDirectory();
+  for (let index = 0; index < 4; index++) {
+    const admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    await continuationModel(admitted.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, async () => ({ fixture: true }));
+    await continuationModel(admitted.capability, "synthesize", "Fixture system", "synthesize fixture", 1, async () => ({ fixture: true }));
+    if (index < 3) {
+      await continuationModel(admitted.capability, "review", "Fixture system", "review fixture", 1, async () => ({ fixture: true }));
+      recordContinuationDiagnostic(admitted.capability, { phase: "assemble", category: "quality" });
+    }
+    closeContinuationCapability(admitted.capability);
+  }
+  const parent = continuationProviderLedger(), parentBytes = bytes(parentDirectory), nextCommit = "d".repeat(40);
+  git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${nextCommit}\n`);
+  const authorization: ContinuationAuthorization = { ...value.continuationAuthorization,
+    format: "keryx-original-continuation-authorization-v2", executorCommit: nextCommit,
+    historicalReservedMicroUsd: 243_260, maximumNewModelCalls: 6, maximumCombinedMicroUsd: 400_000,
+    parentAuthorizationFile: value.file, parentAuthorizationSha256: value.sha256,
+    parentProviderLedgerSha256: parent.sha256,
+    parentLedgerHeadSha256: hash(fs.readFileSync(path.join(parentDirectory, "ledger-head.json"))),
+    contextProtocol: "full-selected-bodies-required-sufficiency-v1" };
+  const epochFile = path.join(value.root, "epoch-authorization.json");
+  fs.writeFileSync(epochFile, JSON.stringify(authorization), { mode: 0o600 });
+  return { ...value, parentDirectory, parentBytes, parent, epochFile, epochSha256: hash(fs.readFileSync(epochFile)), epochAuthorization: authorization };
+}
+async function supplementEpochFixture(fourSources = false) {
+  const value = await epochFixture(true);
+  await activateOriginalContinuationEpoch(value.db, value.epochFile, value.epochSha256, fixtureFlush);
+  const paths = fixedPaths(value.root), admitted = await beginOriginalContinuation(value.db, value.epochFile, value.epochSha256, fixtureFlush);
+  const assessment = { perClaim: value.packet.input.targets.map((claim, index) => ({ claim, coverage: index === 4 ? 0.1 : 0.9,
+    coveredBy: [index === 2 || index === 4 ? "S2" : "S1"], supportedAnswer: "Synthetic bounded source support.",
+    missingRequestedParts: index === 4 ? ["Synthetic deployment acceptance details are missing."] : [] })) };
+  await continuationModel(admitted.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, async () => assessment);
+  recordContinuationDiagnostic(admitted.capability, { phase: "sufficiency", category: "quality" }); closeContinuationCapability(admitted.capability);
+  const parent = continuationProviderLedger(), retainedEpoch = bytes(paths.epochDirectory), retainedAnchor = bytes(paths.anchorDirectory);
+  const directory = path.join(value.root, "free-primary-evidence"); fs.mkdirSync(directory, { mode: 0o700 });
+  const body = "Synthetic operational acceptance requires checking the exact network, deployed contract address and supported signer before transfer.",
+    prefix = "Synthetic official header.\n", raw = `${prefix}${body}\nSynthetic official footer.`;
+  fs.writeFileSync(path.join(directory, "primary-raw.txt"), raw, { mode: 0o600 });
+  fs.writeFileSync(path.join(directory, "primary-body.txt"), body, { mode: 0o600 });
+  const evidenceBinding = { nativeClaimSha256: value.continuationAuthorization.nativeClaimSha256,
+    ownerAuthorizationSha256: value.continuationAuthorization.ownerAuthorizationSha256, executorCommit: value.epochAuthorization.executorCommit };
+  const input = supplementaryInputSchema.parse({ format: "keryx-original-supplementary-evidence-v1", ...evidenceBinding,
+    originalAuthoritySha256: hashObject(value.binding.authority), originalPacketSha256: value.packet.packetSha256,
+    originalInputSemanticSha256: value.packet.inputSemanticSha256, questionSha256: value.packet.input.questionSha256,
+    sources: [{ id: "synthetic-checks", title: "Synthetic free primary operational reference",
+      requestedUrl: "https://docs.arc.io/synthetic/acceptance", finalUrl: "https://docs.arc.io/synthetic/acceptance", retrievedAt: receipt, status: 200,
+      rawFile: "primary-raw.txt", rawSha256: hash(raw), rawBytes: Buffer.byteLength(raw),
+      bodyFile: "primary-body.txt", bodySha256: hash(body), bodyBytes: Buffer.byteLength(body), spans: [{ start: prefix.length, end: prefix.length + body.length }] }],
+    payments: 0, creatorRewards: 0, provenance: "reviewed-free-official-verbatim-sections" });
+  if (fourSources) {
+    const second = "Synthetic second official reference distinguishes production and isolated test deployment profiles.";
+    fs.writeFileSync(path.join(directory, "second-raw.txt"), second, { mode: 0o600 });
+    fs.writeFileSync(path.join(directory, "second-body.txt"), second, { mode: 0o600 });
+    input.sources.push({ id: "synthetic-profiles", title: "Synthetic free primary profile reference",
+      requestedUrl: "https://developers.circle.com/synthetic/profiles", finalUrl: "https://developers.circle.com/synthetic/profiles",
+      retrievedAt: receipt, status: 200, rawFile: "second-raw.txt", rawSha256: hash(second), rawBytes: Buffer.byteLength(second),
+      bodyFile: "second-body.txt", bodySha256: hash(second), bodyBytes: Buffer.byteLength(second), spans: [{ start: 0, end: second.length }] });
+  }
+  const inputFile = path.join(directory, "supplement.json"); fs.writeFileSync(inputFile, JSON.stringify(input), { mode: 0o600 });
+  const inputSha = hash(fs.readFileSync(inputFile)), context = readBoundSupplementaryContext(inputFile, inputSha, value.binding, evidenceBinding);
+  const rawHash = (name: string) => hash(fs.readFileSync(path.join(paths.epochDirectory, name)));
+  const authorization: ContinuationAuthorization = { ...value.epochAuthorization, format: "keryx-original-continuation-authorization-v3",
+    historicalReservedMicroUsd: 263_920, maximumNewModelCalls: 5, maximumCombinedMicroUsd: 367_220, ownerMaximumCombinedMicroUsd: 400_000,
+    parentAuthorizationFile: value.epochFile, parentAuthorizationSha256: value.epochSha256, parentProviderLedgerSha256: parent.sha256,
+    parentLedgerHeadSha256: rawHash("ledger-head.json"), parentAnchorIntentSha256: hash(fs.readFileSync(paths.intentFile)),
+    parentAnchorActiveSha256: hash(fs.readFileSync(paths.activeFile)), parentAnchorFrontierSha256: hash(fs.readFileSync(paths.frontierFile)),
+    parentSufficiencyHoldSha256: parent.holds[0].sha256, parentSufficiencyCheckpointSha256: rawHash("call-01-checkpoint.json"),
+    parentSufficiencyResultSha256: parent.holds[0].checkpoint!.resultSha256, parentSufficiencyDiagnosticSha256: rawHash("diagnostic-01.json"),
+    parentAttemptOutcomeSha256: rawHash("attempt-01-outcome.json"), supplementaryInputFile: inputFile, supplementaryInputSha256: inputSha,
+    contextSha256: context.contextSha256, contextProtocol: "full-selected-bodies-required-sufficiency-with-free-primary-supplement-v1" };
+  const file = path.join(value.root, "supplement-authorization.json"); fs.writeFileSync(file, JSON.stringify(authorization), { mode: 0o600 });
+  return { ...value, supplementFile: file, supplementSha256: hash(fs.readFileSync(file)), supplementAuthorization: authorization,
+    retainedEpoch, retainedAnchor, context, body, directory };
+}
+function bytes(directory: string) {
+  return fs.readdirSync(directory).sort().map(name => [name, fs.readFileSync(path.join(directory, name), "hex")]);
+}
+async function stages(capability: ContinuationCapability) {
+  for (const stage of ["sufficiency", "synthesize", "review"] as const)
+    await continuationModel(capability, stage, "Fixture system", `${stage} fixture`, 1, async () => ({ fixture: stage }));
+}
+function preparedRun(admitted: Awaited<ReturnType<typeof beginOriginalContinuation>>, coverage = 0.9) {
+  const run = syntheticFulfilledRun(admitted.claim).run;
+  run.createdAt = receipt; run.durationMs = Date.parse(receipt) - Date.parse(admitted.claim.failedOrder.startedAt!);
+  run.citations[0].sourceId = run.evidence![0].sourceId = "public:fulfillment:document-1";
+  run.claimCoverage![0].coverage = coverage;
+  run.originalFulfillment!.providerLedgerSha256 = continuationProviderLedger().sha256;
+  run.answer = renderFulfilledOriginalAnswer({ question: run.question, answer: "", statements: run.originalFulfillment!.statements,
+    evidenceGaps: run.originalFulfillment!.evidenceGaps,
+    ledger: { evidence: run.evidence!, claimCoverage: run.claimCoverage!, acceptedMarkers: new Set(["S1"]), droppedEvidence: 0, droppedCitations: [] } });
+  return run;
+}
+function supplementaryPreparedRun(admitted: Awaited<ReturnType<typeof beginOriginalContinuation>>) {
+  const run = syntheticFulfilledRun(admitted.claim).run, context = admitted.binding.supplement!;
+  const quotes = ["The contract signature flow validates ERC-1271 contract signatures before a Gateway transfer.",
+    "The EOA authorization flow checks an EOA signature before batching a transfer.",
+    "Nanopayments uses EOA signatures and does not support ERC-1271 contract signatures.",
+    "The TEE validation component is required by this contract-signature flow.", context.gathered[2].text];
+  const statements = quotes.map((quote, claimIndex) => ({ claimIndex, marker: claimIndex === 4 ? "S3" : claimIndex === 2 ? "S2" : "S1",
+    quote, text: `Synthetic independently reviewed target ${claimIndex}.` }));
+  run.createdAt = receipt; run.durationMs = Date.parse(receipt) - Date.parse(admitted.claim.failedOrder.startedAt!);
+  run.citations = context.gathered.filter(source => statements.some(statement => statement.marker === source.marker)).map(source => ({ marker: source.marker, sourceId: source.sourceId, sourceName: source.sourceName,
+    sourceKind: "public-reference", itemId: source.itemId, itemTitle: source.itemTitle, itemUrl: source.itemUrl,
+    contentVersion: source.contentVersion, requestedSource: source.requestedSource, webProvenance: source.webProvenance,
+    weight: 0, reward: 0, rationale: "Synthetic independent zero reward support." }));
+  run.evidence = statements.map(statement => {
+    const source = context.gathered.find(source => source.marker === statement.marker)!;
+    return { ...statement, claim: run.subClaims[statement.claimIndex], sourceId: source.sourceId, sourceName: source.sourceName,
+      sourceKind: "public-reference", itemId: source.itemId, itemTitle: source.itemTitle, itemUrl: source.itemUrl,
+      contentVersion: source.contentVersion, requestedSource: source.requestedSource, webProvenance: source.webProvenance,
+      support: 0.9, qualifiesForAnswer: true, qualifiesForReward: false };
+  });
+  run.claimCoverage = statements.map(statement => ({ claimIndex: statement.claimIndex, claim: run.subClaims[statement.claimIndex],
+    coverage: 0.9, coveredBy: [statement.marker] }));
+  run.originalFulfillment = { ...run.originalFulfillment!, format: "keryx-a2a-original-fulfillment-result-v2",
+    supplementaryInputSha256: context.authoritySha256, contextSha256: context.contextSha256,
+    providerLedgerSha256: continuationProviderLedger().sha256, statements, evidenceGaps: [],
+    statementReviews: statements.map(statement => ({ ...statement, support: 0.9 })) };
+  run.answer = renderFulfilledOriginalAnswer({ question: run.question, answer: "", statements, evidenceGaps: [],
+    ledger: { evidence: run.evidence, claimCoverage: run.claimCoverage, acceptedMarkers: new Set(["S1", "S2", "S3"]),
+      droppedEvidence: 0, droppedCitations: [] } });
+  return run;
+}
+async function preparedEpochFixture() {
+  const value = await supplementEpochFixture(true), parentPaths = fixedPaths(value.root, 3);
+  await activateOriginalContinuationEpoch(value.db, value.supplementFile, value.supplementSha256, fixtureFlush);
+  const admitted = await beginOriginalContinuation(value.db, value.supplementFile, value.supplementSha256, fixtureFlush);
+  const assessment = { perClaim: value.packet.input.targets.map(claim => ({ claim, coverage: 0.9, coveredBy: ["S1"],
+    supportedAnswer: "Synthetic positive mandatory source assessment.", missingRequestedParts: [] })) };
+  await continuationModel(admitted.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, async () => assessment);
+  for (const stage of ["synthesize", "review"] as const)
+    await continuationModel(admitted.capability, stage, "Fixture system", `${stage} fixture`, 1, async () => ({ fixture: stage }));
+  prepareContinuationResult(admitted.capability, supplementaryPreparedRun(admitted));
+  const proof = await verifyPreparedContinuation(value.db), parent = continuationProviderLedger();
+  const rejectionDirectory = path.join(value.root, ".local", "share", "keryx-canary-transitions", "synthetic-prepared-quality-rejection");
+  fs.mkdirSync(rejectionDirectory, { recursive: true, mode: 0o700 });
+  const rejection = { format: "keryx-original-prepared-quality-rejection-v1", verdict: "rejected", rejectedAt: receipt,
+    executorCommit: value.supplementAuthorization.executorCommit, preparedResultSha256: proof.preparedResultSha256,
+    runSha256: proof.completion.runSha256, providerLedgerSha256: parent.sha256, contextSha256: value.context.contextSha256,
+    supplementaryInputSha256: value.supplementAuthorization.format === "keryx-original-continuation-authorization-v3" ? value.supplementAuthorization.supplementaryInputSha256 : "",
+    nativeClaimSha256: value.continuationAuthorization.nativeClaimSha256, packetSha256: value.packet.packetSha256,
+    inputSemanticSha256: value.packet.inputSemanticSha256, requiredSupportedTargetIndexes: [0, 1, 2, 3, 4],
+    failureCategories: ["omitted-required-detail", "incomplete-acceptance-checks"], reviewSummary: "Synthetic reviewed answer omits requested detail." };
+  const rootRejection = path.join(rejectionDirectory, "root.json"), independentRejection = path.join(rejectionDirectory, "independent.json");
+  fs.writeFileSync(rootRejection, JSON.stringify({ ...rejection, role: "root" }), { mode: 0o600 });
+  fs.writeFileSync(independentRejection, JSON.stringify({ ...rejection, role: "independent" }), { mode: 0o600 });
+  const nextCommit = "e".repeat(40); git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${nextCommit}\n`);
+  const rawHash = (name: string) => hash(fs.readFileSync(path.join(parentPaths.epochDirectory, name)));
+  const authorization: ContinuationAuthorization = { ...value.continuationAuthorization,
+    format: "keryx-original-continuation-authorization-v4", executorCommit: nextCommit,
+    historicalReservedMicroUsd: 325_900, maximumNewModelCalls: 2, maximumCombinedMicroUsd: 367_220, ownerMaximumCombinedMicroUsd: 400_000,
+    parentAuthorizationFile: value.supplementFile, parentAuthorizationSha256: value.supplementSha256,
+    parentProviderLedgerSha256: parent.sha256, parentLedgerHeadSha256: rawHash("ledger-head.json"),
+    parentAnchorIntentSha256: hash(fs.readFileSync(parentPaths.intentFile)), parentAnchorActiveSha256: hash(fs.readFileSync(parentPaths.activeFile)),
+    parentAnchorFrontierSha256: hash(fs.readFileSync(parentPaths.frontierFile)), parentPreparedResultSha256: proof.preparedResultSha256,
+    parentRunSha256: proof.completion.runSha256, parentSufficiencyHoldSha256: parent.holds[0].sha256,
+    parentSufficiencyCheckpointSha256: rawHash("call-01-checkpoint.json"), parentSufficiencyResultSha256: parent.holds[0].checkpoint!.resultSha256,
+    parentSufficiencyPromptSha256: parent.holds[0].hold.promptSha256, supplementaryInputFile: value.supplementAuthorization.format === "keryx-original-continuation-authorization-v3" ? value.supplementAuthorization.supplementaryInputFile : "",
+    supplementaryInputSha256: value.context.authoritySha256, contextSha256: value.context.contextSha256,
+    rootQualityRejectionFile: rootRejection, rootQualityRejectionSha256: hash(fs.readFileSync(rootRejection)),
+    independentQualityRejectionFile: independentRejection, independentQualityRejectionSha256: hash(fs.readFileSync(independentRejection)),
+    contextProtocol: "full-same-evidence-required-quality-refresh-v1" };
+  const file = path.join(value.root, "prepared-quality-authorization.json"); fs.writeFileSync(file, JSON.stringify(authorization), { mode: 0o600 });
+  return { ...value, qualityFile: file, qualitySha256: hash(fs.readFileSync(file)), qualityAuthorization: authorization,
+    assessment, proof, rejectedParent: bytes(parentPaths.epochDirectory), rejectedAnchor: bytes(parentPaths.anchorDirectory) };
+}
+async function failedQualityEpochFixture() {
+  const value = await preparedEpochFixture(), parentPaths = fixedPaths(value.root, 4);
+  await activateOriginalContinuationEpoch(value.db, value.qualityFile, value.qualitySha256, fixtureFlush);
+  const admitted = await beginOriginalContinuation(value.db, value.qualityFile, value.qualitySha256, fixtureFlush);
+  await stages(admitted.capability);
+  recordContinuationDiagnostic(admitted.capability, { phase: "assemble", category: "quality" });
+  closeContinuationCapability(admitted.capability);
+  const parent = continuationProviderLedger(), rawHash = (name: string) => hash(fs.readFileSync(path.join(parentPaths.epochDirectory, name)));
+  const recordedAt = "2026-10-08T13:00:00.000Z", newExpiry = "2026-10-09T13:00:00.000Z";
+  vi.setSystemTime(recordedAt);
+  const ownerDirectory = path.join(value.root, ".local", "share", "keryx-canary-transitions", "synthetic-new-repair-receipt");
+  fs.mkdirSync(ownerDirectory, { recursive: true, mode: 0o700 });
+  const instruction = "Synthetic owner authorizes repairing the same original until completion.";
+  const ownerReceipt = continuationOwnerRepairReceiptSchema.parse({
+    format: "keryx-original-continuation-owner-repair-receipt-v1", provenance: "retained-current-session-owner-instruction",
+    instruction, instructionSha256: hash(instruction), instructionTimestamp: "not-recorded", recordedAt,
+    authorizationScope: "repair-same-paid-original-until-delivered", limitsChosenBy: "agent-within-explicit-owner-repair-authority",
+    originalAuthorizationSha256: value.authorizationDigest, nativeClaimSha256: value.continuationAuthorization.nativeClaimSha256,
+    packetSha256: value.packet.packetSha256, inputSemanticSha256: value.packet.inputSemanticSha256,
+    contextSha256: value.context.contextSha256, parentAuthorizationSha256: value.qualitySha256,
+    historicalReservedMicroUsd: 367_220, maximumNewModelCalls: 6, maximumCombinedMicroUsd: 491_180,
+    reserveMicroUsd: 20_660, maximumDurationMs: 86_400_000, expiresAt: newExpiry,
+    searches: "forbidden", creatorPayments: "forbidden", newInboundPayment: "forbidden" });
+  const ownerAuthorizationFile = path.join(ownerDirectory, "receipt.json"); fs.writeFileSync(ownerAuthorizationFile, JSON.stringify(ownerReceipt), { mode: 0o600 });
+  const closure = syntheticQualityFailureClosure(value.root, { executorCommit: value.qualityAuthorization.executorCommit,
+    parentAuthorizationSha256: value.qualitySha256, nativeClaimSha256: value.continuationAuthorization.nativeClaimSha256,
+    packetSha256: value.packet.packetSha256, inputSemanticSha256: value.packet.inputSemanticSha256, contextSha256: value.context.contextSha256,
+    parentProviderLedgerSha256: parent.sha256, parentLedgerHeadSha256: rawHash("ledger-head.json"),
+    parentAnchorFrontierSha256: hash(fs.readFileSync(parentPaths.frontierFile)),
+    parentPreparedAuthorizationSha256: value.supplementSha256, approvedAt: recordedAt });
+  for (const [file, raw] of closure.files) {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 }); fs.writeFileSync(file, raw, { mode: 0o600 });
+  }
+  const parentFailureClosureFile = path.join(ownerDirectory, "failure-closure.json"); fs.writeFileSync(parentFailureClosureFile, JSON.stringify(closure.proof), { mode: 0o600 });
+  const tariffFile = path.join(ownerDirectory, "current-tariff.txt"); fs.writeFileSync(tariffFile, "Synthetic fresh repair tariff capture", { mode: 0o600 });
+  const nextCommit = "f".repeat(40); git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${nextCommit}\n`);
+  const authorization: ContinuationAuthorization = { ...value.continuationAuthorization,
+    format: "keryx-original-continuation-authorization-v5", executorCommit: nextCommit, approvedAt: recordedAt,
+    ownerAuthorizationFile, ownerAuthorizationSha256: hash(fs.readFileSync(ownerAuthorizationFile)), ownerAuthorizationReceivedAt: recordedAt,
+    expiresAt: newExpiry, tariffFile, tariffBodySha256: hash(fs.readFileSync(tariffFile)), tariffRetrievedAt: recordedAt,
+    historicalReservedMicroUsd: 367_220, maximumNewModelCalls: 6, maximumCombinedMicroUsd: 491_180, ownerMaximumCombinedMicroUsd: 491_180,
+    parentAuthorizationFile: value.qualityFile, parentAuthorizationSha256: value.qualitySha256,
+    parentProviderLedgerSha256: parent.sha256, parentLedgerHeadSha256: rawHash("ledger-head.json"),
+    parentAnchorIntentSha256: hash(fs.readFileSync(parentPaths.intentFile)), parentAnchorActiveSha256: hash(fs.readFileSync(parentPaths.activeFile)),
+    parentAnchorFrontierSha256: hash(fs.readFileSync(parentPaths.frontierFile)), parentCarriedSufficiencySha256: rawHash("carried-sufficiency.json"),
+    parentGenerationHoldSha256: rawHash("call-01.json"), parentGenerationCheckpointSha256: rawHash("call-01-checkpoint.json"),
+    parentGenerationOutcomeSha256: rawHash("call-01-outcome.json"), parentReviewHoldSha256: rawHash("call-02.json"),
+    parentReviewCheckpointSha256: rawHash("call-02-checkpoint.json"), parentReviewOutcomeSha256: rawHash("call-02-outcome.json"),
+    parentAttemptOutcomeSha256: rawHash("attempt-01-outcome.json"), parentQualityDiagnosticSha256: rawHash("diagnostic-01.json"),
+    parentFailureClosureFile, parentFailureClosureSha256: hash(fs.readFileSync(parentFailureClosureFile)),
+    supplementaryInputFile: value.qualityAuthorization.format === "keryx-original-continuation-authorization-v4" ? value.qualityAuthorization.supplementaryInputFile : "",
+    supplementaryInputSha256: value.context.authoritySha256, contextSha256: value.context.contextSha256,
+    contextProtocol: "full-same-evidence-required-quality-recovery-v1" };
+  const file = path.join(ownerDirectory, "authorization.json"); fs.writeFileSync(file, JSON.stringify(authorization), { mode: 0o600 });
+  const retainedBooks = new Map([value.oldDirectory, fulfillmentDirectory(), value.parentDirectory,
+    ...([2, 3, 4] as const).flatMap(epoch => [fixedPaths(value.root, epoch).epochDirectory, fixedPaths(value.root, epoch).anchorDirectory])]
+    .map(directory => [directory, bytes(directory)]));
+  return { ...value, repairFile: file, repairSha256: hash(fs.readFileSync(file)), repairAuthorization: authorization,
+    ownerAuthorizationFile, ownerReceipt, parent4: parent, retainedBooks };
+}
+async function premiseScopeEpochFixture() {
+  const value = await failedQualityEpochFixture(), parentPaths = fixedPaths(value.root, 5);
+  await activateOriginalContinuationEpoch(value.db, value.repairFile, value.repairSha256, fixtureFlush);
+  const admitted = await beginOriginalContinuation(value.db, value.repairFile, value.repairSha256, fixtureFlush);
+  await stages(admitted.capability); recordContinuationDiagnostic(admitted.capability, { phase: "assemble", category: "quality" });
+  closeContinuationCapability(admitted.capability);
+  const parent = continuationProviderLedger(), rawHash = (name: string) => hash(fs.readFileSync(path.join(parentPaths.epochDirectory, name))),
+    approvedAt = "2026-10-08T14:00:00.000Z";
+  vi.setSystemTime(approvedAt);
+  const directory = path.join(value.root, ".local", "share", "keryx-canary-transitions", "synthetic-premise-source-repair");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const closure = syntheticQualityFailureClosure(value.root, { failureEpoch: 5, executorCommit: value.repairAuthorization.executorCommit,
+    parentAuthorizationSha256: value.repairSha256, nativeClaimSha256: value.repairAuthorization.nativeClaimSha256,
+    packetSha256: value.packet.packetSha256, inputSemanticSha256: value.packet.inputSemanticSha256, contextSha256: value.context.contextSha256,
+    parentProviderLedgerSha256: parent.sha256, parentLedgerHeadSha256: rawHash("ledger-head.json"),
+    parentAnchorFrontierSha256: hash(fs.readFileSync(parentPaths.frontierFile)), parentPreparedAuthorizationSha256: value.qualitySha256, approvedAt });
+  for (const [file, raw] of closure.files) {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 }); fs.writeFileSync(file, raw, { mode: 0o600 });
+  }
+  const parentFailureClosureFile = path.join(directory, "failure-closure.json");
+  fs.writeFileSync(parentFailureClosureFile, JSON.stringify(closure.proof), { mode: 0o600 });
+  const tariffFile = path.join(directory, "current-tariff.txt"); fs.writeFileSync(tariffFile, "Synthetic unchanged-price fresh source-repair tariff", { mode: 0o600 });
+  const nextCommit = "1".repeat(40); git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${nextCommit}\n`);
+  const authorization: ContinuationAuthorization = { ...value.repairAuthorization,
+    format: "keryx-original-continuation-authorization-v6", executorCommit: nextCommit, approvedAt,
+    historicalReservedMicroUsd: 408_540, maximumNewModelCalls: 4,
+    parentAuthorizationFile: value.repairFile, parentAuthorizationSha256: value.repairSha256,
+    parentProviderLedgerSha256: parent.sha256, parentLedgerHeadSha256: rawHash("ledger-head.json"),
+    parentAnchorIntentSha256: hash(fs.readFileSync(parentPaths.intentFile)), parentAnchorActiveSha256: hash(fs.readFileSync(parentPaths.activeFile)),
+    parentAnchorFrontierSha256: hash(fs.readFileSync(parentPaths.frontierFile)), parentCarriedSufficiencySha256: rawHash("carried-sufficiency.json"),
+    parentGenerationHoldSha256: rawHash("call-01.json"), parentGenerationCheckpointSha256: rawHash("call-01-checkpoint.json"),
+    parentGenerationOutcomeSha256: rawHash("call-01-outcome.json"), parentReviewHoldSha256: rawHash("call-02.json"),
+    parentReviewCheckpointSha256: rawHash("call-02-checkpoint.json"), parentReviewOutcomeSha256: rawHash("call-02-outcome.json"),
+    parentAttemptOutcomeSha256: rawHash("attempt-01-outcome.json"), parentQualityDiagnosticSha256: rawHash("diagnostic-01.json"),
+    parentFailureClosureFile, parentFailureClosureSha256: hash(fs.readFileSync(parentFailureClosureFile)),
+    tariffFile, tariffBodySha256: hash(fs.readFileSync(tariffFile)), tariffRetrievedAt: approvedAt,
+    contextProtocol: "full-same-evidence-premise-scope-repair-v1" };
+  const sourceRepairFile = path.join(directory, "authorization.json"); fs.writeFileSync(sourceRepairFile, JSON.stringify(authorization), { mode: 0o600 });
+  const retainedBooks = new Map([...value.retainedBooks, ...[parentPaths.epochDirectory, parentPaths.anchorDirectory]
+    .map(directory => [directory, bytes(directory)] as const)]);
+  return { ...value, sourceRepairFile, sourceRepairSha256: hash(fs.readFileSync(sourceRepairFile)), sourceRepairAuthorization: authorization,
+    parent5: parent, retainedBooks, closure };
+}
+describe("additive same-original supplier continuation", () => {
+  it("observes fresh native authority and window without creating an execution intent", async () => {
+    const value = await fixture(), before = bytes(value.oldDirectory), retained = bytes(fulfillmentDirectory());
+    expect(await inspectOriginalContinuation(value.db, value.file, value.sha256)).toMatchObject({ supplierWindowLive: true,
+      newModelCalls: 0, combinedReservedMicroUsd: 77_980, prepared: false, nativeCompleted: false, executionIntentRetained: false,
+      providerRequests: 0, payments: 0 });
+    expect(fs.readdirSync(continuationDirectory())).toEqual([]);
+    expect(bytes(value.oldDirectory)).toEqual(before); expect(bytes(fulfillmentDirectory())).toEqual(retained);
+  });
+  it("retains the original claim, settlement and both old registries while granting a separate bounded capability", async () => {
+    const value = await fixture(), old = bytes(value.oldDirectory), additive = bytes(fulfillmentDirectory());
+    const admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    expect(admitted.claim).toEqual(value.original.claim); expect(admitted.binding.original).toEqual(value.binding);
+    expect(value.db.claimA2aFailedOriginalFulfillment).toHaveBeenCalledOnce();
+    await stages(admitted.capability); closeContinuationCapability(admitted.capability);
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 3, oldAdditiveModelCalls: 2, combinedReservedMicroUsd: 139_960 });
+    expect(bytes(value.oldDirectory)).toEqual(old); expect(bytes(fulfillmentDirectory())).toEqual(additive);
+    expect(value.order.status).toBe("failed"); expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(["originalAuthorizationSha256", "originalClaimSha256", "nativeClaimSha256", "packetSha256",
+    "originalFulfillmentProviderLedgerSha256", "executionHostSha256"] as const)("refuses changed %s before supplier execution", async field => {
+    const value = await fixture(); fs.writeFileSync(value.file, JSON.stringify({ ...value.continuationAuthorization, [field]: "a".repeat(64) }));
+    await expect(beginOriginalContinuation(value.db, value.file, hash(fs.readFileSync(value.file)), fixtureFlush)).rejects.toThrow();
+    expect(fs.readdirSync(continuationDirectory())).toEqual([]); expect(fetch).not.toHaveBeenCalled();
+  });
+  it("rejects source, authorization digest, expired windows and newly inflated quota", async () => {
+    const value = await fixture();
+    await expect(beginOriginalContinuation(value.db, value.file, "b".repeat(64), fixtureFlush)).rejects.toThrow("authorization changed");
+    git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${"d".repeat(40)}\n`);
+    await expect(beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush)).rejects.toThrow("source changed");
+    git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${fixtureCommit}\n`);
+    vi.setSystemTime(expiresAt);
+    await expect(beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush)).rejects.toThrow("expired");
+    expect(readContinuationAuthorization(value.file, value.sha256).authorization.expiresAt).toBe(expiresAt);
+    expect(continuationAuthorizationSchema.safeParse({ ...value.continuationAuthorization, maximumNewModelCalls: 9 }).success).toBe(false);
+    expect(continuationAuthorizationSchema.safeParse({ ...value.continuationAuthorization, expiresAt: "2026-10-09T12:00:00.000Z" }).success).toBe(false);
+  });
+  it("refuses counterfeit dispatch, concurrent stages and lock takeover even by a second genuine begin", async () => {
+    const value = await fixture(), admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    expect(() => assertContinuationSupplierAdmission({} as ContinuationCapability)).toThrow("revoked");
+    await expect(continuationModel({} as ContinuationCapability, "sufficiency", "s", "u", 1, async () => ({}))).rejects.toThrow("opaque");
+    let resolve!: (value: Record<string, unknown>) => void;
+    const active = continuationModel(admitted.capability, "sufficiency", "s", "u", 1, () => new Promise(done => { resolve = done; }));
+    await expect(continuationModel(admitted.capability, "sufficiency", "s", "u", 1, async () => ({}))).rejects.toThrow("opaque");
+    await expect(beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush)).rejects.toThrow();
+    resolve({ fixture: true }); await active; closeContinuationCapability(admitted.capability);
+    expect(continuationProviderLedger().newModelCalls).toBe(1);
+  });
+  it("reuses only exact successful JSON checkpoints in a fresh additive attempt without replaying requests", async () => {
+    const value = await fixture(), first = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush), action = vi.fn(async () => ({ fixture: "checkpoint" }));
+    await continuationModel(first.capability, "sufficiency", "s", "u", 1, action); closeContinuationCapability(first.capability);
+    const second = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    expect(await continuationModel(second.capability, "sufficiency", "s", "u", 1, action)).toEqual({ fixture: "checkpoint" });
+    closeContinuationCapability(second.capability); expect(action).toHaveBeenCalledOnce();
+    const third = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    await continuationModel(third.capability, "sufficiency", "s", "changed", 1, action); closeContinuationCapability(third.capability);
+    expect(action).toHaveBeenCalledTimes(2); expect(continuationProviderLedger().newModelCalls).toBe(2);
+  });
+  it("retains failed holds and a fixed diagnostic, then budgets a fresh request instead of replaying its old hold", async () => {
+    const value = await fixture(), first = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    await expect(continuationModel(first.capability, "sufficiency", "s", "u", 1, async () => { throw Error("secret provider raw exception"); })).rejects.toThrow();
+    expect(() => assertContinuationSupplierAdmission(first.capability)).toThrow("revoked");
+    recordContinuationDiagnostic(first.capability, { phase: "sufficiency", category: "transport" });
+    closeContinuationCapability(first.capability);
+    expect(bytes(continuationDirectory()).map(([, raw]) => Buffer.from(raw, "hex").toString("utf8")).join("\n")).not.toContain("secret provider");
+    const second = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    await continuationModel(second.capability, "sufficiency", "s", "u", 1, async () => ({ fixture: true })); closeContinuationCapability(second.capability);
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 2, combinedReservedMicroUsd: 119_300 });
+  });
+  it("refreshes a quality-rejected generation and reviews it independently even when the prompt is identical", async () => {
+    const value = await fixture(), originalBytes = bytes(value.oldDirectory), oldAdditiveBytes = bytes(fulfillmentDirectory());
+    const action = vi.fn(async () => ({ fixture: "normalized stage output" }));
+    const first = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    for (const stage of ["sufficiency", "synthesize", "review"] as const)
+      await continuationModel(first.capability, stage, "system", stage, 1, action);
+    expect(() => prepareContinuationResult(first.capability, preparedRun(first, 0.1))).toThrow("required support");
+    recordContinuationDiagnostic(first.capability, { phase: "assemble", category: "quality" });
+    closeContinuationCapability(first.capability);
+    const retainedCalls = bytes(continuationDirectory()).filter(([name]) => name.startsWith("call-"));
+    const second = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    for (const stage of ["sufficiency", "synthesize", "review"] as const)
+      await continuationModel(second.capability, stage, "system", stage, 1, action);
+    expect(action).toHaveBeenCalledTimes(5); // Sufficiency cached; generation and independent review are fresh.
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 5, combinedReservedMicroUsd: 181_280 });
+    expect(prepareContinuationResult(second.capability, preparedRun(second)).claimId).toBe(value.original.claim.claimId);
+    expect(bytes(continuationDirectory()).filter(([name]) => retainedCalls.some(([oldName]) => oldName === name))).toEqual(retainedCalls);
+    expect(bytes(value.oldDirectory)).toEqual(originalBytes); expect(bytes(fulfillmentDirectory())).toEqual(oldAdditiveBytes);
+  });
+  it("cannot manufacture a quality-refresh diagnostic before the three reviewed stages are complete", async () => {
+    const value = await fixture(), admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    expect(() => recordContinuationDiagnostic(admitted.capability, { phase: "assemble", category: "quality" })).toThrow("completed independent review");
+    expect(continuationProviderLedger().diagnostics).toEqual([]); closeContinuationCapability(admitted.capability);
+  });
+  it("stops an acknowledged low mandatory assessment without another attempt or generation hold", async () => {
+    const value = await fixture(), admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    expect(() => recordContinuationDiagnostic(admitted.capability, { phase: "sufficiency", category: "quality" })).toThrow("acknowledged assessment");
+    await continuationModel(admitted.capability, "sufficiency", "s", "u", 1, async () => ({ perClaim: [{ coverage: 0.1 }] }));
+    recordContinuationDiagnostic(admitted.capability, { phase: "sufficiency", category: "quality" }); closeContinuationCapability(admitted.capability);
+    const retained = bytes(continuationDirectory());
+    await expect(beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush)).rejects.toThrow("unchanged context");
+    expect(bytes(continuationDirectory())).toEqual(retained); expect(continuationProviderLedger().newModelCalls).toBe(1);
+  });
+  it("keeps the rejected-checkpoint barrier after an intervening fresh-generation transport failure", async () => {
+    const value = await fixture(), first = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    await stages(first.capability); recordContinuationDiagnostic(first.capability, { phase: "assemble", category: "quality" });
+    closeContinuationCapability(first.capability);
+    const second = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    await continuationModel(second.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, async () => ({}));
+    await expect(continuationModel(second.capability, "synthesize", "Fixture system", "synthesize fixture", 1,
+      async () => { throw Error("fixture generation transport failure"); })).rejects.toThrow();
+    recordContinuationDiagnostic(second.capability, { phase: "synthesize", category: "transport" }); closeContinuationCapability(second.capability);
+    const third = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush), action = vi.fn(async () => ({ fixture: "new pair" }));
+    for (const stage of ["sufficiency", "synthesize", "review"] as const)
+      await continuationModel(third.capability, stage, "Fixture system", `${stage} fixture`, 1, action);
+    expect(action).toHaveBeenCalledTimes(2); // Never falls back to the quality-rejected first pair.
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 6, combinedReservedMicroUsd: 201_940 });
+    closeContinuationCapability(third.capability);
+  });
+  it("charges every quality refresh and refuses the ninth hold without reusing a rejected reviewer", async () => {
+    const value = await fixture();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+      await stages(admitted.capability); recordContinuationDiagnostic(admitted.capability, { phase: "assemble", category: "quality" });
+      closeContinuationCapability(admitted.capability);
+      expect(continuationProviderLedger().newModelCalls).toBe(3 + attempt * 2);
+    }
+    const fourth = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    await continuationModel(fourth.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, async () => ({}));
+    await continuationModel(fourth.capability, "synthesize", "Fixture system", "synthesize fixture", 1, async () => ({ fixture: "fresh eighth call" }));
+    const review = vi.fn(async () => ({ fixture: "unfunded review" }));
+    await expect(continuationModel(fourth.capability, "review", "Fixture system", "review fixture", 1, review)).rejects.toThrow("exhausted");
+    closeContinuationCapability(fourth.capability);
+    expect(review).not.toHaveBeenCalled();
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 8, combinedReservedMicroUsd: 243_260 });
+    expect(fs.existsSync(path.join(continuationDirectory(), "prepared-result.json"))).toBe(false);
+  });
+  it("bounds eight additive holds by all historical reservations without releasing failures", async () => {
+    const value = await fixture();
+    for (let index = 0; index < 8; index++) {
+      const admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+      await expect(continuationModel(admitted.capability, "sufficiency", "s", "u", 1, async () => { throw Error("fixture transport"); })).rejects.toThrow();
+      closeContinuationCapability(admitted.capability);
+    }
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 8, combinedReservedMicroUsd: 243_260 });
+    await expect(beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush)).rejects.toThrow("exhausted");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(["hold", "checkpoint", "outcome", "head"])("rejects deleted %s bytes without resetting the next additive allowance", async kind => {
+    const value = await fixture(), admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    await continuationModel(admitted.capability, "sufficiency", "s", "u", 1, async () => ({ fixture: true })); closeContinuationCapability(admitted.capability);
+    const file = kind === "head" ? "ledger-head.json" : `call-01${kind === "hold" ? "" : `-${kind}`}.json`;
+    fs.unlinkSync(path.join(continuationDirectory(), file));
+    expect(() => continuationProviderLedger()).toThrow("ledger head");
+    await expect(beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush)).rejects.toThrow("ledger head");
+  });
+  it("retains a crashed/fsync-uncertain execution intent and never takes it over by age", async () => {
+    const value = await fixture();
+    await expect(beginOriginalContinuation(value.db, value.file, value.sha256, () => { throw Error("fixture directory flush lost"); })).rejects.toThrow("flush lost");
+    expect(fs.existsSync(path.join(continuationDirectory(), "execution-lock.json"))).toBe(true);
+    vi.setSystemTime("2026-10-07T20:00:00.000Z");
+    await expect(beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush)).rejects.toThrow();
+    expect(value.db.claimA2aFailedOriginalFulfillment).toHaveBeenCalledOnce(); expect(fetch).not.toHaveBeenCalled();
+  });
+  it("does not release the lock when normal attempt closure acknowledgement is uncertain", async () => {
+    const value = await fixture(); let failClosure = false;
+    const admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, () => {
+      if (failClosure && fs.existsSync(path.join(continuationDirectory(), "attempt-01-outcome.json"))) throw Error("fixture closure flush lost");
+    });
+    await continuationModel(admitted.capability, "sufficiency", "s", "u", 1, async () => ({ fixture: true }));
+    failClosure = true; expect(() => closeContinuationCapability(admitted.capability)).toThrow("closure flush lost");
+    expect(fs.existsSync(path.join(continuationDirectory(), "execution-lock.json"))).toBe(true);
+    await expect(beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush)).rejects.toThrow();
+  });
+  it("rejects post-hold deadline expiry before dispatch without releasing its durable reservation", async () => {
+    const value = await fixture(); let expire = false;
+    const admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, () => {
+      if (expire) vi.setSystemTime(expiresAt);
+    });
+    expire = true; const action = vi.fn(async () => ({ fixture: true }));
+    await expect(continuationModel(admitted.capability, "sufficiency", "s", "u", 1, action)).rejects.toThrow("expired");
+    closeContinuationCapability(admitted.capability);
+    expect(action).not.toHaveBeenCalled(); expect(continuationProviderLedger().newModelCalls).toBe(1);
+  });
+  it("revokes and aborts an in-flight request, retaining its lock until the action has settled", async () => {
+    const value = await fixture(), admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    let resolve!: (value: Record<string, unknown>) => void; let signal!: AbortSignal;
+    const active = continuationModel(admitted.capability, "sufficiency", "s", "u", 1, () => {
+      signal = continuationSupplierSignal(admitted.capability, 120_000);
+      return new Promise(done => { resolve = done; });
+    });
+    closeContinuationCapability(admitted.capability); expect(signal.aborted).toBe(true);
+    expect(fs.existsSync(path.join(continuationDirectory(), "execution-lock.json"))).toBe(true);
+    resolve({ fixture: "after revocation" }); await expect(active).rejects.toThrow("revocation");
+    expect(fs.existsSync(path.join(continuationDirectory(), "execution-lock.json"))).toBe(false);
+    expect(continuationProviderLedger().newModelCalls).toBe(1);
+  });
+  it("caller mutation of returned binding cannot enlarge the private capability's allowance", async () => {
+    const value = await fixture(), admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    admitted.binding.authorization.maximumNewModelCalls = 100;
+    admitted.binding.authorization.packetSha256 = "a".repeat(64);
+    await continuationModel(admitted.capability, "sufficiency", "s", "u", 1, async () => ({ fixture: true }));
+    closeContinuationCapability(admitted.capability);
+    expect(continuationProviderLedger().holds[0].hold.packetSha256).toBe(value.packet.packetSha256);
+  });
+  it("aborts revocation and exact supplier expiry while keeping the dispatched hold consumed", async () => {
+    const value = await fixture(), admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    vi.setSystemTime("2026-10-08T11:59:59.990Z");
+    const controller = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(duration => { setTimeout(() => controller.abort(), duration); return controller.signal; });
+    await expect(continuationModel(admitted.capability, "sufficiency", "s", "u", 1, async () => {
+      const signal = continuationSupplierSignal(admitted.capability, 120_000);
+      await vi.advanceTimersByTimeAsync(10); expect(signal.aborted).toBe(true);
+      expect(() => assertContinuationSupplierAdmission(admitted.capability)).toThrow("expired");
+      return { fixture: "too late" };
+    })).rejects.toThrow();
+    closeContinuationCapability(admitted.capability); expect(continuationProviderLedger().newModelCalls).toBe(1);
+    expect(fs.existsSync(path.join(continuationDirectory(), "call-01-checkpoint.json"))).toBe(false);
+  });
+  it("prepares and idempotently delivers only the exact same native claim, recovering lost acknowledgement after expiry", async () => {
+    const value = await fixture(), admitted = await beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush);
+    await stages(admitted.capability);
+    const run = syntheticFulfilledRun(admitted.claim).run;
+    run.createdAt = receipt;
+    run.durationMs = Date.parse(receipt) - Date.parse(admitted.claim.failedOrder.startedAt!);
+    // The general native fixture names a different document; adapt only this synthetic public identity.
+    run.citations[0].sourceId = run.evidence![0].sourceId = "public:fulfillment:document-1";
+    run.originalFulfillment!.providerLedgerSha256 = continuationProviderLedger().sha256;
+    const completion = prepareContinuationResult(admitted.capability, run);
+    const proof = await verifyPreparedContinuation(value.db);
+    expect(completion.claimId).toBe(value.original.claim.claimId); expect(value.db.completeA2aFailedOriginalFulfillment).not.toHaveBeenCalled();
+    await expect(completePreparedContinuation(value.db, "a".repeat(64), fixtureFlush)).rejects.toThrow("digest changed");
+    const complete = vi.mocked(value.db.completeA2aFailedOriginalFulfillment!), implementation = complete.getMockImplementation()!;
+    complete.mockImplementationOnce(async input => { await implementation(input); throw Error("fixture acknowledgement lost"); });
+    await expect(completePreparedContinuation(value.db, proof.preparedResultSha256, fixtureFlush)).rejects.toThrow("acknowledgement lost");
+    expect(retainedContinuationDeliveryResolution(value.old)).toBeNull(); vi.setSystemTime("2026-10-09T12:00:00.000Z");
+    expect(await completePreparedContinuation(value.db, proof.preparedResultSha256, fixtureFlush)).toMatchObject({ deliveryCompleted: true, noNewInboundPayment: true });
+    expect(await completePreparedContinuation(value.db, proof.preparedResultSha256, fixtureFlush)).toMatchObject({ deliveryCompleted: true });
+    expect(retainedContinuationDeliveryResolution(value.old)).toEqual({ outcome: "verified-fulfilled-original", admissionPaused: false,
+      paidDeliveryObligation: "resolved", deliveryCompleted: true, refunded: false, noNewInboundPayment: true });
+    expect(retainedBusinessCanaryClosure()).toEqual(retainedContinuationDeliveryResolution(value.old));
+    expect(value.db.claimA2aFailedOriginalFulfillment).toHaveBeenCalledOnce(); expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("separate source-bound additive supplier epoch", () => {
+  it("retains every exhausted parent byte and claim while accounting for a fresh request", async () => {
+    const value = await epochFixture(), old = bytes(value.oldDirectory), original = bytes(fulfillmentDirectory());
+    expect(await inspectOriginalContinuation(value.db, value.epochFile, value.epochSha256)).toMatchObject({ newModelCalls: 0,
+      combinedReservedMicroUsd: 243_260, nativeCompleted: false, providerRequests: 0, payments: 0 });
+    await expect(beginOriginalContinuation(value.db, value.epochFile, value.epochSha256, fixtureFlush)).rejects.toThrow("not active");
+    expect(await activateOriginalContinuationEpoch(value.db, value.epochFile, value.epochSha256, fixtureFlush)).toMatchObject({ activated: true,
+      newModelCalls: 0, combinedReservedMicroUsd: 243_260, nativeClaimChanged: false });
+    git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${fixtureCommit}\n`);
+    await expect(beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush)).rejects.toThrow("superseded");
+    git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${"d".repeat(40)}\n`);
+    const admitted = await beginOriginalContinuation(value.db, value.epochFile, value.epochSha256, fixtureFlush), action = vi.fn(async () => ({ fresh: true }));
+    await continuationModel(admitted.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, action); closeContinuationCapability(admitted.capability);
+    expect(action).toHaveBeenCalledOnce();
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 1, oldAdditiveModelCalls: 10, combinedReservedMicroUsd: 263_920 });
+    expect(bytes(value.parentDirectory)).toEqual(value.parentBytes); expect(bytes(value.oldDirectory)).toEqual(old);
+    expect(bytes(fulfillmentDirectory())).toEqual(original); expect(value.db.claimA2aFailedOriginalFulfillment).toHaveBeenCalledOnce();
+    expect(value.db.completeA2aFailedOriginalFulfillment).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
+    await expect(activateOriginalContinuationEpoch(value.db, value.epochFile, value.epochSha256, fixtureFlush)).rejects.toThrow();
+  }, 60_000);
+  it("consumes six fresh failures without releasing or borrowing the parent's eight holds", async () => {
+    const value = await epochFixture();
+    await activateOriginalContinuationEpoch(value.db, value.epochFile, value.epochSha256, fixtureFlush);
+    for (let index = 0; index < 6; index++) {
+      const admitted = await beginOriginalContinuation(value.db, value.epochFile, value.epochSha256, fixtureFlush);
+      await expect(continuationModel(admitted.capability, "sufficiency", "s", "u", 1, async () => { throw Error("Synthetic fresh failure"); })).rejects.toThrow();
+      closeContinuationCapability(admitted.capability);
+    }
+    const retained = bytes(continuationDirectory());
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 6, combinedReservedMicroUsd: 367_220 });
+    await expect(beginOriginalContinuation(value.db, value.epochFile, value.epochSha256, fixtureFlush)).rejects.toThrow("exhausted");
+    expect(bytes(continuationDirectory())).toEqual(retained); expect(bytes(value.parentDirectory)).toEqual(value.parentBytes);
+  }, 60_000);
+  it("refuses parent changes, grant inflation and missing active journal instead of parent fallback", async () => {
+    const value = await epochFixture();
+    expect(continuationAuthorizationSchema.safeParse({ ...value.epochAuthorization, maximumNewModelCalls: 7 }).success).toBe(false);
+    expect(continuationAuthorizationSchema.safeParse({ ...value.epochAuthorization, maximumCombinedMicroUsd: 500_000 }).success).toBe(false);
+    await activateOriginalContinuationEpoch(value.db, value.epochFile, value.epochSha256, fixtureFlush);
+    const paths = fixedPaths(value.root);
+    fs.unlinkSync(path.join(paths.epochDirectory, "authorization.json"));
+    expect(() => continuationDirectory()).toThrow();
+    await expect(beginOriginalContinuation(value.db, value.file, value.sha256, fixtureFlush)).rejects.toThrow();
+    expect(bytes(value.parentDirectory)).toEqual(value.parentBytes);
+  }, 60_000);
+  it("rejects a changed parent raw ledger before any new epoch intent or model dispatch", async () => {
+    const value = await epochFixture(); fs.unlinkSync(path.join(value.parentDirectory, "call-01.json"));
+    await expect(activateOriginalContinuationEpoch(value.db, value.epochFile, value.epochSha256, fixtureFlush)).rejects.toThrow("ledger head");
+    expect(fs.existsSync(fixedPaths(value.root).anchorDirectory)).toBe(false); expect(fetch).not.toHaveBeenCalled();
+  }, 60_000);
+  it("rejects a whole journal restored to its initial snapshot against the external frontier", async () => {
+    const value = await epochFixture(); await activateOriginalContinuationEpoch(value.db, value.epochFile, value.epochSha256, fixtureFlush);
+    const directory = continuationDirectory(), initial = bytes(directory);
+    expect(directory).toBe(fixedPaths(value.root).epochDirectory);
+    const admitted = await beginOriginalContinuation(value.db, value.epochFile, value.epochSha256, fixtureFlush);
+    await continuationModel(admitted.capability, "sufficiency", "s", "u", 1, async () => ({ fixture: true })); closeContinuationCapability(admitted.capability);
+    for (const name of fs.readdirSync(directory)) {
+      const file = path.join(directory, name); expect(path.dirname(file)).toBe(directory);
+      expect(fs.lstatSync(file).isFile()).toBe(true); fs.unlinkSync(file);
+    }
+    for (const [name, raw] of initial) fs.writeFileSync(path.join(directory, name), Buffer.from(raw, "hex"), { mode: 0o600 });
+    expect(() => continuationDirectory()).toThrow();
+    await expect(beginOriginalContinuation(value.db, value.epochFile, value.epochSha256, fixtureFlush)).rejects.toThrow();
+    expect(bytes(value.parentDirectory)).toEqual(value.parentBytes); expect(fetch).not.toHaveBeenCalled();
+  }, 60_000);
+  it("keeps an external update fence and execution lock when held-byte publication is uncertain", async () => {
+    const value = await epochFixture(); await activateOriginalContinuationEpoch(value.db, value.epochFile, value.epochSha256, fixtureFlush);
+    const paths = fixedPaths(value.root), action = vi.fn(async () => ({ fixture: true }));
+    const admitted = await beginOriginalContinuation(value.db, value.epochFile, value.epochSha256, directory => {
+      if (directory === paths.epochDirectory && fs.existsSync(path.join(directory, "call-01.json"))) throw Error("Synthetic hold publication lost");
+    });
+    await expect(continuationModel(admitted.capability, "sufficiency", "s", "u", 1, action)).rejects.toThrow("publication lost");
+    expect(action).not.toHaveBeenCalled(); expect(fs.existsSync(paths.ledgerUpdateLockFile)).toBe(true);
+    expect(fs.existsSync(path.join(paths.epochDirectory, "execution-lock.json"))).toBe(true);
+    expect(() => continuationDirectory()).toThrow();
+    await expect(beginOriginalContinuation(value.db, value.epochFile, value.epochSha256, fixtureFlush)).rejects.toThrow();
+    expect(bytes(value.parentDirectory)).toEqual(value.parentBytes);
+  }, 60_000);
+  it("delivers the exact same original after fresh reviewed stages, preserving every parent hold", async () => {
+    const value = await epochFixture();
+    await activateOriginalContinuationEpoch(value.db, value.epochFile, value.epochSha256, fixtureFlush);
+    const admitted = await beginOriginalContinuation(value.db, value.epochFile, value.epochSha256, fixtureFlush);
+    await stages(admitted.capability); const run = preparedRun(admitted);
+    prepareContinuationResult(admitted.capability, run);
+    const proof = await verifyPreparedContinuation(value.db);
+    vi.setSystemTime("2026-10-09T12:00:00.000Z");
+    expect(await completePreparedContinuation(value.db, proof.preparedResultSha256, fixtureFlush)).toMatchObject({ deliveryCompleted: true, noNewInboundPayment: true });
+    expect(retainedContinuationDeliveryResolution(value.old)).toMatchObject({ deliveryCompleted: true, admissionPaused: false });
+    expect(bytes(value.parentDirectory)).toEqual(value.parentBytes); expect(value.db.claimA2aFailedOriginalFulfillment).toHaveBeenCalledOnce();
+  }, 60_000);
+});
+
+describe("remaining-five free-primary supplementary epoch", () => {
+  it("closes the actual engine attempt if supplementary quote construction fails after native admission", async () => {
+    const value = await supplementEpochFixture(), paths = fixedPaths(value.root, 3);
+    await activateOriginalContinuationEpoch(value.db, value.supplementFile, value.supplementSha256, fixtureFlush);
+    const binding = readContinuationAuthorization(value.supplementFile, value.supplementSha256);
+    expect(await preflightOriginalContinuation(binding.original, binding.supplement)).toMatchObject({ providerRequests: 0, targets: 5 });
+    // Preserve the real admission, journal and cleanup; Windows fixtures explicitly
+    // acknowledge directory flushing as in every other protected policy fixture.
+    const begin = continuationPolicy.beginOriginalContinuation;
+    vi.spyOn(continuationPolicy, "beginOriginalContinuation").mockImplementation((db, file, sha) => begin(db, file, sha, fixtureFlush));
+    const quoteOptions = vi.spyOn(supplementaryEvidence, "supplementaryQuoteOptions").mockImplementationOnce(() => {
+      throw new ReasoningInputLimitError("Synthetic supplementary quote bound failure");
+    });
+    await expect(completeOriginalContinuation(value.db, value.supplementFile, value.supplementSha256, "synthetic-no-transport-key")).rejects.toThrow("input-limit");
+    expect(quoteOptions).toHaveBeenCalledOnce(); expect(fetch).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(paths.epochDirectory, "execution-lock.json"))).toBe(false);
+    const ledger = continuationProviderLedger();
+    expect(ledger).toMatchObject({ newModelCalls: 0, combinedReservedMicroUsd: 263_920 }); expect(ledger.attempts).toHaveLength(1);
+    expect(ledger.diagnostics.map(item => item.diagnostic)).toEqual([{ phase: "sufficiency", category: "input-limit" }]);
+    const closed = JSON.parse(fs.readFileSync(path.join(paths.epochDirectory, "attempt-01-outcome.json"), "utf8"));
+    expect(closed).toMatchObject({ attemptId: ledger.attempts[0].attemptId, outcome: "revoked" });
+    expect(bytes(fixedPaths(value.root).epochDirectory)).toEqual(value.retainedEpoch);
+    expect(bytes(fixedPaths(value.root).anchorDirectory)).toEqual(value.retainedAnchor);
+  }, 300_000);
+  it("binds the acknowledged gap and supplementary context, reviews all five targets and completes the same original after lost acknowledgement", async () => {
+    const value = await supplementEpochFixture(), old = bytes(value.oldDirectory), original = bytes(fulfillmentDirectory()), paths = fixedPaths(value.root, 3);
+    expect(continuationAuthorizationSchema.safeParse({ ...value.supplementAuthorization, maximumNewModelCalls: 6 }).success).toBe(false);
+    expect(continuationAuthorizationSchema.safeParse({ ...value.supplementAuthorization, maximumCombinedMicroUsd: 400_000 }).success).toBe(false);
+    for (const replacement of [{ expiresAt: "2026-10-08T12:00:01.000Z" }, { parentSufficiencyDiagnosticSha256: "a".repeat(64) },
+      { parentAnchorFrontierSha256: "a".repeat(64) }, { ownerAuthorizationSha256: "a".repeat(64) }, { contextSha256: "a".repeat(64) }]) {
+      fs.writeFileSync(value.supplementFile, JSON.stringify({ ...value.supplementAuthorization, ...replacement }));
+      await expect(activateOriginalContinuationEpoch(value.db, value.supplementFile, hash(fs.readFileSync(value.supplementFile)), fixtureFlush)).rejects.toThrow();
+      expect(fs.existsSync(paths.anchorDirectory)).toBe(false);
+    }
+    fs.writeFileSync(value.supplementFile, JSON.stringify(value.supplementAuthorization));
+    expect(await inspectOriginalContinuation(value.db, value.supplementFile, value.supplementSha256)).toMatchObject({ newModelCalls: 0,
+      combinedReservedMicroUsd: 263_920, providerRequests: 0, payments: 0 });
+    await activateOriginalContinuationEpoch(value.db, value.supplementFile, value.supplementSha256, fixtureFlush);
+    await expect(beginOriginalContinuation(value.db, value.epochFile, value.epochSha256, fixtureFlush)).rejects.toThrow("superseded");
+    const admitted = await beginOriginalContinuation(value.db, value.supplementFile, value.supplementSha256, fixtureFlush), action = vi.fn(async () => ({ fresh: true }));
+    for (const stage of ["sufficiency", "synthesize", "review"] as const)
+      await continuationModel(admitted.capability, stage, "Fixture system", `${stage} fixture`, 1, action);
+    expect(action).toHaveBeenCalledTimes(3); // The negative parent assessment cannot cross the context boundary.
+    const ledger = continuationProviderLedger();
+    expect(ledger).toMatchObject({ newModelCalls: 3, oldAdditiveModelCalls: 11, combinedReservedMicroUsd: 325_900 });
+    expect(ledger.holds.every(item => "contextSha256" in item.hold && item.hold.contextSha256 === value.context.contextSha256)).toBe(true);
+    const run = supplementaryPreparedRun(admitted); prepareContinuationResult(admitted.capability, run);
+    const proof = await verifyPreparedContinuation(value.db);
+    const complete = vi.mocked(value.db.completeA2aFailedOriginalFulfillment!), implementation = complete.getMockImplementation()!;
+    complete.mockImplementationOnce(async (input, capability) => { await implementation(input, capability); throw Error("Synthetic supplementary acknowledgement lost"); });
+    await expect(completePreparedContinuation(value.db, proof.preparedResultSha256, fixtureFlush)).rejects.toThrow("acknowledgement lost");
+    expect(retainedContinuationDeliveryResolution(value.old)).toBeNull(); vi.setSystemTime("2026-10-09T12:00:00.000Z");
+    expect(await completePreparedContinuation(value.db, proof.preparedResultSha256, fixtureFlush)).toMatchObject({ deliveryCompleted: true, noNewInboundPayment: true });
+    expect(await completePreparedContinuation(value.db, proof.preparedResultSha256, fixtureFlush)).toMatchObject({ deliveryCompleted: true });
+    expect(await inspectOriginalContinuation(value.db, value.supplementFile, value.supplementSha256)).toMatchObject({ nativeCompleted: true, providerRequests: 0 });
+    expect(retainedBusinessCanaryClosure()).toMatchObject({ paidDeliveryObligation: "resolved", deliveryCompleted: true, admissionPaused: false });
+    expect(complete.mock.calls.every(call => call.length === 2 && call[1] !== undefined)).toBe(true);
+    const envelope = JSON.parse(fs.readFileSync(path.join(paths.epochDirectory, "prepared-result.json"), "utf8"));
+    expect(envelope.contextSha256).toBe(value.context.contextSha256); expect(envelope).not.toHaveProperty("capability");
+    expect(bytes(value.parentDirectory)).toEqual(value.parentBytes); expect(bytes(fixedPaths(value.root).epochDirectory)).toEqual(value.retainedEpoch);
+    expect(bytes(fixedPaths(value.root).anchorDirectory)).toEqual(value.retainedAnchor); expect(bytes(value.oldDirectory)).toEqual(old);
+    expect(bytes(fulfillmentDirectory())).toEqual(original); expect(value.db.claimA2aFailedOriginalFulfillment).toHaveBeenCalledOnce(); expect(fetch).not.toHaveBeenCalled();
+  }, 300_000);
+  it("retains five failures and refuses any sixth hold while both parent frontiers remain immutable", async () => {
+    const value = await supplementEpochFixture(), paths = fixedPaths(value.root, 3);
+    await activateOriginalContinuationEpoch(value.db, value.supplementFile, value.supplementSha256, fixtureFlush);
+    const initial = bytes(paths.epochDirectory);
+    const admitted = await beginOriginalContinuation(value.db, value.supplementFile, value.supplementSha256, fixtureFlush), action = vi.fn(async () => ({ shouldNotDispatch: true }));
+    fs.writeFileSync(path.join(value.directory, "primary-body.txt"), `${value.body}\nSynthetic tamper.`);
+    await expect(continuationModel(admitted.capability, "sufficiency", "s", "u", 1, action)).rejects.toThrow();
+    expect(action).not.toHaveBeenCalled(); fs.writeFileSync(path.join(value.directory, "primary-body.txt"), value.body);
+    closeContinuationCapability(admitted.capability);
+    expect(continuationProviderLedger().newModelCalls).toBe(0);
+    for (let index = 0; index < 5; index++) {
+      const attempt = await beginOriginalContinuation(value.db, value.supplementFile, value.supplementSha256, fixtureFlush);
+      await expect(continuationModel(attempt.capability, "sufficiency", "s", "u", 1, async () => { throw Error("Synthetic transport failure"); })).rejects.toThrow();
+      closeContinuationCapability(attempt.capability);
+    }
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 5, combinedReservedMicroUsd: 367_220 });
+    await expect(beginOriginalContinuation(value.db, value.supplementFile, value.supplementSha256, fixtureFlush)).rejects.toThrow("exhausted");
+    expect(bytes(value.parentDirectory)).toEqual(value.parentBytes); expect(bytes(fixedPaths(value.root).epochDirectory)).toEqual(value.retainedEpoch);
+    expect(bytes(fixedPaths(value.root).anchorDirectory)).toEqual(value.retainedAnchor);
+    for (const name of fs.readdirSync(paths.epochDirectory)) fs.unlinkSync(path.join(paths.epochDirectory, name));
+    for (const [name, raw] of initial) fs.writeFileSync(path.join(paths.epochDirectory, name), Buffer.from(raw, "hex"), { mode: 0o600 });
+    expect(() => continuationDirectory()).toThrow();
+    await expect(inspectOriginalContinuation(value.db, value.supplementFile, value.supplementSha256)).rejects.toThrow();
+    await expect(beginOriginalContinuation(value.db, value.epochFile, value.epochSha256, fixtureFlush)).rejects.toThrow(); expect(fetch).not.toHaveBeenCalled();
+  }, 300_000);
+});
+
+describe("two remaining same-evidence prepared quality holds", () => {
+  it("carries only exact positive sufficiency and charges two fresh contextual stages without changing the rejected parent", async () => {
+    const value = await preparedEpochFixture(), paths = fixedPaths(value.root, 4);
+    const observation = await inspectOriginalContinuation(value.db, value.qualityFile, value.qualitySha256);
+    expect(observation).toMatchObject({
+      newModelCalls: 0, combinedReservedMicroUsd: 325_900, prepared: false, providerRequests: 0, payments: 0 });
+    const readonlyEvidence = continuationReadOnlyQualityEvidenceCapability(observation.binding, observation.claim);
+    await activateOriginalContinuationEpoch(value.db, value.qualityFile, value.qualitySha256, fixtureFlush);
+    const admitted = await beginOriginalContinuation(value.db, value.qualityFile, value.qualitySha256, fixtureFlush);
+    expect(admitted.binding.qualityProtocol).toBe("same-evidence-prepared-quality-v1");
+    expect(continuationQualityProtocol(admitted.capability, value.context.contextSha256)).toBe(admitted.binding.qualityProtocol);
+    const supplierEvidence = continuationQualityEvidenceCapability(admitted.capability)!;
+    expect(() => continuationQualityEvidenceProtocol({} as ContinuationQualityEvidenceCapability, value.context.contextSha256)).toThrow("unavailable");
+    expect(() => continuationQualityProtocol({} as ContinuationCapability)).toThrow("unavailable");
+    expect(() => continuationQualityProtocol(admitted.capability, "f".repeat(64))).toThrow("context changed");
+    const action = vi.fn(async () => {
+      expect(continuationQualityEvidenceProtocol(supplierEvidence, value.context.contextSha256)).toBe(admitted.binding.qualityProtocol);
+      return { fixture: "fresh reviewed quality attempt" };
+    });
+    await expect(continuationModel(admitted.capability, "sufficiency", "Fixture system", "changed sufficiency", 1, action)).rejects.toThrow("carry prompt");
+    expect(await continuationModel(admitted.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, action)).toEqual(value.assessment);
+    expect(action).not.toHaveBeenCalled(); expect(continuationProviderLedger().newModelCalls).toBe(0);
+    for (const stage of ["synthesize", "review"] as const)
+      await continuationModel(admitted.capability, stage, "Fixture system", `${stage} fixture`, 1, action);
+    expect(action).toHaveBeenCalledTimes(2);
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 2, oldAdditiveModelCalls: 14, combinedReservedMicroUsd: 367_220 });
+    expect(continuationProviderLedger().holds.map(item => item.hold.stage)).toEqual(["synthesize", "review"]);
+    expect(() => prepareContinuationResult(admitted.capability, supplementaryPreparedRun(admitted))).toThrow("native quality evidence tuple changed");
+    closeContinuationCapability(admitted.capability);
+    expect(() => continuationQualityProtocol(admitted.capability)).toThrow("unavailable");
+    expect(fs.existsSync(path.join(paths.epochDirectory, "execution-lock.json"))).toBe(false);
+    await expect(beginOriginalContinuation(value.db, value.qualityFile, value.qualitySha256, fixtureFlush)).rejects.toThrow("exhausted");
+    vi.setSystemTime("2026-10-09T12:00:00.000Z");
+    expect(continuationQualityEvidenceProtocol(readonlyEvidence, value.context.contextSha256)).toBe("same-evidence-prepared-quality-v1");
+    expect(() => continuationQualityEvidenceProtocol(supplierEvidence, value.context.contextSha256)).toThrow("unavailable");
+    expect(bytes(fixedPaths(value.root, 3).epochDirectory)).toEqual(value.rejectedParent);
+    expect(bytes(fixedPaths(value.root, 3).anchorDirectory)).toEqual(value.rejectedAnchor);
+    expect(value.db.claimA2aFailedOriginalFulfillment).toHaveBeenCalledOnce(); expect(fetch).not.toHaveBeenCalled();
+  }, 300_000);
+  it("requires separately bound rejection, unchanged parent prepared bytes and an uninflated remaining-pair grant before activation", async () => {
+    const value = await preparedEpochFixture(), paths = fixedPaths(value.root, 4);
+    for (const patch of [{ maximumNewModelCalls: 3 }, { historicalReservedMicroUsd: 263_920 }, { maximumCombinedMicroUsd: 400_000 },
+      { expiresAt: "2026-10-08T12:00:01.000Z" }, { parentPreparedResultSha256: "f".repeat(64) },
+      { parentSufficiencyPromptSha256: "f".repeat(64) }, { contextSha256: "f".repeat(64) },
+      { independentQualityRejectionFile: value.qualityAuthorization.format === "keryx-original-continuation-authorization-v4" ? value.qualityAuthorization.rootQualityRejectionFile : "" }]) {
+      fs.writeFileSync(value.qualityFile, JSON.stringify({ ...value.qualityAuthorization, ...patch }));
+      await expect(activateOriginalContinuationEpoch(value.db, value.qualityFile, hash(fs.readFileSync(value.qualityFile)), fixtureFlush)).rejects.toThrow();
+      expect(fs.existsSync(paths.anchorDirectory)).toBe(false);
+    }
+    fs.writeFileSync(value.qualityFile, JSON.stringify(value.qualityAuthorization));
+    const parentPrepared = path.join(fixedPaths(value.root, 3).epochDirectory, "prepared-result.json");
+    const staged = JSON.parse(fs.readFileSync(parentPrepared, "utf8"));
+    staged.run.answer = "Synthetic counterfeit answer that no longer matches the independently reviewed source renderer.";
+    staged.runSha256 = hashObject(staged.run); fs.writeFileSync(parentPrepared, JSON.stringify(staged));
+    if (value.qualityAuthorization.format !== "keryx-original-continuation-authorization-v4") throw Error("V4 fixture required");
+    const grant = { ...value.qualityAuthorization, parentPreparedResultSha256: hash(fs.readFileSync(parentPrepared)), parentRunSha256: staged.runSha256 };
+    for (const role of ["root", "independent"] as const) {
+      const file = role === "root" ? grant.rootQualityRejectionFile : grant.independentQualityRejectionFile;
+      const record = JSON.parse(fs.readFileSync(file, "utf8")); record.preparedResultSha256 = grant.parentPreparedResultSha256; record.runSha256 = staged.runSha256;
+      fs.writeFileSync(file, JSON.stringify(record));
+      if (role === "root") grant.rootQualityRejectionSha256 = hash(fs.readFileSync(file)); else grant.independentQualityRejectionSha256 = hash(fs.readFileSync(file));
+    }
+    fs.writeFileSync(value.qualityFile, JSON.stringify(grant)); const sha = hash(fs.readFileSync(value.qualityFile));
+    const counterfeit = readContinuationAuthorization(value.qualityFile, sha);
+    expect(() => continuationReadOnlyQualityEvidenceCapability(counterfeit, value.original.claim)).toThrow();
+    await expect(activateOriginalContinuationEpoch(value.db, value.qualityFile, sha, fixtureFlush)).rejects.toThrow();
+    expect(fs.existsSync(paths.anchorDirectory)).toBe(false); expect(fetch).not.toHaveBeenCalled();
+  }, 300_000);
+  it("retains a failed fresh-generation hold and refuses a one-slot attempt rather than reusing parent generation/review", async () => {
+    const value = await preparedEpochFixture(); await activateOriginalContinuationEpoch(value.db, value.qualityFile, value.qualitySha256, fixtureFlush);
+    const admitted = await beginOriginalContinuation(value.db, value.qualityFile, value.qualitySha256, fixtureFlush);
+    await continuationModel(admitted.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, async () => { throw Error("Must be carried"); });
+    await expect(continuationModel(admitted.capability, "synthesize", "Fixture system", "synthesize fixture", 1, async () => {
+      throw Error("Synthetic quality repair transport failure");
+    })).rejects.toThrow("transport failure"); closeContinuationCapability(admitted.capability);
+    const retained = bytes(continuationDirectory());
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 1, combinedReservedMicroUsd: 346_560 });
+    await expect(beginOriginalContinuation(value.db, value.qualityFile, value.qualitySha256, fixtureFlush)).rejects.toThrow("two remaining holds");
+    expect(bytes(continuationDirectory())).toEqual(retained);
+    expect(bytes(fixedPaths(value.root, 3).epochDirectory)).toEqual(value.rejectedParent);
+    expect(bytes(fixedPaths(value.root, 3).anchorDirectory)).toEqual(value.rejectedAnchor);
+  }, 300_000);
+  it("refuses superseded parent admission and a whole current-journal rollback against the external quality frontier", async () => {
+    const value = await preparedEpochFixture(), paths = fixedPaths(value.root, 4);
+    await activateOriginalContinuationEpoch(value.db, value.qualityFile, value.qualitySha256, fixtureFlush);
+    const initial = bytes(paths.epochDirectory);
+    await expect(beginOriginalContinuation(value.db, value.supplementFile, value.supplementSha256, fixtureFlush)).rejects.toThrow();
+    const admitted = await beginOriginalContinuation(value.db, value.qualityFile, value.qualitySha256, fixtureFlush);
+    await continuationModel(admitted.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, async () => ({}));
+    await continuationModel(admitted.capability, "synthesize", "s", "u", 1, async () => ({ fixture: "new" }));
+    closeContinuationCapability(admitted.capability);
+    for (const name of fs.readdirSync(paths.epochDirectory)) fs.unlinkSync(path.join(paths.epochDirectory, name));
+    for (const [name, raw] of initial) fs.writeFileSync(path.join(paths.epochDirectory, name), Buffer.from(raw, "hex"), { mode: 0o600 });
+    expect(() => continuationDirectory()).toThrow();
+    await expect(inspectOriginalContinuation(value.db, value.qualityFile, value.qualitySha256)).rejects.toThrow();
+    await expect(beginOriginalContinuation(value.db, value.supplementFile, value.supplementSha256, fixtureFlush)).rejects.toThrow();
+    expect(bytes(fixedPaths(value.root, 3).epochDirectory)).toEqual(value.rejectedParent); expect(fetch).not.toHaveBeenCalled();
+  }, 300_000);
+});
+
+describe("separately recorded finite repair after exhausted quality pair", () => {
+  it("retains every predecessor and carries the exact assessment while charging three fresh pairs within the new finite scope", async () => {
+    const value = await failedQualityEpochFixture(), paths = fixedPaths(value.root, 5), action = vi.fn(async () => ({ synthetic: "fresh pair" }));
+    const observed = await inspectOriginalContinuation(value.db, value.repairFile, value.repairSha256);
+    expect(observed).toMatchObject({ supplierWindowLive: true, newModelCalls: 0, combinedReservedMicroUsd: 367_220, prepared: false, providerRequests: 0 });
+    expect(observed.binding.authorization.ownerAuthorizationSha256).not.toBe(value.qualityAuthorization.ownerAuthorizationSha256);
+    expect(observed.binding.supplement).toBeDefined();
+    await activateOriginalContinuationEpoch(value.db, value.repairFile, value.repairSha256, fixtureFlush);
+    await expect(beginOriginalContinuation(value.db, value.qualityFile, value.qualitySha256, fixtureFlush)).rejects.toThrow();
+    for (let index = 0; index < 3; index++) {
+      const admitted = await beginOriginalContinuation(value.db, value.repairFile, value.repairSha256, fixtureFlush);
+      expect(admitted.claim).toEqual(value.original.claim);
+      expect(await continuationModel(admitted.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, action)).toEqual(value.assessment);
+      for (const stage of ["synthesize", "review"] as const)
+        await continuationModel(admitted.capability, stage, "Fixture system", `${stage} fixture`, 1, action);
+      recordContinuationDiagnostic(admitted.capability, { phase: "assemble", category: "quality" }); closeContinuationCapability(admitted.capability);
+    }
+    expect(action).toHaveBeenCalledTimes(6); // Identical prompts cannot replay any rejected pair.
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 6, oldAdditiveModelCalls: 16, combinedReservedMicroUsd: 491_180 });
+    expect(continuationProviderLedger().holds.map(item => item.hold.stage)).toEqual(["synthesize", "review", "synthesize", "review", "synthesize", "review"]);
+    const retained = bytes(paths.epochDirectory);
+    await expect(beginOriginalContinuation(value.db, value.repairFile, value.repairSha256, fixtureFlush)).rejects.toThrow("exhausted");
+    expect(bytes(paths.epochDirectory)).toEqual(retained);
+    for (const [directory, before] of value.retainedBooks) expect(bytes(directory)).toEqual(before);
+    expect(value.db.claimA2aFailedOriginalFulfillment).toHaveBeenCalledOnce(); expect(fetch).not.toHaveBeenCalled();
+  }, 300_000);
+
+  it("retains generation-quality failures without reusable checkpoints or review holds, and refuses the last unpaired slot", async () => {
+    const value = await failedQualityEpochFixture(); await activateOriginalContinuationEpoch(value.db, value.repairFile, value.repairSha256, fixtureFlush);
+    for (let index = 0; index < 5; index++) {
+      const admitted = await beginOriginalContinuation(value.db, value.repairFile, value.repairSha256, fixtureFlush);
+      await continuationModel(admitted.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, async () => { throw Error("Must carry assessment"); });
+      expect(() => recordContinuationDiagnostic(admitted.capability, { phase: "synthesize", category: "quality" })).toThrow("acknowledged generation");
+      await expect(continuationModel(admitted.capability, "synthesize", "Fixture system", "synthesize fixture", 1, async () => {
+        throw Error("Synthetic generated response omits a mandatory part");
+      })).rejects.toThrow("mandatory part");
+      recordContinuationDiagnostic(admitted.capability, { phase: "synthesize", category: "quality" }); closeContinuationCapability(admitted.capability);
+    }
+    const ledger = continuationProviderLedger();
+    expect(ledger).toMatchObject({ newModelCalls: 5, combinedReservedMicroUsd: 470_520 });
+    expect(ledger.holds.every(item => item.hold.stage === "synthesize" && item.checkpoint === undefined)).toBe(true);
+    expect(ledger.diagnostics.every(item => item.diagnostic.phase === "synthesize" && item.diagnostic.category === "quality")).toBe(true);
+    await expect(beginOriginalContinuation(value.db, value.repairFile, value.repairSha256, fixtureFlush)).rejects.toThrow("two remaining holds");
+    for (const [directory, before] of value.retainedBooks) expect(bytes(directory)).toEqual(before);
+    expect(fs.existsSync(path.join(continuationDirectory(), "execution-lock.json"))).toBe(false); expect(fetch).not.toHaveBeenCalled();
+  }, 300_000);
+
+  it("requires the new exact receipt and every acknowledged parent pin before activation, without changing the old window or source", async () => {
+    const value = await failedQualityEpochFixture(), paths = fixedPaths(value.root, 5);
+    for (const patch of [{ maximumNewModelCalls: 7 }, { historicalReservedMicroUsd: 325_900 }, { maximumCombinedMicroUsd: 512_000 },
+      { parentCarriedSufficiencySha256: "a".repeat(64) }, { parentGenerationCheckpointSha256: "a".repeat(64) },
+      { parentReviewOutcomeSha256: "a".repeat(64) }, { parentQualityDiagnosticSha256: "a".repeat(64) },
+      { ownerAuthorizationSha256: value.qualityAuthorization.ownerAuthorizationSha256 }, { contextSha256: "a".repeat(64) },
+      { parentAnchorFrontierSha256: "a".repeat(64) }, { ownerAuthorizationReceivedAt: receipt },
+      { expiresAt: "2026-10-09T13:00:00.001Z" }]) {
+      fs.writeFileSync(value.repairFile, JSON.stringify({ ...value.repairAuthorization, ...patch }));
+      await expect(activateOriginalContinuationEpoch(value.db, value.repairFile, hash(fs.readFileSync(value.repairFile)), fixtureFlush)).rejects.toThrow();
+      expect(fs.existsSync(paths.anchorDirectory)).toBe(false);
+    }
+    fs.writeFileSync(value.repairFile, JSON.stringify(value.repairAuthorization));
+    fs.writeFileSync(value.ownerAuthorizationFile, JSON.stringify({ ...value.ownerReceipt, instruction: "Different synthetic instruction" }));
+    await expect(activateOriginalContinuationEpoch(value.db, value.repairFile, value.repairSha256, fixtureFlush)).rejects.toThrow();
+    fs.writeFileSync(value.ownerAuthorizationFile, JSON.stringify(value.ownerReceipt));
+    git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${fixtureCommit}\n`);
+    await expect(activateOriginalContinuationEpoch(value.db, value.repairFile, value.repairSha256, fixtureFlush)).rejects.toThrow("source changed");
+    git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${"f".repeat(40)}\n`);
+    vi.setSystemTime(value.ownerReceipt.expiresAt);
+    await expect(activateOriginalContinuationEpoch(value.db, value.repairFile, value.repairSha256, fixtureFlush)).rejects.toThrow("expired");
+    expect(readContinuationAuthorization(value.qualityFile, value.qualitySha256).authorization.expiresAt).toBe(expiresAt);
+    for (const [directory, before] of value.retainedBooks) expect(bytes(directory)).toEqual(before);
+    expect(fetch).not.toHaveBeenCalled();
+  }, 300_000);
+
+  it("refuses partial current authority and a whole V5 journal rollback rather than admitting any previous epoch", async () => {
+    const value = await failedQualityEpochFixture(), paths = fixedPaths(value.root, 5);
+    await activateOriginalContinuationEpoch(value.db, value.repairFile, value.repairSha256, fixtureFlush);
+    const initial = bytes(paths.epochDirectory), frontier = fs.readFileSync(paths.frontierFile);
+    fs.unlinkSync(paths.frontierFile);
+    await expect(inspectOriginalContinuation(value.db, value.repairFile, value.repairSha256)).rejects.toThrow();
+    await expect(beginOriginalContinuation(value.db, value.qualityFile, value.qualitySha256, fixtureFlush)).rejects.toThrow();
+    fs.writeFileSync(paths.frontierFile, frontier, { mode: 0o600 });
+    const admitted = await beginOriginalContinuation(value.db, value.repairFile, value.repairSha256, fixtureFlush);
+    await continuationModel(admitted.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, async () => ({}));
+    await continuationModel(admitted.capability, "synthesize", "s", "u", 1, async () => ({ synthetic: "retained fresh generation" }));
+    closeContinuationCapability(admitted.capability);
+    for (const name of fs.readdirSync(paths.epochDirectory)) fs.unlinkSync(path.join(paths.epochDirectory, name));
+    for (const [name, raw] of initial) fs.writeFileSync(path.join(paths.epochDirectory, name), Buffer.from(raw, "hex"), { mode: 0o600 });
+    expect(() => continuationDirectory()).toThrow();
+    await expect(inspectOriginalContinuation(value.db, value.repairFile, value.repairSha256)).rejects.toThrow();
+    await expect(beginOriginalContinuation(value.db, value.qualityFile, value.qualitySha256, fixtureFlush)).rejects.toThrow();
+    for (const [directory, before] of value.retainedBooks) expect(bytes(directory)).toEqual(before);
+    expect(fetch).not.toHaveBeenCalled();
+  }, 300_000);
+});
+
+describe("premise-scope source repair within the same finite owner receipt", () => {
+  it("binds the acknowledged failed pair and original clock, then charges only four fresh requests and blocks superseded dispatch", async () => {
+    const value = await premiseScopeEpochFixture(), paths = fixedPaths(value.root, 6), ownerBefore = fs.readFileSync(value.ownerAuthorizationFile);
+    const a = value.sourceRepairAuthorization;
+    for (const patch of [{ maximumNewModelCalls: 5 }, { historicalReservedMicroUsd: 367_220 }, { maximumCombinedMicroUsd: 512_000 },
+      { ownerAuthorizationSha256: "a".repeat(64) }, { ownerAuthorizationReceivedAt: a.approvedAt },
+      { expiresAt: "2026-10-09T13:00:00.001Z" }, { executorCommit: value.repairAuthorization.executorCommit },
+      { parentProviderLedgerSha256: "a".repeat(64) }, { parentAnchorFrontierSha256: "a".repeat(64) },
+      { parentReviewCheckpointSha256: "a".repeat(64) }, { parentQualityDiagnosticSha256: "a".repeat(64) },
+      { supplementaryInputSha256: "a".repeat(64) }, { packetSha256: "a".repeat(64) }]) {
+      fs.writeFileSync(value.sourceRepairFile, JSON.stringify({ ...a, ...patch }));
+      await expect(activateOriginalContinuationEpoch(value.db, value.sourceRepairFile, hash(fs.readFileSync(value.sourceRepairFile)), fixtureFlush)).rejects.toThrow();
+      expect(fs.existsSync(paths.anchorDirectory)).toBe(false);
+    }
+    fs.writeFileSync(value.sourceRepairFile, JSON.stringify(a));
+    const parentPaths = fixedPaths(value.root, 5), executionLock = path.join(parentPaths.epochDirectory, "execution-lock.json");
+    fs.writeFileSync(executionLock, "Synthetic unknown execution", { mode: 0o600 });
+    await expect(activateOriginalContinuationEpoch(value.db, value.sourceRepairFile, value.sourceRepairSha256, fixtureFlush)).rejects.toThrow();
+    fs.unlinkSync(executionLock);
+    const alias = path.join(path.dirname(value.sourceRepairFile), "owner-alias.json"); fs.writeFileSync(alias, ownerBefore, { mode: 0o600 });
+    fs.writeFileSync(value.sourceRepairFile, JSON.stringify({ ...a, ownerAuthorizationFile: alias }));
+    await expect(activateOriginalContinuationEpoch(value.db, value.sourceRepairFile, hash(fs.readFileSync(value.sourceRepairFile)), fixtureFlush)).rejects.toThrow();
+    fs.writeFileSync(value.sourceRepairFile, JSON.stringify(a));
+    expect(await inspectOriginalContinuation(value.db, value.sourceRepairFile, value.sourceRepairSha256)).toMatchObject({ newModelCalls: 0,
+      combinedReservedMicroUsd: 408_540, nativeCompleted: false, prepared: false });
+    await activateOriginalContinuationEpoch(value.db, value.sourceRepairFile, value.sourceRepairSha256, fixtureFlush);
+    git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${value.repairAuthorization.executorCommit}\n`);
+    await expect(beginOriginalContinuation(value.db, value.repairFile, value.repairSha256, fixtureFlush)).rejects.toThrow("superseded");
+    git.mockImplementation((_command, args) => args?.[0] === "status" ? "" : `${a.executorCommit}\n`);
+    const action = vi.fn(async () => ({ synthetic: "fresh source-repaired request" }));
+    for (let index = 0; index < 2; index++) {
+      const admitted = await beginOriginalContinuation(value.db, value.sourceRepairFile, value.sourceRepairSha256, fixtureFlush);
+      expect(await continuationModel(admitted.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, action)).toEqual(value.assessment);
+      for (const stage of ["synthesize", "review"] as const)
+        await continuationModel(admitted.capability, stage, "Fixture system", `${stage} fixture`, 1, action);
+      recordContinuationDiagnostic(admitted.capability, { phase: "assemble", category: "quality" }); closeContinuationCapability(admitted.capability);
+    }
+    expect(action).toHaveBeenCalledTimes(4); // Neither parent's failed generation/review nor this epoch's rejected pair can replay.
+    expect(continuationProviderLedger()).toMatchObject({ newModelCalls: 4, oldAdditiveModelCalls: 18, combinedReservedMicroUsd: 491_180 });
+    await expect(beginOriginalContinuation(value.db, value.sourceRepairFile, value.sourceRepairSha256, fixtureFlush)).rejects.toThrow("exhausted");
+    expect(fs.readFileSync(value.ownerAuthorizationFile)).toEqual(ownerBefore);
+    for (const [directory, before] of value.retainedBooks) expect(bytes(directory)).toEqual(before);
+    const unknown = path.join(value.root, ".local", "share", "keryx-business-canary-continuation-epoch-7-authority");
+    fs.mkdirSync(unknown, { mode: 0o700 }); expect(() => continuationDirectory()).toThrow("uncertain");
+    await expect(inspectOriginalContinuation(value.db, value.sourceRepairFile, value.sourceRepairSha256)).rejects.toThrow();
+    expect(fetch).not.toHaveBeenCalled(); expect(value.db.claimA2aFailedOriginalFulfillment).toHaveBeenCalledOnce();
+  }, 600_000);
+
+  it("retains a fresh generation fault without a checkpoint, refuses insufficient pair allowance and detects rolled-back V6 journals", async () => {
+    const value = await premiseScopeEpochFixture(), paths = fixedPaths(value.root, 6);
+    await activateOriginalContinuationEpoch(value.db, value.sourceRepairFile, value.sourceRepairSha256, fixtureFlush);
+    const initial = bytes(paths.epochDirectory), frontier = fs.readFileSync(paths.frontierFile);
+    const first = await beginOriginalContinuation(value.db, value.sourceRepairFile, value.sourceRepairSha256, fixtureFlush);
+    await continuationModel(first.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, async () => { throw Error("No new sufficiency"); });
+    await expect(continuationModel(first.capability, "synthesize", "Fixture system", "synthesize fixture", 1, async () => {
+      throw Error("Synthetic new generation failed its required slot gate");
+    })).rejects.toThrow("slot gate");
+    recordContinuationDiagnostic(first.capability, { phase: "synthesize", category: "quality" }); closeContinuationCapability(first.capability);
+    const action = vi.fn(async () => ({ synthetic: "new pair after acknowledged generation fault" }));
+    const second = await beginOriginalContinuation(value.db, value.sourceRepairFile, value.sourceRepairSha256, fixtureFlush);
+    await continuationModel(second.capability, "sufficiency", "Fixture system", "sufficiency fixture", 1, action);
+    for (const stage of ["synthesize", "review"] as const)
+      await continuationModel(second.capability, stage, "Fixture system", `${stage} fixture`, 1, action);
+    recordContinuationDiagnostic(second.capability, { phase: "assemble", category: "quality" }); closeContinuationCapability(second.capability);
+    expect(action).toHaveBeenCalledTimes(2);
+    const ledger = continuationProviderLedger(); expect(ledger).toMatchObject({ newModelCalls: 3, combinedReservedMicroUsd: 470_520 });
+    expect(ledger.holds[0].checkpoint).toBeUndefined(); expect(ledger.holds.map(row => row.hold.stage)).toEqual(["synthesize", "synthesize", "review"]);
+    await expect(beginOriginalContinuation(value.db, value.sourceRepairFile, value.sourceRepairSha256, fixtureFlush)).rejects.toThrow("two remaining holds");
+    const currentFrontier = fs.readFileSync(paths.frontierFile);
+    expect(currentFrontier.equals(frontier)).toBe(false);
+    fs.unlinkSync(paths.frontierFile); await expect(inspectOriginalContinuation(value.db, value.sourceRepairFile, value.sourceRepairSha256)).rejects.toThrow();
+    fs.writeFileSync(paths.frontierFile, currentFrontier, { mode: 0o600 });
+    for (const name of fs.readdirSync(paths.epochDirectory)) fs.unlinkSync(path.join(paths.epochDirectory, name));
+    for (const [name, raw] of initial) fs.writeFileSync(path.join(paths.epochDirectory, name), Buffer.from(raw, "hex"), { mode: 0o600 });
+    expect(() => continuationDirectory()).toThrow("uncertain");
+    await expect(beginOriginalContinuation(value.db, value.repairFile, value.repairSha256, fixtureFlush)).rejects.toThrow();
+    for (const [directory, before] of value.retainedBooks) expect(bytes(directory)).toEqual(before);
+    expect(fetch).not.toHaveBeenCalled();
+  }, 600_000);
+});

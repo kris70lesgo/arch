@@ -1,0 +1,258 @@
+/**
+ * GET /api/health — liveness + readiness probe.
+ *
+ * Two jobs: (1) the post-reload readiness gate for redeploy
+ * (scripts/redeploy-vps.sh); reviewed mainnet recovery retains builds and requires
+ * explicit operator handling on failure; (2) a public uptime signal for /status and external
+ * monitor. Cheap by design: aggregate DB reads only, no chain or LLM calls. Returns 200
+ * when ready, 503 when the datastore is unreachable.
+ */
+
+import { getDb } from "@/lib/db";
+import { syncStateSnapshot } from "@/lib/db/sync-state-snapshot";
+import { config, llmProvider } from "@/lib/config";
+import { PARITY_STATE_KEY, type ParitySummary } from "@/lib/registry/parity";
+import {
+  DISPATCH_HEALTH_STATE_KEY,
+  type DispatchHealthSummary,
+} from "@/lib/ops/dispatch-health";
+import {
+  SETTLEMENT_PARITY_STATE_KEY,
+  type SettlementParitySummary,
+} from "@/lib/gateway/settlement-parity";
+import {
+  PENDING_RECONCILIATION_STATE_KEY,
+  type PendingReconciliationSummary,
+} from "@/lib/gateway/x402-transfer-reconciliation";
+import { classifyArcRpcProvider } from "@/lib/ops/public-proof";
+import { monitoringObservations } from "@/lib/ops/monitoring-observations";
+import {
+  assessPendingReconciliation,
+  type PendingReconciliationAssessment,
+} from "@/lib/gateway/pending-reconciliation-health";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+// Captured once at first module load — uptime is measured from process start.
+const BOOT_MS = Date.now();
+
+export async function GET() {
+  const started = performance.now();
+  let phase = "database";
+  let phaseStarted = started;
+  let outcome = "unready";
+  const phaseMs: Record<string, number> = {};
+  const beginPhase = (next: string) => {
+    const now = performance.now();
+    phaseMs[phase] = Math.round(now - phaseStarted);
+    phase = next; phaseStarted = now;
+  };
+  // Mainnet browser settlement is caller-funded, independent of hosted custody.
+  // Hosted payment admission is checked per request against its sealed policy.
+  // Testnet preserves its historical explicit simulation/default behavior.
+  const forceOffline = process.env.KERYX_FORCE_OFFLINE === "1";
+  const base = {
+    name: "keryx",
+    commit: process.env.KERYX_COMMIT ?? null,
+    uptimeSeconds: Math.floor((Date.now() - BOOT_MS) / 1000),
+    reasoning: llmProvider(),
+    webResearch: { provider: config.webSearchProvider === "tavily" || config.webSearchProvider === "searxng" ? config.webSearchProvider : "unconfigured",
+      configured: config.webSearchProvider === "tavily" ? !!config.tavilyApiKey : config.webSearchProvider === "searxng" && !!config.webSearchUrl,
+      availability: "not-probed", privateExternalSearch: "disabled", unattendedExternalSearch: "disabled" },
+    settles: config.network === "arc" ? "real" : !forceOffline && config.funderKey ? "real" : "offline",
+    ...(config.network === "arc" ? { paymentAuthority: { caller: "owner-consent", hosted: "sealed-policy-admission", availability: "not-probed" } } : {}),
+    network: config.network,
+    // Deliberately a coarse label: tokenized RPC URLs are server credentials and never public.
+    rpcProvider: classifyArcRpcProvider(config.rpcUrl),
+    time: new Date().toISOString(),
+  };
+
+  try {
+    const db = await getDb();
+    beginPhase("metrics-and-jobs");
+    const snapshot = await db.readPublicHealthSnapshot?.(Date.now(), !!config.registryReadAddress);
+    const [m, a2aJobs] = snapshot ? [snapshot.metrics, snapshot.jobs]
+      : await Promise.all([db.metrics(), db.a2aOperationsSnapshot(Date.now())]);
+    beginPhase("sync-state");
+    const stateKeys = [
+      ...(config.registryReadAddress ? ["lastSyncedBlock", PARITY_STATE_KEY] : []),
+      DISPATCH_HEALTH_STATE_KEY, SETTLEMENT_PARITY_STATE_KEY,
+      PENDING_RECONCILIATION_STATE_KEY, "a2aWorker",
+    ];
+    const readSyncState = snapshot
+      ? async (key: string) => snapshot.syncState.has(key) ? snapshot.syncState.get(key) ?? null : db.getSyncState(key)
+      : syncStateSnapshot(db, stateKeys);
+
+    // Registry section: served from sync_state only — the hourly parity watchdog
+    // (scripts/check-registry.mts) does the chain reads; the probe stays chain-free.
+    let registry: {
+      address: string;
+      lastSyncedBlock: string | null;
+      parity: ParitySummary | null;
+    } | null = null;
+    if (config.registryReadAddress) {
+      const [lastSyncedBlock, parityRaw] = await Promise.all([
+        readSyncState("lastSyncedBlock"),
+        readSyncState(PARITY_STATE_KEY),
+      ]);
+      let parity: ParitySummary | null = null;
+      try {
+        parity = parityRaw ? (JSON.parse(parityRaw) as ParitySummary) : null;
+      } catch {
+        /* a malformed summary hides the parity row, never the health probe */
+      }
+      registry = { address: config.registryReadAddress, lastSyncedBlock, parity };
+    }
+
+    // Dispatch section: the hourly outcome watchdog (scripts/check-dispatches.mts) writes the
+    // verdict; the probe reads it with the other sync-state summaries. A missing or malformed
+    // row hides the section, never the probe.
+    let dispatches: DispatchHealthSummary | null = null;
+    try {
+      const raw = await readSyncState(DISPATCH_HEALTH_STATE_KEY);
+      dispatches = raw ? (JSON.parse(raw) as DispatchHealthSummary) : null;
+    } catch {
+      /* an unreadable summary must not take the health probe down with it */
+    }
+
+    // Settlement section: the hourly parity watchdog (scripts/check-settlement.mts) does the
+    // Circle round-trip; the probe only reads its verdict back. Same failure rule as above — an
+    // unreadable summary hides the section, never the probe.
+    let settlement: SettlementParitySummary | null = null;
+    try {
+      const raw = await readSyncState(SETTLEMENT_PARITY_STATE_KEY);
+      settlement = raw ? (JSON.parse(raw) as SettlementParitySummary) : null;
+    } catch {
+      /* a malformed summary must not take the health probe down with it */
+    }
+
+    // Per-authorization Circle reconciliation is separate from aggregate wallet parity: the first
+    // proves an ambiguous nonce, while the second proves the creator balances backing settled rows.
+    let reconciliation: (PendingReconciliationSummary & PendingReconciliationAssessment) | null =
+      null;
+    try {
+      const raw = await readSyncState(PENDING_RECONCILIATION_STATE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as PendingReconciliationSummary;
+        const normalized: PendingReconciliationSummary = {
+          ...parsed,
+          // Rolling deploy compatibility: older summaries lack these additive fields. Their
+          // pending rows cannot be assigned an exact expiry or funding path from the summary.
+          browserAwaiting: parsed.browserAwaiting ?? 0,
+          exposedAwaiting: parsed.exposedAwaiting ?? 0,
+          signedAwaiting: parsed.signedAwaiting ?? 0,
+          submittedAwaiting: parsed.submittedAwaiting ?? 0,
+          treasuryAwaiting: parsed.treasuryAwaiting ?? 0,
+          acknowledgedAwaiting: parsed.acknowledgedAwaiting ?? 0,
+          unacknowledgedAwaiting:
+            parsed.unacknowledgedAwaiting ?? parsed.awaiting ?? 0,
+          expiredAwaiting: parsed.expiredAwaiting ?? 0,
+          unknownExpiryAwaiting: parsed.unknownExpiryAwaiting ?? parsed.awaiting ?? 0,
+          earliestAuthorizationExpiresAt: parsed.earliestAuthorizationExpiresAt ?? null,
+          releasedReservations: parsed.releasedReservations ?? 0,
+          oldestUnacknowledgedPendingAt:
+            parsed.oldestUnacknowledgedPendingAt ?? parsed.oldestPendingAt ?? null,
+        };
+        reconciliation = {
+          ...normalized,
+          ...assessPendingReconciliation(normalized),
+        };
+      }
+    } catch {
+      /* operational evidence is additive; never turn malformed telemetry into downtime */
+    }
+
+    // The async A2A worker updates this private heartbeat while idle and after each order. Do not
+    // expose its host/process identity. A missing row is valid on dev installations that never run
+    // the paid worker; once observed, a stale/stopped worker makes production readiness degraded.
+    let a2aWorker: {
+      status: string;
+      updatedAt: string;
+      stale: boolean;
+    } | null = null;
+    try {
+      const raw = await readSyncState("a2aWorker");
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          status?: unknown;
+          updatedAt?: unknown;
+        };
+        if (typeof parsed.status === "string" && typeof parsed.updatedAt === "string") {
+          const updatedMs = Date.parse(parsed.updatedAt);
+          a2aWorker = {
+            status: parsed.status,
+            updatedAt: parsed.updatedAt,
+            stale: !Number.isFinite(updatedMs) || Date.now() - updatedMs > 10 * 60_000,
+          };
+        }
+      }
+    } catch {
+      /* same additive-observability rule as the other private sync-state summaries */
+    }
+
+    const workerDegraded =
+      !!a2aWorker &&
+      (a2aWorker.stale ||
+        a2aWorker.status === "stopped" ||
+        a2aWorker.status === "recovery_pending");
+    const operationalStatus =
+      reconciliation?.degraded || workerDegraded || a2aJobs.degraded
+        ? "degraded"
+        : "operational";
+    beginPhase("response");
+    outcome = operationalStatus;
+    return Response.json(
+      {
+        ok: true,
+        status: operationalStatus,
+        db: "ok",
+        ...base,
+        registry,
+        dispatches,
+        settlement,
+        reconciliation,
+        monitoring: monitoringObservations({ registry: registry?.parity, dispatches, settlement, reconciliation }),
+        a2aWorker,
+        a2aJobs,
+        traction: {
+          totalPayments: m.totalPayments,
+          creatorPayoutsUsdc: Number(m.totalCreatorPayoutsUsdc.toFixed(6)),
+          settledOperatingFeeUsdc: m.settledOperatingFeeUsdc ?? null,
+          settledOperatingFeePayments: m.settledOperatingFeePayments ?? null,
+          creatorsEarning: m.creatorsEarning,
+          totalQueries: m.totalQueries,
+          groundedClaimRate: m.groundedClaimRate,
+          evidenceQuality: m.evidenceQuality,
+          pendingPaymentConfirmations: m.pendingPaymentConfirmations,
+          pendingPaymentVolumeUsdc: m.pendingPaymentVolumeUsdc,
+          failedPaymentAttempts: m.failedPaymentAttempts,
+          failedPaymentVolumeUsdc: m.failedPaymentVolumeUsdc,
+        },
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  } catch (err) {
+    outcome = "unready";
+    return Response.json(
+      {
+        ok: false,
+        db: "unreachable",
+        error: err instanceof Error ? err.message : String(err),
+        ...base,
+      },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  } finally {
+    const finished = performance.now();
+    const durationMs = Math.round(finished - started);
+    phaseMs[phase] = Math.round(finished - phaseStarted);
+    if (durationMs >= 2_000 || outcome === "unready") {
+      // Fixed phases and timing only: never log state values, errors, RPC URLs,
+      // wallet data or request identifiers. ISO time works without PM2 prefixes.
+      console.warn("[health] probe", JSON.stringify({
+        at: new Date().toISOString(), outcome, durationMs, phase, phaseMs,
+      }));
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "lib/i18n/messages.ts",
+  "sourceSha256": "f3d85eef26e994ae7defeb90a5a1c21f47e98cb93ec04a938f7046f71138acaf",
+  "entries": {
+    "researchEntry.ask": {
+      "source": "Ask Keryx",
+      "text": "Tanya Keryx"
+    },
+    "researchEntry.question": {
+      "source": "What do you want to know?",
+      "text": "Apa yang ingin Anda ketahui?"
+    },
+    "researchEntry.placeholder": {
+      "source": "Ask a question worth reading for...",
+      "text": "Ajukan pertanyaan yang layak diteliti..."
+    },
+    "researchEntry.depth": {
+      "source": "Research depth",
+      "text": "Kedalaman riset"
+    },
+    "researchEntry.quick": {
+      "source": "quick",
+      "text": "cepat"
+    },
+    "researchEntry.deep": {
+      "source": "deep",
+      "text": "mendalam"
+    },
+    "researchEntry.researching": {
+      "source": "Researching...",
+      "text": "Sedang meneliti..."
+    },
+    "researchEntry.moreOptions": {
+      "source": "More options",
+      "text": "Opsi lainnya"
+    },
+    "researchEntry.model": {
+      "source": "AI model",
+      "text": "Model AI"
+    },
+    "researchEntry.savedReports": {
+      "source": "My saved reports",
+      "text": "Laporan tersimpan saya"
+    },
+    "researchEntry.keyboardHint": {
+      "source": "Enter for a new line · Ctrl/⌘ + Enter to ask",
+      "text": "Enter untuk baris baru · Ctrl/⌘ + Enter untuk bertanya"
+    },
+    "researchEntry.metadataLookup": {
+      "source": "Look up free paper metadata",
+      "text": "Cari metadata makalah secara gratis"
+    },
+    "researchEntry.metadataLookupLabel": {
+      "source": "Look up free paper metadata: title, authors or DOI",
+      "text": "Cari metadata makalah secara gratis: judul, penulis, atau DOI"
+    },
+    "researchEntry.quickHint": {
+      "source": "Quick: up to 2 focused reads.",
+      "text": "Cepat: membaca hingga 2 sumber yang terarah pada pertanyaan."
+    },
+    "researchEntry.deepHint": {
+      "source": "Deep: up to 4 reads, including marketplace discovery and a coverage check.",
+      "text": "Mendalam: membaca hingga 4 sumber, termasuk pencarian di pasar sumber dan pemeriksaan cakupan."
+    },
+    "researchEntry.examplesLabel": {
+      "source": "Example questions",
+      "text": "Contoh pertanyaan"
+    }
+  }
+}

@@ -1,0 +1,223 @@
+"use client";
+
+/**
+ * connect-steps.tsx — step indicator and per-step panels for the /connect page.
+ *
+ * Extracted from app/connect/page.tsx to keep that file under ~200 lines.
+ * Styled as The Mint (Bodoni display, banknote borders, vermillion seal accent).
+ */
+
+import { Loader2, ShieldCheck, LogOut, AlertTriangle } from "lucide-react";
+import Link from "next/link";
+import { walletWorkspaceMessages as walletCopy } from "@/locales/en/wallet-workspace";
+import { WalletPicker } from "@/components/keryx/wallet-picker";
+import type { ArcChainGuard } from "@/lib/hooks/use-arc-chain-guard";
+import { browserPaymentProfile } from "@/lib/browser-payment-profile";
+
+
+
+
+
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+import type { AuthState } from "@/lib/hooks/use-siwe-auth";
+import { useUiCopy, useUiMessages, useUiRichMessages } from "@/lib/i18n/ui-copy";
+const uiEnglish_walletCopy = walletCopy;
+
+export type { AuthState } from "@/lib/hooks/use-siwe-auth";
+
+// ── StepDot ───────────────────────────────────────────────────────────────────
+
+export function StepDot({ active, done, label }: { active: boolean; done: boolean; label: string }) {
+  return (
+    <div
+      className={[
+        "flex h-7 w-7 items-center justify-center border font-mono text-[11px] font-semibold uppercase tracking-wider transition-colors",
+        done
+          ? "border-paid bg-paid/10 text-paid"
+          : active
+          ? "border-ink bg-paper text-ink"
+          : "border-line bg-paper-2 text-ink-3",
+      ].join(" ")}
+    >
+      {done ? "✓" : label}
+    </div>
+  );
+}
+
+// ── ChainBanner — shown whenever connected wallet is on the wrong chain ────────
+
+export function ChainBanner({ guard }: { guard: ArcChainGuard }) {
+  const message = useUiMessages();
+  const richMessage = useUiRichMessages();
+  if (guard.isOnArc) return null;
+  return (
+    <div className="flex items-start gap-3 border border-amber-500/40 bg-amber-500/[0.08] px-3 py-2.5">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+      <div className="flex-1">
+        <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-amber-700">
+          {message("account.wrongNetwork")}
+        </p>
+        <p className="mt-0.5 text-[12px] leading-snug text-ink-2">
+          {richMessage("account.networkInstruction", { network: browserPaymentProfile().label, chainId: browserPaymentProfile().chainId })}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={guard.switchToArc}
+        disabled={guard.isSwitching}
+        className="shrink-0 border border-amber-600 bg-amber-600 px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-white transition-all hover:bg-amber-700 disabled:cursor-wait disabled:opacity-60"
+      >
+        {guard.isSwitching ? <Loader2 className="h-3 w-3 animate-spin" /> : message("account.switchNetwork")}
+      </button>
+    </div>
+  );
+}
+
+// ── ConnectStep ───────────────────────────────────────────────────────────────
+
+export function ConnectStep({ isBusy }: { isBusy: boolean }) {
+  const message = useUiMessages();
+  const richMessage = useUiRichMessages();
+  return (
+    <div className="space-y-5">
+      <div>
+        <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-3">{message("account.step", { number: 1 })}</p>
+        <p className="mt-1 font-display text-xl font-medium text-ink">{message("account.connectWallet")}</p>
+        <p className="mt-1.5 text-sm leading-relaxed text-ink-2">
+          {richMessage("account.walletInstruction", { network: browserPaymentProfile().label })}
+        </p>
+      </div>
+      {/* EIP-6963 multi-wallet picker — lists all discovered injected wallets */}
+      <WalletPicker isBusy={isBusy} onConnected={() => {}} />
+    </div>
+  );
+}
+
+// ── SignInStep ────────────────────────────────────────────────────────────────
+
+export function SignInStep({
+  address,
+  onSignIn,
+  onDisconnect,
+  authState,
+  chainGuard,
+}: {
+  address: string;
+  onSignIn: () => void;
+  onDisconnect: () => void;
+  authState: AuthState;
+  chainGuard: ArcChainGuard;
+}) {
+  const message = useUiMessages();
+  const label =
+    authState === "signing"
+      ? message("account.waitingForSignature")
+      : authState === "verifying"
+      ? message("account.verifying")
+      : message("account.signInWithEthereum");
+
+  // Block sign-in when on the wrong chain: SIWE embeds the configured chain ID.
+  // and the server rejects messages with a mismatched chainId.
+  const wrongChain = !chainGuard.isOnArc;
+
+  return (
+    <div className="space-y-5">
+      <ChainBanner guard={chainGuard} />
+      <div>
+        <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-3">{message("account.step", { number: 2 })}</p>
+        <p className="mt-1 font-display text-xl font-medium text-ink">{message("account.signIn")}</p>
+        <p className="mt-0.5 break-all font-mono text-[11px] text-ink-3">{address}</p>
+        <p className="mt-2 text-sm leading-relaxed text-ink-2">
+          {message("account.signatureInstruction")}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onSignIn}
+        disabled={authState !== "idle" || wrongChain}
+        title={wrongChain ? message("account.switchFirst", { network: browserPaymentProfile().label }) : undefined}
+        className="flex w-full items-center justify-center gap-2 border border-ink bg-seal px-4 py-3.5 font-mono text-[12px] font-semibold uppercase tracking-[0.12em] text-cream transition-all hover:-translate-y-0.5 hover:shadow-[0_5px_0_var(--ink)] active:translate-y-0 active:shadow-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-none"
+      >
+        {authState !== "idle" ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <ShieldCheck className="h-4 w-4" />
+        )}
+        {label}
+      </button>
+      <button
+        type="button"
+        onClick={onDisconnect}
+        className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-3 hover:text-seal hover:underline"
+      >
+        {message("account.useDifferentWallet")}
+      </button>
+    </div>
+  );
+}
+
+// ── SignedInStep ──────────────────────────────────────────────────────────────
+
+export function SignedInStep({
+  session,
+  onSignOut,
+  busy = false,
+  returnTo = null,
+  returnBlocked = false,
+}: {
+  session: { address: string; role: string };
+  onSignOut: () => void;
+  busy?: boolean;
+  returnTo?: string | null;
+  returnBlocked?: boolean;
+}) {
+  const message = useUiMessages();
+  const richMessage = useUiRichMessages();
+  const walletCopy = useUiCopy("wallet-workspace", uiEnglish_walletCopy);
+  return (
+    <div className="space-y-5">
+      <div>
+        <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-3">{message("account.step", { number: 3 })}</p>
+        <p className="mt-1 font-display text-xl font-medium text-ink">{message("account.authenticated")}</p>
+        <p className="mt-0.5 break-all font-mono text-[11px] text-ink-3">{session.address}</p>
+        <div className="mt-3 inline-flex items-center gap-1.5 border border-paid/30 bg-paid/[0.08] px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.1em] text-paid">
+          <ShieldCheck className="h-3 w-3" />
+          {session.role}
+        </div>
+      </div>
+
+      {returnBlocked ? (
+        <p role="alert" className="text-sm text-seal">{richMessage("account.registrationWalletMismatch", { restartLink: <Link href={returnTo?.startsWith('/claim-source') ? '/claim-source' : '/register'} className="underline">{message("account.startNewDraft")}</Link> })}</p>
+      ) : returnTo ? (
+        <Link href={returnTo} className="flex w-full justify-center border border-ink bg-seal px-4 py-3.5 font-mono text-xs text-cream">{message(returnTo.startsWith('/claim-source') ? 'account.resumeSourceClaim' : 'account.resumeSourceRegistration')}</Link>
+      ) : session.role === "creator" || session.role === "dev" ? (
+        <Link
+          href="/register"
+          className="flex w-full items-center justify-center gap-2 border border-ink bg-seal px-4 py-3.5 font-mono text-[12px] font-semibold uppercase tracking-[0.12em] text-cream transition-all hover:-translate-y-0.5 hover:shadow-[0_5px_0_var(--ink)] active:translate-y-0 active:shadow-none"
+        >
+          {message("account.issueToll")}
+        </Link>
+      ) : (
+        <Link
+          href="/"
+          className="flex w-full items-center justify-center gap-2 border border-ink bg-seal px-4 py-3.5 font-mono text-[12px] font-semibold uppercase tracking-[0.12em] text-cream transition-all hover:-translate-y-0.5 hover:shadow-[0_5px_0_var(--ink)] active:translate-y-0 active:shadow-none"
+        >
+          {message("account.askQuestion")}
+        </Link>
+      )}
+
+      <Link href="/me/wallet" className="flex min-h-11 items-center justify-center border border-ink px-4 py-3 text-sm hover:bg-paper-2">{walletCopy.walletAndBudget}</Link>
+      <button
+        type="button"
+        onClick={onSignOut}
+        disabled={busy}
+        className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-3 hover:text-seal hover:underline"
+      >
+        <LogOut className="h-3.5 w-3.5" />
+        {message(busy ? "account.signingOut" : "account.signOut")}
+      </button>
+    </div>
+  );
+}

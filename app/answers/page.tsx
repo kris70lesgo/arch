@@ -1,0 +1,93 @@
+/**
+ * /answers — the public answer archive. Cited answers from Keryx research history,
+ * deduped to one canonical dispatch per question,
+ * rendered server-side so search + AI crawlers index a growing corpus that
+ * links back into each /dispatch/[id] permalink. This is the organic on-ramp:
+ * people find a Keryx answer in search, then ask their own.
+ *
+ * This route is page 1. Older pages live at /answers/page/[n] and render the same document —
+ * see lib/answers-pagination for why the index is sliced at all.
+ */
+
+import { createMessages } from "@/lib/i18n/messages";
+import type { Metadata } from "next";
+import { getArchiveCached } from "@/lib/answers-archive-cache";
+import { buildTopics } from "@/lib/answers-topics";
+import { paginateArchive } from "@/lib/answers-pagination";
+import { breadcrumbJsonLd } from "@/lib/seo-structured-data";
+import { SiteHeader } from "@/components/keryx/site-header";
+import { SiteFooter } from "@/components/keryx/site-footer";
+import { ArchiveIndexView } from "@/components/keryx/archive-index-view";
+import { archiveIndexJsonLd } from "./archive-index-json-ld";
+import { safeInlineJson } from "@/lib/safe-json";
+import { englishPublicAlternates } from "@/lib/i18n/public-metadata";
+import { archiveLanguages, filterArchiveLanguage, parseArchiveLanguage } from "@/lib/answers-language";
+
+const copy = createMessages("en");
+
+// Recompute a few times an hour — the corpus grows as new dispatches settle.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const BASE = process.env.BASE_URL || "https://keryx.cc";
+const TITLE = copy("reportArchiveRoute.title");
+const DESCRIPTION =
+  copy("reportArchiveRoute.description");
+
+const archiveMetadata: Metadata = {
+  title: TITLE,
+  description: DESCRIPTION,
+  alternates: {
+    ...englishPublicAlternates("/answers"),
+    types: {
+      "application/atom+xml": [{ url: "/answers/feed.xml", title: copy("reportArchiveRoute.name") }],
+    },
+  },
+  openGraph: { title: TITLE, description: DESCRIPTION, url: `${BASE}/answers`, type: "website" },
+  twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION },
+};
+
+type PageProps = { searchParams: Promise<{ language?: string | string[] }> };
+
+export async function generateMetadata({ searchParams }: PageProps): Promise<Metadata> {
+  const language = parseArchiveLanguage((await searchParams).language);
+  return { ...archiveMetadata, ...(language ? { robots: { index: false, follow: true } } : {}) };
+}
+
+export default async function AnswersPage({ searchParams }: PageProps) {
+  const language = parseArchiveLanguage((await searchParams).language);
+  const all = await getArchiveCached();
+  const entries = filterArchiveLanguage(all, language);
+  const topics = buildTopics(entries);
+  const slice = paginateArchive(entries, 1);
+
+  const jsonLd = [
+    archiveIndexJsonLd({
+      base: BASE,
+      url: `${BASE}/answers`,
+      name: copy("reportArchiveRoute.name"),
+      description: DESCRIPTION,
+      slice,
+      totalEntries: entries.length,
+    }),
+    breadcrumbJsonLd(BASE, [{ name: "Keryx", path: "/" }, { name: copy("reportArchiveRoute.crumb") }]),
+  ];
+
+  return (
+    <div className="min-h-screen bg-paper-2">
+      <SiteHeader />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: safeInlineJson(jsonLd) }}
+      />
+      <ArchiveIndexView
+        slice={slice}
+        topics={topics}
+        totalEntries={entries.length}
+        languages={archiveLanguages(all)}
+        language={language}
+      />
+      <SiteFooter />
+    </div>
+  );
+}

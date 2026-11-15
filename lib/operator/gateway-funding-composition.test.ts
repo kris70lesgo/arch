@@ -1,0 +1,260 @@
+import { describe, expect, it, vi } from "vitest";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join, posix, relative, resolve } from "node:path";
+import ts from "typescript";
+import { createOperatorGatewayFundingComposition, OPERATOR_GATEWAY_FUNDING_ACTIVATION } from "./gateway-funding-composition";
+
+function runtimeImports(source: string, file: string): string[] {
+  const imports: string[] = [];
+  const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const visit = (node: ts.Node) => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const clause = node.importClause;
+      const named = clause?.namedBindings;
+      const typesOnly = clause?.isTypeOnly || (!clause?.name && named && ts.isNamedImports(named)
+        && named.elements.length > 0 && named.elements.every(element => element.isTypeOnly));
+      if (!typesOnly) imports.push(node.moduleSpecifier.text);
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      const named = node.exportClause;
+      if (!node.isTypeOnly && !(named && ts.isNamedExports(named) && named.elements.length > 0
+        && named.elements.every(element => element.isTypeOnly))) imports.push(node.moduleSpecifier.text);
+    } else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+      || ts.isIdentifier(node.expression) && node.expression.text === "require")) {
+      const argument = node.arguments[0];
+      if (!argument || !ts.isStringLiteralLike(argument)) throw new Error(`Unreviewed dynamic import: ${file}`);
+      imports.push(argument.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+  return imports;
+}
+
+const dormantRuntime = /(?:^|\/)(?:gateway-funding-[^/]+|chat-accounts-sqlite|enrolled-sqlite-adapter|enrolled-supabase-adapter|enrolled-sqlite-schema-profile|runtime-storage-config|storage-identity-(?:connection|sqlite|provision))\.(?:ts|tsx|mts)$/;
+const applicationStorageBoundary = "lib/db/application-storage.ts";
+const applicationStorageSubstrate = new Set(["lib/db/enrolled-sqlite-adapter.ts", "lib/db/enrolled-supabase-adapter.ts",
+  "lib/db/enrolled-sqlite-schema-profile.ts", "lib/db/runtime-storage-config.ts", "lib/db/storage-identity-connection.ts",
+  "lib/db/storage-identity-sqlite.ts", "lib/db/chat-accounts-sqlite.ts", "lib/db/gateway-funding-ledger-types.ts", "lib/db/gateway-funding-sqlite-schema.ts"]);
+
+function assertDormantGraph(roots: string[], read: (file: string) => string,
+  resolveImport: (file: string, specifier: string) => string | null,
+  importsFor?: (file: string) => string[]): Set<string> {
+  const visited = new Set<string>();
+  const walk = (file: string, chain: string[]) => {
+    // Only the source-owned APPLICATION boundary admits storage. Its entire transitive graph is still inspected:
+    // provisioning, funding executor/orchestrator/transaction/key-loading edges remain forbidden.
+    const admittedStorage = chain.includes(applicationStorageBoundary) && applicationStorageSubstrate.has(file);
+    const watchConnection = chain.at(-1) === "lib/db/topic-watches-sqlite.ts" && file === "lib/db/storage-identity-connection.ts";
+    const accountProfile = chain.at(-1) === "lib/accounts/sqlite-store.ts" && file === "lib/db/enrolled-sqlite-schema-profile.ts";
+    if (dormantRuntime.test(file) && !admittedStorage && !accountProfile && !watchConnection) throw new Error(`Dormant runtime reachable: ${[...chain, file].join(" -> ")}`);
+    if (visited.has(file)) return;
+    visited.add(file);
+    for (const specifier of importsFor ? importsFor(file) : runtimeImports(read(file), file)) {
+      const dependency = resolveImport(file, specifier);
+      if (dependency) walk(dependency, [...chain, file]);
+    }
+  };
+  for (const file of roots) walk(file, []);
+  return visited;
+}
+
+describe("dormant Operator funding release", () => {
+  it("refuses supplied authority, environment opt-in and key loading", async () => {
+    const loadKeys = vi.fn(() => { throw new Error("keys must remain unloaded"); });
+    const request = Object.defineProperty({ loadKeys, enabled: true, reviewedBinding: {} }, "identity", {
+      get() { throw new Error("untrusted binding must remain unread"); },
+    });
+    vi.stubEnv("KERYX_OPERATOR_FUNDING_ENABLED", "1");
+    try {
+      expect(OPERATOR_GATEWAY_FUNDING_ACTIVATION.state).toBe("disabled");
+      await expect(createOperatorGatewayFundingComposition(request)).rejects.toThrow("reviewed enrollment and cutover required");
+      expect(loadKeys).not.toHaveBeenCalled();
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("permits only the application storage role while keeping funding and enrollment unreachable", () => {
+    const files = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+      const path = join(dir, entry.name);
+      return entry.isDirectory() ? files(path) : /\.(?:ts|tsx|mts)$/.test(entry.name) ? [path] : [];
+    });
+    const cwd = process.cwd();
+    const name = (file: string) => relative(cwd, file).replaceAll("\\", "/");
+    // Both inspections use the same frozen checkout. Parse each physical source
+    // and resolve each physical target once, retaining every role/edge check.
+    const parsedImports = new Map<string, string[]>();
+    const importsFor = (file: string) => {
+      let imports = parsedImports.get(file);
+      if (!imports) { imports = runtimeImports(readFileSync(join(cwd, file), "utf8"), file); parsedImports.set(file, imports); }
+      return imports;
+    };
+    const targets = new Map<string, string | null>();
+    const roots = files(join(cwd, "app")).filter(file => !/(?:\.test\.|-fixture\.)/.test(file)).map(name);
+    const resolveImport = (file: string, specifier: string) => {
+      if (!specifier.startsWith(".") && !specifier.startsWith("@/")) return null;
+      const base = specifier.startsWith("@/") ? join(cwd, specifier.slice(2)) : resolve(cwd, dirname(file), specifier);
+      if (targets.has(base)) return targets.get(base)!;
+      // Node ESM .mjs specifiers in TypeScript scripts resolve to their .mts source.
+      // Follow that source edge too; ignoring it would omit its authority graph.
+      const target = [base, ...(base.endsWith(".mjs") ? [base.slice(0, -4) + ".mts"] : []),
+        `${base}.ts`, `${base}.tsx`, `${base}.mts`, join(base, "index.ts"), join(base, "index.tsx")]
+        .find(candidate => existsSync(candidate) && /\.(?:ts|tsx|mts)$/.test(candidate));
+      if (!target && !existsSync(base)) throw new Error(`Unresolved application import: ${file}: ${specifier}`);
+      const result = target ? name(target) : null; targets.set(base, result); return result;
+    };
+    const visited = assertDormantGraph(roots, file => readFileSync(join(cwd, file), "utf8"), resolveImport, importsFor);
+    const closedModules = new Set(["lib/db/enrolled-sqlite-adapter.ts", "lib/db/enrolled-supabase-adapter.ts", "lib/db/enrolled-sqlite-schema-profile.ts", "lib/db/chat-accounts-sqlite.ts"]);
+    for (const file of [...files(join(cwd, "lib")), ...files(join(cwd, "scripts"))]) {
+      const importer = name(file);
+      if (/(?:\.test\.|-fixture\.|\/fixtures\/|^scripts\/test-)/.test(importer)) continue;
+      for (const specifier of importsFor(importer)) {
+        const target = resolveImport(importer, specifier);
+        if (!target || !closedModules.has(target)) continue;
+        // The closed factory may construct its fixed reference profile; no ordinary consumer may select either.
+        const permitted = importer === applicationStorageBoundary && ["lib/db/enrolled-sqlite-adapter.ts", "lib/db/enrolled-supabase-adapter.ts"].includes(target)
+          || importer === "lib/db/enrolled-sqlite-adapter.ts" && target === "lib/db/chat-accounts-sqlite.ts"
+          || importer === "lib/db/enrolled-sqlite-adapter.ts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "lib/a2a/pending-owner-session.ts" && target === "lib/db/enrolled-sqlite-adapter.ts"
+          || importer === "lib/accounts/sqlite-store.ts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "lib/db/deliverable-acceptance-sqlite.ts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "lib/db/decision-reviews-sqlite.ts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "lib/db/private-profiles-enrolled-sqlite.ts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "lib/db/private-bibliographies-enrolled-sqlite.ts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "lib/db/profile-identities-enrolled-sqlite.ts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "lib/db/public-profiles-sqlite.ts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/owner-run-assignment.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/restore-public-research.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          // Finite synthetic-only measurement; it cannot be reached by the application graph.
+          || importer === "scripts/measure-enrolled-health.mts" && target === "lib/db/enrolled-sqlite-adapter.ts"
+          || importer === "scripts/measure-enrolled-source-learning.mts" && target === "lib/db/enrolled-sqlite-adapter.ts"
+          // Synthetic native/SQLite parity oracle; never imported by a runtime entry.
+          || importer === "scripts/postgres/qualify-workspaces.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/qualify-usage.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/qualify-ledger.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/qualify-acceptance.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/qualify-native-runtime.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/qualify-accounts.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/qualify-account-history.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/qualify-chat-links.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/qualify-public-profiles.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/qualify-owner-assignments.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/qualify-a2a-originals.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/qualify-a2a-create.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/qualify-chat-links.mts" && target === "lib/db/chat-accounts-sqlite.ts"
+          || importer === "scripts/postgres/native-account-fixture.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "scripts/postgres/native-chat-fixture.mts" && target === "lib/db/enrolled-sqlite-schema-profile.ts"
+          || importer === "lib/db/storage-identity-connection.ts" && target === "lib/db/enrolled-sqlite-schema-profile.ts";
+        expect(permitted, `Unreviewed storage selector: ${importer} -> ${target}`).toBe(true);
+      }
+    }
+    expect(visited.has("scripts/owner-run-assignment.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/qualify-usage.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/qualify-a2a-originals.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/qualify-a2a-create.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/qualify-ledger.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/qualify-acceptance.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/qualify-native-runtime.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/qualify-accounts.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/qualify-account-history.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/qualify-chat-links.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/qualify-public-profiles.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/native-public-profile-fixture.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/native-account-fixture.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/native-chat-fixture.mts")).toBe(false);
+    // These shared bridges carry immutable identity/AAD data, not factory or enrollment selection.
+    expect(visited.has("lib/db/sqlite-adapter.ts")).toBe(true);
+    expect(visited.has("lib/a2a/pending-owner-session.ts")).toBe(true);
+    expect(visited.has("lib/sources/enrolled-content-cache.ts")).toBe(true);
+    expect(visited.has("lib/db/storage-identity.ts")).toBe(true);
+    expect(visited.has("scripts/restore-public-research.mts")).toBe(false);
+    expect(visited.has("scripts/measure-enrolled-health.mts")).toBe(false);
+    expect(visited.has("scripts/postgres/qualify-workspaces.mts")).toBe(false);
+    const measurementFile = "scripts/measure-enrolled-source-learning.mts";
+    expect(visited.has(measurementFile)).toBe(false);
+    const measurement = ts.createSourceFile(measurementFile,
+      readFileSync(join(cwd, measurementFile), "utf8"), ts.ScriptTarget.Latest, true);
+    let readonlyImports = 0;
+    let readonlyCalls = 0;
+    const inspectMeasurement = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
+        && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0])
+        && resolveImport(measurementFile, node.arguments[0].text) === "lib/db/enrolled-sqlite-adapter.ts") {
+        readonlyImports++;
+        if (!ts.isAwaitExpression(node.parent) || !ts.isVariableDeclaration(node.parent.parent)
+          || !ts.isObjectBindingPattern(node.parent.parent.name)) throw new Error("Measurement must select only the readonly factory");
+        expect(node.parent.parent.name.elements.map(binding => ({
+          name: binding.name.getText(measurement), property: binding.propertyName?.getText(measurement),
+          rest: !!binding.dotDotDotToken, fallback: !!binding.initializer,
+        }))).toEqual([{ name: "createReadonlyEnrolledSqliteAdapter", property: undefined, rest: false, fallback: false }]);
+      }
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+        && node.expression.text === "createReadonlyEnrolledSqliteAdapter") {
+        readonlyCalls++;
+        expect(node.arguments).toHaveLength(0);
+      }
+      ts.forEachChild(node, inspectMeasurement);
+    };
+    inspectMeasurement(measurement);
+    expect(readonlyImports).toBe(1);
+    expect(readonlyCalls).toBe(1);
+    const composition = readFileSync(join(process.cwd(), "lib/operator/gateway-funding-composition.ts"), "utf8");
+    expect(composition).not.toMatch(/\bimport\s*\(/);
+  });
+
+  it.each(["lib/payments/gateway-funding-executor.ts", "lib/operator/gateway-funding-composition.ts",
+    "lib/payments/gateway-funding-transaction.ts", "lib/db/storage-identity-provision.ts"])(
+    "rejects %s even when hidden behind the admitted application storage role", forbidden => {
+      const sources: Record<string, string> = {
+        "app/entry.ts": "import '../lib/db/application-storage';",
+        "lib/db/application-storage.ts": "import './enrolled-sqlite-adapter';",
+        "lib/db/enrolled-sqlite-adapter.ts": `import '../../${forbidden}';`,
+      };
+      expect(() => assertDormantGraph(["app/entry.ts"], file => sources[file], (file, specifier) =>
+        posix.resolve("/", posix.dirname(file), specifier).slice(1).replace(/\.(ts|tsx|mts)$/, "") + ".ts"))
+        .toThrow("Dormant runtime reachable");
+    });
+
+  it.each(["import './helper';", "void import('./helper');"])("rejects indirect dormant selection through an ordinary helper: %s", edge => {
+    const sources: Record<string, string> = {
+      "app/entry.ts": edge,
+      "app/helper.ts": "export { createEnrolledSqliteAdapter } from '../lib/db/enrolled-sqlite-adapter';",
+      "lib/db/enrolled-sqlite-adapter.ts": "",
+    };
+    expect(() => assertDormantGraph(["app/entry.ts"], file => sources[file], (file, specifier) =>
+      posix.resolve("/", posix.dirname(file), specifier).slice(1) + ".ts")).toThrow("Dormant runtime reachable");
+    expect(runtimeImports("import type { Authority } from './helper'; type Other = import('./helper').Authority;", "types.ts")).toEqual([]);
+  });
+
+  it("keeps the chat-link native factory behind its exact application storage edge", () => {
+    const sources: Record<string, string> = {
+      "app/entry.ts": "import '../lib/db/chat-accounts-sqlite';",
+      "lib/db/chat-accounts-sqlite.ts": "",
+    };
+    expect(() => assertDormantGraph(["app/entry.ts"], file => sources[file], (file, specifier) =>
+      posix.resolve("/", posix.dirname(file), specifier).slice(1) + ".ts")).toThrow("Dormant runtime reachable");
+  });
+
+  it.each(["export { createEnrolledSupabaseAdapter } from '../lib/db/enrolled-supabase-adapter';",
+    "void import('../lib/db/enrolled-supabase-adapter');",
+    "export { readRuntimeStorageDeployment } from '../lib/db/runtime-storage-config';"])(
+    "rejects transitive PostgreSQL factory or manifest selection: %s", edge => {
+      const sources: Record<string, string> = {
+        "app/entry.ts": "import './helper';",
+        "app/helper.ts": edge,
+      };
+      expect(() => assertDormantGraph(["app/entry.ts"], file => sources[file], (file, specifier) =>
+        posix.resolve("/", posix.dirname(file), specifier).slice(1) + ".ts"))
+        .toThrow("Dormant runtime reachable");
+    });
+
+  it("permits only descriptive PostgreSQL type and pure-core bridges in the application graph", () => {
+    const sources: Record<string, string> = {
+      "app/entry.ts": "import './helper';",
+      "app/helper.ts": "import type { Authority } from '../lib/db/enrolled-supabase-adapter'; export { SupabaseAdapter } from '../lib/db/supabase-adapter';",
+      "lib/db/supabase-adapter.ts": "import type { StorageDeploymentManifest } from './runtime-storage-config'; export { canonicalJson } from '../canonical-json';",
+      "lib/canonical-json.ts": "export const canonicalJson = JSON.stringify;",
+    };
+    const visited = assertDormantGraph(["app/entry.ts"], file => sources[file], (file, specifier) =>
+      posix.resolve("/", posix.dirname(file), specifier).slice(1) + ".ts");
+    expect([...visited]).toEqual(["app/entry.ts", "app/helper.ts", "lib/db/supabase-adapter.ts", "lib/canonical-json.ts"]);
+  });
+});

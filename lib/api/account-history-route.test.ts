@@ -1,0 +1,134 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { mkdtempSync, rmSync, rmdirSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
+import { SqliteAdapter } from "../db/sqlite-adapter";
+import { issueWebSession, parseWebSession, webSessionHash } from "../auth-session";
+import type { A2aOrder } from "../a2a/order";
+import { encodeHistoryCursor } from "../a2a/account-history";
+import { a2aResearchPackage } from "../a2a/research-package";
+import { accountHistorySchema } from "../a2a/account-history-types";
+
+const mocks = vi.hoisted(() => ({ cookies: vi.fn(), db: vi.fn() }));
+vi.mock("next/headers", () => ({ cookies: mocks.cookies }));
+vi.mock("@/lib/db", () => ({ getDb: mocks.db }));
+vi.mock("@/lib/config", async () => ({ config: { jwtSecret: "synthetic-history-secret", profile: (await import("../arc-network-profile")).ARC_TESTNET_PROFILE, } }));
+import { GET } from "@/app/api/me/jobs/route";
+const root = mkdtempSync(join(tmpdir(), "keryx-history-")), file = join(root, "db.sqlite");
+const db = new SqliteAdapter(file); await db.init();
+const storage = new AsyncLocalStorage<string | undefined>();
+const wallet = `0x${"a".repeat(40)}`, foreign = `0x${"b".repeat(40)}`;
+const secret = "synthetic-history-secret";
+function order(index: number, payer = wallet): A2aOrder {
+  const id = `a2a_${index.toString(16).padStart(64, "0")}`;
+  return { id, queryId: id, authorizationId: `synthetic-authorization-private-${index}`, requestHash: "synthetic-request-hash", payer, payee: foreign,
+    amountUsdc: 0.05, creatorBudgetUsdc: 0.03, serviceFeeUsdc: 0.02, researchMode: "deep", researchPackage: null,
+    status: "running", transaction: "synthetic-transaction", request: { question: `Owner question ${index}`, origin: "a2a" },
+    startedAt: null, workerId: "synthetic-private-worker", executionJournalVersion: 1, paymentStartedAt: null, resultSavingAt: null,
+    response: { privateField: "raw-response-not-for-history" }, errorCode: null, resolution: null,
+    createdAt: "2026-09-09T00:00:00.000Z", updatedAt: "2026-09-09T00:00:00.000Z" };
+}
+beforeEach(() => {
+  mocks.cookies.mockImplementation(async () => ({ get: () => storage.getStore() ? { value: storage.getStore() } : undefined }));
+  mocks.db.mockResolvedValue(db);
+});
+afterEach(() => vi.restoreAllMocks());
+afterAll(() => { db.close(); for (const suffix of ["", "-wal", "-shm"]) rmSync(file + suffix, { force: true }); rmdirSync(root); });
+const read = (token?: string, query = "") => storage.run(token, () => GET(new Request(`https://keryx.cc/api/me/jobs${query}`)));
+
+it("uses verified payer identity and pages through equal timestamps without gaps or foreign rows", async () => {
+  for (let index = 1; index <= 27; index++) await db.createA2aOrder(order(index, index % 2 ? wallet.toUpperCase() : wallet));
+  await db.createA2aOrder(order(99, foreign));
+  const { token } = await issueWebSession(db, secret, wallet, "asker");
+  const response = await read(token, `?wallet=${foreign}`); expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  const first = await response.json(); expect(first.jobs).toHaveLength(25); expect(first.wallet).toBe(wallet);
+  expect(JSON.stringify(first)).not.toContain("synthetic-authorization");
+  expect(JSON.stringify(first)).not.toContain("synthetic-private-worker");
+  expect(JSON.stringify(first)).not.toContain("raw-response-not-for-history");
+  await db.createA2aOrder({ ...order(100), createdAt: "2026-09-09T01:00:00.000Z" });
+  const second = await (await read(token, `?cursor=${first.nextCursor}`)).json();
+  expect(second.jobs).toHaveLength(2); expect(second.nextCursor).toBeNull();
+  expect(new Set([...first.jobs, ...second.jobs].map(row => row.id)).size).toBe(27);
+  const forged = encodeHistoryCursor(order(99, foreign));
+  const forgedPage = await (await read(token, `?cursor=${forged}`)).json();
+  expect(forgedPage.jobs.some((row: { id: string }) => row.id === order(99, foreign).id)).toBe(false);
+});
+
+it("denies anonymous/revoked sessions, malformed cursors and storage failures", async () => {
+  expect((await read()).status).toBe(401);
+  const { token } = await issueWebSession(db, secret, wallet, "asker");
+  expect((await read(token, "?cursor=bad!")).status).toBe(400);
+  const outage = vi.spyOn(db, "listA2aOrdersByPayer").mockRejectedValue(new Error("synthetic outage"));
+  expect((await read(token)).status).toBe(503); outage.mockRestore();
+  const wrongOwner = vi.spyOn(db, "listA2aOrdersByPayer").mockResolvedValue([order(99, foreign)]);
+  expect((await read(token)).status).toBe(503); wrongOwner.mockRestore();
+  const claims = (await parseWebSession(token, secret))!;
+  await db.revokeWebSession(webSessionHash(claims.jti), wallet);
+  expect((await read(token)).status).toBe(401);
+});
+
+it("keeps failed, queued, processing and review-needed orders visible even without saved research", async () => {
+  const owner = `0x${"c".repeat(40)}`;
+  await db.createA2aOrder({ ...order(200, owner), status: "failed", request: null });
+  await db.createA2aOrder(order(201, owner));
+  await db.createA2aOrder({ ...order(202, owner), startedAt: new Date().toISOString() });
+  await db.createA2aOrder({ ...order(203, owner), startedAt: "2026-01-01T00:00:00.000Z" });
+  const { token } = await issueWebSession(db, secret, owner, "asker");
+  const body = await (await read(token)).json();
+  expect(body.jobs.map((row: { status: string }) => row.status).sort()).toEqual(["failed", "processing", "queued", "review_required"]);
+  expect(body.jobs.find((row: { status: string }) => row.status === "failed").question).toBeNull();
+});
+
+it("shows original owner references and overdue uncertainty using read-only evidence, without clearing expired legs", async () => {
+  const owner = `0x${"d".repeat(40)}`, original = { ...order(257, owner), researchMode: "quick" as const,
+    researchPackage: a2aResearchPackage("quick"), request: { question: "Owner only", origin: "a2a" as const, network: "eip155:5042002" },
+    startedAt: "2026-09-09T00:00:01.000Z", paymentStartedAt: "2026-09-09T00:00:02.000Z", updatedAt: "2026-09-09T00:00:02.000Z" };
+  await db.createA2aOrder(original);
+  const leg = { id: "private-leg", kind: "fetch" as const, queryId: original.id, sourceId: "private-source", sourceName: "Private source",
+    payer: foreign, payee: wallet, amountUsdc: 0.000001, network: "eip155:5042002", settled: false, settlementStatus: "pending" as const,
+    authorizationId: "private-creator-nonce", authorizationExpiresAt: "2026-09-09T00:00:03.000Z", createdAt: original.paymentStartedAt };
+  const attempts = vi.spyOn(db, "listCreatorPaymentAttemptsByQuery").mockResolvedValue([leg]);
+  const write = vi.spyOn(db, "recordPayment"), complete = vi.spyOn(db, "completeA2aOrder");
+  const { token } = await issueWebSession(db, secret, owner, "asker");
+  const packet = accountHistorySchema.parse(await (await read(token)).json());
+  expect(packet.jobs[0]).toMatchObject({ id: original.id, escalation: { state: "overdue", escalationNeeded: true,
+    creatorPaymentState: "pending_recorded", lastRecordedStage: "creator_payment_boundary" },
+    originalPayment: { reference: "synthetic-transaction", network: "eip155:5042002", asset: "USDC", amountMicros: "50000" } });
+  expect(JSON.stringify(packet)).not.toMatch(/private-leg|private-source|private-creator-nonce|synthetic-private-worker|synthetic-authorization/);
+  expect(attempts).toHaveBeenCalledExactlyOnceWith(original.id);
+  expect(write).not.toHaveBeenCalled(); expect(complete).not.toHaveBeenCalled();
+  expect(await db.getA2aOrder(original.id)).toEqual(original);
+  attempts.mockRejectedValue(new Error("unsupported read"));
+  expect((await (await read(token)).json()).jobs[0].escalation).toMatchObject({ state: "overdue", creatorPaymentState: "payment_boundary_crossed" });
+});
+
+
+// UNRUN current-main498 composition controls. Reuse real cookie/session parsing;
+// this existing ordinary adapter deliberately has no native pending-owner port.
+it("refuses explicit owned reads without a native port, with no payer fallback", async () => {
+  const owner = `0x${"e".repeat(40)}`;
+  await db.createA2aOrder(order(498, owner));
+  const { token } = await issueWebSession(db, secret, owner, "asker");
+  expect(db.pendingJobOwners).toBeUndefined();
+  const payerRead = vi.spyOn(db, "listA2aOrdersByPayer");
+  const ordinary = await read(token);
+  expect(ordinary.status).toBe(200);
+  const body = accountHistorySchema.parse(await ordinary.json());
+  expect(body.jobs.map(row => row.id)).toEqual([order(498, owner).id]);
+  expect(body).not.toHaveProperty("ownership");
+  payerRead.mockClear();
+  for (const query of ["?pending=owned", `?pending=owned&id=${order(498, owner).id}`]) {
+    const response = await read(token, query);
+    expect(response.status).toBe(503);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ error: "Authenticated pending jobs unavailable" });
+  }
+  expect((await read(token, "?pending=owned&cursor=bad!")).status).toBe(400);
+  expect((await read(undefined, "?pending=owned")).status).toBe(401);
+  const claims = (await parseWebSession(token, secret))!;
+  await db.revokeWebSession(webSessionHash(claims.jti), owner);
+  expect((await read(token, "?pending=owned")).status).toBe(401);
+  expect(payerRead).not.toHaveBeenCalled();
+});

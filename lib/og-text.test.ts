@@ -1,0 +1,97 @@
+import { isValidElement, type ReactElement } from "react";
+import sharp from "sharp";
+import { expect, it } from "vitest";
+import { publicPreviewText, publicPreviewFittedText } from "./og-text";
+
+const bounds = { fontSize: 32, maxWidth: 1120, maxHeight: 550, color: "#1B1712" };
+interface ImageProps { src: string; alt: string; width: number; height: number }
+function image(result: string | ReactElement) {
+  expect(isValidElement(result)).toBe(true);
+  const value = result as ReactElement<ImageProps>;
+  expect(value.type).toBe("img"); expect(value.props.src).toMatch(/^data:image\/png;base64,/u);
+  return { props: value.props, png: Buffer.from(value.props.src.split(",")[1], "base64") };
+}
+
+it.each(["English <original> & exact", "Tiếng Việt chưa thay đổi", "日本語の原文", "한국어 원문", "Deutsch: ursprüngliche Quelle", "Sumber asli Indonesia"])(
+  "preserves the exact existing text node outside Devanagari: %s", async text => {
+    expect(await publicPreviewText(text, bounds)).toBe(text);
+  });
+
+it("shapes Hindi clusters within the independent browser-reference width instead of Satori's unjoined glyph width", async () => {
+  const text = "हिन्दी: शोध रिपोर्ट, उद्धरण, प्रमाण, प्रश्न और उत्तर। क्ष त्र ज्ञ श्र";
+  const { props, png } = image(await publicPreviewText(text, bounds));
+  expect(props.alt).toBe(text);
+  // Same local font/32px Chromium and Pango references occupy about685px;
+  // unshaped Satori occupies about850px and visibly separates conjuncts.
+  expect(props.width).toBeGreaterThan(600); expect(props.width).toBeLessThan(740);
+  expect(props.height).toBeGreaterThan(20); expect(props.height).toBeLessThan(80);
+  const metadata = await sharp(png).metadata();
+  expect(metadata.width).toBe(props.width); expect(metadata.height).toBe(props.height);
+});
+
+it("shapes original Arabic letters and marks without changing the original alternative text", async () => {
+  const text = "هذه إجابة عربية موثقة. البحث والمصادر والأدلة";
+  const { props, png } = image(await publicPreviewText(text, { ...bounds, fontSize: 36, maxWidth: 1000 }));
+  expect(props.alt).toBe(text);
+  // Independently captured Chromium/Pango font qualification is about647px;
+  // the current bundled faces show missing-glyph boxes over two lines.
+  expect(props.width).toBeGreaterThan(600); expect(props.width).toBeLessThan(700);
+  expect(props.height).toBeGreaterThan(25); expect(props.height).toBeLessThan(75);
+  expect((await sharp(png).metadata()).width).toBe(props.width);
+});
+
+it("renders markup-like original text literally without applying an injected Pango colour", async () => {
+  const text = '<span foreground="red">हिन्दी</span> & <b>उत्तर</b>';
+  const { props, png } = image(await publicPreviewText(text, bounds));
+  expect(props.alt).toBe(text);
+  const plain = image(await publicPreviewText("हिन्दी & उत्तर", bounds));
+  expect(props.width).toBeGreaterThan(plain.props.width);
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  let red = false;
+  for (let at = 0; at < data.length; at += info.channels)
+    if (data[at + 3] > 200 && data[at] > 150 && data[at + 1] < 80 && data[at + 2] < 80) red = true;
+  expect(red).toBe(false);
+});
+
+it("bounds wrapped long Hindi text without losing its original alternative text", async () => {
+  const text = "इस शोध के दावों और सीमाओं का समर्थन किन स्रोतों से होता है? ".repeat(5);
+  const { props } = image(await publicPreviewText(text, { ...bounds, maxWidth: 240, maxHeight: 90 }));
+  expect(props.width).toBeLessThanOrEqual(240); expect(props.height).toBeLessThanOrEqual(90);
+  expect(props.alt).toBe(text);
+});
+
+it("preserves Unicode normalization and replaces invalid display controls without changing the source", async () => {
+  const text = "हिन्दी: café".normalize("NFD");
+  expect(image(await publicPreviewText(text, bounds)).props.alt).toBe(text);
+  const controlled = text + "\u0000";
+  expect(image(await publicPreviewText(controlled, bounds)).props.alt).toBe(text + "\ufffd");
+  expect(controlled).toBe(text + "\u0000");
+});
+
+it.each([
+  { fontSize: 0 }, { fontSize: 73 }, { fontSize: 12.5 }, { maxWidth: 31 }, { maxWidth: 1121 },
+  { maxWidth: NaN }, { maxHeight: 0 }, { maxHeight: 551 }, { color: 'red"><span foreground="red"' },
+])("refuses invalid raster bounds or markup parameters %j", async invalid => {
+  await expect(publicPreviewText("हिन्दी", { ...bounds, ...invalid })).rejects.toThrow("Invalid public preview text bounds");
+});
+it("refuses oversized native text before allocating a raster", async () => {
+  await expect(publicPreviewText("ह".repeat(513), bounds)).rejects.toThrow("Invalid public preview text bounds");
+});
+
+it.each([
+  ["Japanese", "研究者".repeat(26)],
+  ["Korean", "한국어 연구자 ".repeat(10).trim()],
+  ["Hindi", "शोध ".repeat(20).trim()],
+  ["Latin", "LongName".repeat(10)],
+  ["mixed original", "Café हिन्दी 日本語 한국어 <i>प्रमाण</i> & {question}"],
+])("fits a complete %s field in its profile region without truncating the original", async (_name, text) => {
+  const { props, png } = image(await publicPreviewFittedText(text, { fontSize: 64, maxWidth: 1060, maxHeight: 160, color: "#26261f" }));
+  expect(props.alt).toBe(text);
+  expect(props.width).toBeGreaterThan(0); expect(props.width).toBeLessThanOrEqual(1060);
+  expect(props.height).toBeGreaterThan(0); expect(props.height).toBeLessThanOrEqual(160);
+  expect((await sharp(png).stats()).isOpaque).toBe(false);
+});
+
+it("preserves a blank original field without asking Pango to render empty ink", async () => {
+  expect(await publicPreviewFittedText(" \t ", bounds)).toBe(" \t ");
+});

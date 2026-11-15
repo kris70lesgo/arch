@@ -1,0 +1,211 @@
+"use client";
+import { useLayoutEffect, useRef, useState } from "react";
+import { SigningAmount } from "./signing-amount";
+
+/**
+ * Presentational results for a bulk feed import: one row per pasted feed with its live phase, plus
+ * the shared feed-ownership token panel. All the creator's feeds share ONE verify token (it is keyed
+ * to the payout wallet, not the source), so a single "Verify all" pass covers every row.
+ */
+
+import { createMessages } from "@/lib/i18n/messages";
+import { selectPlural } from "@/lib/i18n/format";
+
+import { CheckCircle2, Loader2, XCircle, ShieldCheck, Copy, ExternalLink, PenLine } from "lucide-react";
+import { toast } from "sonner";
+import { browserPaymentProfile } from "@/lib/browser-payment-profile";
+import { useUiMessages, useUiRichMessages } from "@/lib/i18n/ui-copy";
+
+
+
+const uiCopy = createMessages("en");
+
+
+export type BulkPhase =
+  | "ready"      // ingested, awaiting the creator's on-chain signature
+  | "signing"    // wallet signature prompt open
+  | "confirming" // tx submitted, waiting for the receipt
+  | "unknown"    // original submission/confirmation requires read-only recovery
+  | "done"       // on-chain (or offline row already written)
+  | "failed"     // ingest or tx failed
+  | "skipped";   // deselected by the creator
+
+export interface BulkFeed {
+  rssUrl: string;
+  ok: boolean;
+  status: number;
+  mode?: string;
+  sourceId?: string;
+  error?: string;
+  selected: boolean;
+  phase: BulkPhase;
+  txHash?: string;
+  /** Wallet-returned original, never overwritten by the editable recovery lookup. */
+  submittedTxHash?: string;
+}
+
+const PHASE_LABEL: Record<BulkPhase, string> = {
+  ready: uiCopy("bulkRegistration.readyLabel"),
+  signing: uiCopy("bulkRegistration.signingLabel"),
+  confirming: uiCopy("bulkRegistration.confirmingLabel"),
+  done: uiCopy("bulkRegistration.doneLabel"),
+  unknown: uiCopy("bulkRegistration.unknownLabel"),
+  failed: uiCopy("bulkRegistration.failedLabel"),
+  skipped: uiCopy("bulkRegistration.skippedLabel"),
+};
+
+function PhaseIcon({ phase }: { phase: BulkPhase }) {
+  if (phase === "done") return <CheckCircle2 className="h-4 w-4 shrink-0 text-paid" />;
+  if (phase === "failed") return <XCircle className="h-4 w-4 shrink-0 text-seal" />;
+  if (phase === "signing" || phase === "confirming")
+    return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-ink-2" />;
+  return null;
+}
+
+export function BulkImportResults({
+  feeds,
+  prices,
+  onToggle,
+  busy,
+  onCheck,
+  onHashChange,
+}: {
+  feeds: BulkFeed[];
+  prices?: Record<string, string | undefined>;
+  onToggle: (rssUrl: string) => void;
+  busy: boolean;
+  onCheck: (rssUrl: string) => void;
+  onHashChange: (rssUrl: string, hash: string) => void;
+}) {
+  const uiCopy = useUiMessages();
+  const uiRichCopy = useUiRichMessages();
+  if (feeds.length === 0) return null;
+  return (
+    <ul className="divide-y divide-line border border-line bg-paper-2">
+      {feeds.map((f) => {
+        const dim = f.phase === "skipped" || (!f.ok && f.phase === "failed");
+        return (
+          <li key={f.rssUrl} className="flex items-center gap-3 px-3 py-2.5">
+            {/* Only a ready-and-listable feed can be toggled; a failed ingest has nothing to sign. */}
+            <input
+              type="checkbox"
+              checked={f.selected && f.ok}
+              disabled={!f.ok || busy || f.phase !== "ready"}
+              onChange={() => onToggle(f.rssUrl)}
+              className="h-3.5 w-3.5 shrink-0 accent-seal"
+            />
+            <div className={`min-w-0 flex-1 ${dim ? "opacity-55" : ""}`}>
+              <p className="truncate font-mono text-[12px] text-ink">{f.rssUrl}</p>
+              <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3">
+                {f.ok ? f.phase === "done" && f.mode === "offline" ? uiCopy("bulkRegistration.offlineLabel") : PHASE_LABEL[f.phase] : f.error || uiCopy("bulkRegistration.readFailed")}
+              </p>
+              {prices?.[f.rssUrl] !== undefined && <p className="text-xs"><SigningAmount micros={prices[f.rssUrl]} /></p>}
+              {f.ok && f.error && <p role="status" className="mt-1 text-xs text-seal">{f.error}</p>}
+              {(f.phase === "unknown" || f.phase === "confirming") && <div className="mt-2 space-y-2">
+                <label className="block text-xs">{uiCopy("bulkRegistration.transactionHashLabel")}
+                  <input aria-label={uiCopy("bulkRegistration.originalTransactionLabel", { url: f.rssUrl })} value={f.txHash ?? ""} disabled={busy}
+                    onChange={event => onHashChange(f.rssUrl, event.target.value.trim())} className="mt-1 w-full border border-line p-1 font-mono text-xs" />
+                </label>
+                <button type="button" disabled={busy || !/^0x[0-9a-f]{64}$/i.test(f.txHash ?? "")}
+                  onClick={() => onCheck(f.rssUrl)} className="text-xs underline disabled:opacity-50">{uiCopy("bulkRegistration.checkOriginal")}</button>
+                {f.submittedTxHash && <p className="break-all text-xs">{uiRichCopy("bulkRegistration.submittedOriginal", { transactionLink: <a className="underline" href={`${browserPaymentProfile().explorerUrl}/tx/${f.submittedTxHash}`} target="_blank" rel="noopener noreferrer">{f.submittedTxHash}</a> })}</p>}
+              </div>}
+            </div>
+            {f.txHash && (
+              <a
+                href={`${browserPaymentProfile().explorerUrl}/tx/${f.txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={uiCopy("bulkRegistration.explorerTitle")}
+                className="shrink-0 text-seal hover:text-ink"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            )}
+            <PhaseIcon phase={f.phase} />
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * Shared feed-ownership proof. The same token verifies every source this wallet registered, so the
+ * creator places it once per feed then runs a single Verify-all pass over the freshly-listed rows.
+ */
+export function BulkVerifyPanel({
+  token,
+  instructions,
+  registeredCount,
+  verifiedCount,
+  verifying,
+  onVerifyAll,
+}: {
+  token: string;
+  instructions: string;
+  registeredCount: number;
+  verifiedCount: number;
+  verifying: boolean;
+  onVerifyAll: () => void;
+}) {
+  const uiCopy = useUiMessages();
+  return (
+    <div className="space-y-3 rounded-md border border-amber-500/40 bg-amber-500/[0.07] p-4">
+      <div className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.12em] text-amber-700">
+        <PenLine className="h-3.5 w-3.5" />
+        {uiCopy(selectPlural(registeredCount) === "one" ? "bulkVerification.title.one" : "bulkVerification.title.other", { count: registeredCount })}
+      </div>
+      <p className="text-xs text-ink-2">{instructions}</p>
+      <div className="flex items-center gap-2">
+        <code className="min-w-0 flex-1 break-all rounded border border-line bg-paper px-2.5 py-1.5 font-mono text-xs text-ink">
+          {token}
+        </code>
+        <BulkTokenCopy key={token} token={token} />
+      </div>
+      <button
+        type="button"
+        onClick={onVerifyAll}
+        disabled={verifying}
+        className="flex w-full items-center justify-center gap-2 border border-ink bg-paper px-4 py-2.5 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink transition-all hover:-translate-y-0.5 hover:shadow-[0_4px_0_var(--ink)] active:translate-y-0 active:shadow-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-none"
+      >
+        {verifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+        {verifying
+          ? uiCopy("bulkVerification.checking")
+          : verifiedCount > 0
+          ? uiCopy("bulkVerification.checkAgain", { verified: verifiedCount, count: registeredCount })
+          : uiCopy("bulkVerification.verifyAll")}
+      </button>
+    </div>
+  );
+}
+
+function BulkTokenCopy({ token }: { token: string }) {
+  const uiCopy = useUiMessages();
+  const mounted = useRef(false);
+  const busy = useRef(false);
+  const [pending, setPending] = useState(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const copy = async () => {
+    if (busy.current) return;
+    busy.current = true;
+    setPending(true);
+    try {
+      await navigator.clipboard.writeText(token);
+      if (mounted.current) toast.success(uiCopy("bulkVerification.copied"));
+    } catch {
+      if (mounted.current) toast.error(uiCopy("bulkVerification.copyFailed"));
+    } finally {
+      busy.current = false;
+      if (mounted.current) setPending(false);
+    }
+  };
+  return <button type="button" onClick={copy} aria-busy={pending} aria-disabled={pending}
+    aria-label={uiCopy("bulkVerification.copyTitle")} title={uiCopy("bulkVerification.copyTitle")}
+    className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-md border border-line px-2 py-1.5 text-ink transition-colors hover:bg-paper focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-seal">
+    <Copy className="h-3.5 w-3.5" />
+  </button>;
+}

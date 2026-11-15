@@ -1,0 +1,190 @@
+import type { Decision, QueryRun, SourceItemIdentity } from "./types";
+
+export const RESEARCH_RECEIPT_SCHEMA = "urn:keryx:research-receipt:1" as const;
+export const RESEARCH_RECEIPT_CANONICALIZATION = "keryx-json-v1" as const;
+
+export type ReceiptAsset = Partial<SourceItemIdentity>;
+
+export interface ReceiptDecision extends ReceiptAsset {
+  sourceId: string;
+  sourceName: string;
+  action: Decision["action"];
+  expectedValue: number;
+  priceUsdc: number;
+  listPriceUsdc?: number;
+  offerId?: string;
+  confidence: number;
+  rationale: string;
+  targets: number[];
+  external: boolean;
+}
+
+export interface ReceiptEvidencePortfolio {
+  selectionMethod?: "bounded-heuristic" | "exhaustive";
+  evaluatedStates?: number;
+  policy: "claim-coverage-v1";
+  eligibleCandidates: number;
+  attentionLimit: number;
+  fetchBudgetUsdc: number;
+  selectedAssetIds: string[];
+  selectedBuyUsdc: number;
+  unusedFetchBudgetUsdc: number;
+  predictedCoveredClaims: number;
+  claims: Array<{
+    claimIndex: number;
+    selectedCandidateIds: string[];
+    predictedCoverage: number;
+  }>;
+  outcome?: {
+    readAssetIds: string[];
+    evidenceAssetIds: string[];
+    nonqualifyingReads: number;
+    unreadSelected: number;
+    groundedClaims: number;
+    evidenceYield: number | null;
+  };
+}
+
+export interface ReceiptEvidence extends ReceiptAsset {
+  marker: string;
+  sourceId: string;
+  sourceName: string;
+  quote: string;
+  support: number;
+  qualifiesForAnswer?: boolean;
+  qualifiesForReward: boolean;
+}
+
+export interface ReceiptClaim {
+  claimIndex: number;
+  claim: string;
+  coverage: number | null;
+  coveredBy: string[];
+  evidence: ReceiptEvidence[];
+}
+
+export interface ReceiptCitation extends ReceiptAsset {
+  marker: string;
+  sourceId: string;
+  sourceName: string;
+  weight: number;
+  /** Agent allocation. Settlement truth remains in `settlement.creatorPayments`. */
+  rewardPlannedUsdc: number;
+  rationale: string;
+}
+
+export type ReceiptPaymentStatus = "settled" | "pending" | "failed" | "simulated";
+
+export interface ReceiptCreatorPayment extends ReceiptAsset {
+  /** Reviewed permission reference, never proof that settlement occurred. */
+  scholarlyRights?: { declarationId: string; approvalId: string; policy: "supervised-testnet-v1" };
+  kind: "fetch" | "citation";
+  sourceId: string;
+  sourceName: string;
+  payee: string;
+  amountUsdc: number;
+  network: string;
+  status: ReceiptPaymentStatus;
+  /** Circle Gateway transfer id. It is not an EVM transaction hash. */
+  circleTransferId?: string;
+  createdAt: string;
+}
+
+/** Owner-funded Keryx service charge; never a creator earning or external sale. */
+export interface ReceiptOperatingPayment extends Omit<ReceiptCreatorPayment, "kind"> {
+  kind: "operating-fee";
+  funding: "keryx-sponsored";
+}
+
+export type ReceiptLedgerCompleteness =
+  | "complete"
+  | "incomplete"
+  | "legacy"
+  | "not_applicable";
+
+export type ReceiptSettlementStatus =
+  | "settled"
+  | "pending"
+  | "failed"
+  | "mixed"
+  | "none"
+  | "offline"
+  | "incomplete";
+
+export interface ReceiptSettlement {
+  mode: "real" | "offline" | "legacy";
+  status: ReceiptSettlementStatus;
+  ledgerCompleteness: ReceiptLedgerCompleteness;
+  expectedRecordedPaymentsAtFinish: number | null;
+  recordedCreatorPayments: number;
+  settledCreatorPayments: number;
+  pendingCreatorPayments: number;
+  failedCreatorPayments: number;
+  simulatedCreatorPayments: number;
+  settledCreators: number;
+  settledCreatorUsdc: number;
+  settledAccessUsdc: number;
+  settledCitationUsdc: number;
+  pendingCreatorUsdc: number;
+  failedCreatorUsdc: number;
+  simulatedCreatorUsdc: number;
+  creatorPayments: ReceiptCreatorPayment[];
+  /** Absent in historical receipts; their original payload and digest remain valid. */
+  operatingPayments?: ReceiptOperatingPayment[];
+  recordedOperatingPayments?: number;
+  settledOperatingPayments?: number;
+  pendingOperatingPayments?: number;
+  failedOperatingPayments?: number;
+  simulatedOperatingPayments?: number;
+  settledOperatingFeeUsdc?: number;
+  pendingOperatingFeeUsdc?: number;
+  failedOperatingFeeUsdc?: number;
+  simulatedOperatingFeeUsdc?: number;
+}
+
+export interface ResearchReceiptPayload {
+  /** Optional publication-order snapshot; this does not attest body content or settlement. */
+  sourceRecency?: QueryRun["sourceRecency"];
+  /** Hypothetical proposals retain a separate role under the receipt hash. */
+  teachingProposals?: QueryRun["teachingProposals"];
+  /** Optional metadata role; absent historical receipt bytes remain unchanged. */
+  bibliography?: QueryRun["bibliography"];
+  funding?: { type: "research-monthly-prepaid"; monthlyId: string; allocationUsdc: number; newInboundPayment: false };
+  schema: typeof RESEARCH_RECEIPT_SCHEMA;
+  dispatch: {
+    id: string;
+    question: string;
+    answer: string;
+    answerSha256: `sha256:${string}`;
+    createdAt: string;
+    budgetUsdc: number;
+    researchMode: "quick" | "deep";
+    engine: string;
+    confidence: QueryRun["confidence"] | null;
+  };
+  agency: {
+    decisions: ReceiptDecision[];
+    evidencePortfolio?: ReceiptEvidencePortfolio;
+  };
+  claims: ReceiptClaim[];
+  citations: ReceiptCitation[];
+  settlement: ReceiptSettlement;
+  limits: string[];
+}
+
+export interface ResearchReceipt {
+  payload: ResearchReceiptPayload;
+  integrity: {
+    algorithm: "sha256";
+    canonicalization: typeof RESEARCH_RECEIPT_CANONICALIZATION;
+    scope: "payload";
+    digest: `sha256:${string}`;
+  };
+}
+
+export interface ReceiptVerification {
+  valid: boolean;
+  expectedDigest?: string;
+  actualDigest?: string;
+  reason?: string;
+}

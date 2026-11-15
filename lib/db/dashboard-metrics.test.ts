@@ -1,0 +1,379 @@
+import { describe, expect, it } from "vitest";
+import type { Citation } from "../types";
+import {
+  calculateDashboardMetrics,
+  runEvidenceMetrics,
+} from "./dashboard-metrics";
+
+const citation = (overrides: Partial<Citation> = {}): Citation => ({
+  marker: "S1",
+  sourceId: "owned",
+  sourceName: "Synthetic owned source",
+  weight: 1,
+  reward: 0.002,
+  rationale: "Synthetic supported contribution",
+  ...overrides,
+});
+
+describe("calculateDashboardMetrics", () => {
+  it("counts sponsored operating settlements once in gross volume but never as creator earnings or customer conversion", () => {
+    const fee = { kind: "operating-fee" as const, sourceId: "keryx:operating-fee", queryId: "sponsored",
+      amountUsdc: 0.005, settled: true, settlementStatus: "settled" as const, txHash: "circle-original" };
+    const metrics = calculateDashboardMetrics([
+      fee,
+      { ...fee, queryId: "pending", settled: false, settlementStatus: "pending" },
+      { ...fee, queryId: "failed", settled: false, settlementStatus: "failed" },
+      { ...fee, queryId: "offline", settled: false, settlementStatus: "simulated" },
+      { ...fee, queryId: "contradiction", settlementStatus: "simulated" },
+      { ...fee, queryId: "missing-evidence", txHash: null },
+      { kind: "citation", sourceId: "creator", queryId: "creator-query", amountUsdc: 0.002, settled: true },
+      { kind: "inbound", sourceId: "keryx", queryId: "customer", amountUsdc: 0.03, settled: true },
+    ], [{ id: "sponsored", origin: "mcp", mcpClient: "codex" }, { id: "creator-query", origin: "web" }]);
+    expect(metrics).toMatchObject({ totalPayments: 3, totalVolumeUsdc: 0.037,
+      totalCreatorPayoutsUsdc: 0.002, creatorsEarning: 1, payingQueries: 1,
+      settledOperatingFeeUsdc: 0.005, settledOperatingFeePayments: 1,
+      pendingPaymentConfirmations: 1, failedPaymentAttempts: 1,
+      mcpClientQueries: [{ client: "codex", queries: 1, payingQueries: 0 }] });
+  });
+  it("counts only completed web questions without a recorded wallet as guest questions", () => {
+    const metrics = calculateDashboardMetrics([], [
+      { id: "guest-1", origin: "web", asker: null },
+      { id: "guest-2", origin: "web" },
+      { id: "guest-empty", origin: "web", asker: "" },
+      { id: "signed-in", origin: "web", asker: `0x${"a".repeat(40)}` },
+      { id: "unrecognized-wallet", origin: "web", asker: "legacy-wallet" },
+      { id: "engine", origin: "engine" },
+      { id: "mcp", origin: "mcp" },
+      { id: "a2a", origin: "a2a" },
+      { id: "legacy", origin: null },
+      { id: "unknown" },
+    ]);
+    expect(metrics.guestQuestions).toBe(3);
+    expect(metrics.totalQueries).toBe(10);
+    expect(JSON.stringify(metrics)).not.toContain(`0x${"a".repeat(40)}`);
+    expect(calculateDashboardMetrics([], []).guestQuestions).toBe(0);
+  });
+
+  it("combines every origin in headline totals", () => {
+    const metrics = calculateDashboardMetrics(
+      [
+        {
+          amountUsdc: 0.01,
+          sourceId: "s1",
+          queryId: "web-1",
+          kind: "citation",
+          origin: "web",
+          settled: true,
+          payer: "0xalice",
+        },
+        {
+          amountUsdc: 0.02,
+          sourceId: "s1",
+          queryId: "engine-1",
+          kind: "citation",
+          origin: "engine",
+          settled: true,
+          payer: "0xtreasury",
+        },
+        {
+          amountUsdc: 9,
+          sourceId: "s1",
+          queryId: "web-2",
+          kind: "citation",
+          origin: "web",
+          settled: false,
+          payer: "0xalice",
+        },
+      ],
+      [
+        { id: "web-1", origin: "web", asker: "0xAlice", durationMs: 1_000 },
+        { id: "web-2", origin: "web", asker: "0xAlice", durationMs: 2_000 },
+        { id: "engine-1", origin: "engine", durationMs: 50 },
+      ],
+    );
+
+    expect(metrics.totalPayments).toBe(2);
+    expect(metrics.totalQueries).toBe(3);
+    expect(metrics.totalVolumeUsdc).toBe(0.03);
+    expect(metrics.totalCreatorPayoutsUsdc).toBe(0.03);
+    expect(metrics.payingQueries).toBe(2);
+    expect(metrics.readerToPayerConversion).toBe(0.666667);
+  });
+
+  it("reports pending confirmations without promoting them into traction", () => {
+    const metrics = calculateDashboardMetrics(
+      [
+        {
+          amountUsdc: 0.004,
+          sourceId: "s1",
+          queryId: "web-pending",
+          kind: "citation",
+          origin: "web",
+          settled: false,
+          settlementStatus: "pending",
+        },
+      ],
+      [{ id: "web-pending", origin: "web" }],
+    );
+
+    expect(metrics.totalPayments).toBe(0);
+    expect(metrics.totalVolumeUsdc).toBe(0);
+    expect(metrics.payingQueries).toBe(0);
+    expect(metrics.pendingPaymentConfirmations).toBe(1);
+    expect(metrics.pendingPaymentVolumeUsdc).toBe(0.004);
+  });
+
+  it("reports failed receipts without counting them as spend or traction", () => {
+    const metrics = calculateDashboardMetrics(
+      [{
+        amountUsdc: 0.006,
+        sourceId: "s1",
+        queryId: "web-failed",
+        kind: "fetch",
+        origin: "web",
+        settled: false,
+        settlementStatus: "failed",
+      }],
+      [{ id: "web-failed", origin: "web" }],
+    );
+
+    expect(metrics.totalPayments).toBe(0);
+    expect(metrics.totalVolumeUsdc).toBe(0);
+    expect(metrics.pendingPaymentConfirmations).toBe(0);
+    expect(metrics.failedPaymentAttempts).toBe(1);
+    expect(metrics.failedPaymentVolumeUsdc).toBe(0.006);
+  });
+
+  it("counts A2A payments and feedback in the combined totals", () => {
+    const metrics = calculateDashboardMetrics(
+      [
+        {
+          amountUsdc: 0.02,
+          sourceId: "keryx",
+          queryId: "a2a-1",
+          kind: "inbound",
+          origin: "a2a",
+          settled: true,
+          payer: "0xAgent",
+        },
+        {
+          amountUsdc: 0.02,
+          sourceId: "keryx",
+          queryId: "a2a-2",
+          kind: "inbound",
+          origin: "a2a",
+          settled: true,
+          payer: "0xAgent",
+        },
+      ],
+      [
+        {
+          id: "a2a-1",
+          origin: "a2a",
+          paymentMode: "real",
+          paymentAttempts: 2,
+          settledPayments: 2,
+          confidenceLevel: "High",
+        },
+        {
+          id: "a2a-2",
+          origin: "a2a",
+          paymentMode: "real",
+          paymentAttempts: 2,
+          settledPayments: 1,
+          confidenceLevel: "Low",
+        },
+        { id: "anon", origin: "web" },
+      ],
+      [
+        { queryId: "a2a-1", rating: "up" },
+        { queryId: "a2a-2", rating: "down" },
+        { queryId: "internal", rating: "up" },
+      ],
+    );
+
+    expect(metrics.totalQueries).toBe(3);
+    expect(metrics.totalPayments).toBe(2);
+    expect(metrics.totalVolumeUsdc).toBe(0.04);
+    expect(metrics.feedbackTotal).toBe(3);
+    expect(metrics.satisfactionRate).toBe(0.666667);
+  });
+
+  it("includes Remote MCP in totals and tracks its integration channel", () => {
+    const metrics = calculateDashboardMetrics(
+      [
+        {
+          amountUsdc: 0.01,
+          sourceId: "creator",
+          queryId: "mcp-1",
+          kind: "citation",
+          origin: "mcp",
+          settled: true,
+        },
+      ],
+      [
+        { id: "mcp-1", origin: "mcp", asker: "0xMcpAgent", mcpClient: "codex" },
+        { id: "mcp-2", origin: "mcp", asker: "0xmcpagent", mcpClient: "codex" },
+        { id: "mcp-anon", origin: "mcp" },
+      ],
+    );
+
+    expect(metrics.totalQueries).toBe(3);
+    expect(metrics.totalCreatorPayoutsUsdc).toBe(0.01);
+    expect(metrics.mcpClientQueries).toEqual([
+      { client: "codex", queries: 2, payingQueries: 1 },
+      { client: "unknown", queries: 1, payingQueries: 0 },
+    ]);
+  });
+
+  it("includes historical runs without an origin in the total", () => {
+    const metrics = calculateDashboardMetrics([], [
+      { id: "legacy", origin: null, asker: "0xmaybe" },
+      { id: "engine", origin: "engine" },
+    ]);
+    expect(metrics.totalQueries).toBe(2);
+  });
+
+  it("keeps recorded evidence samples without treating their stored counters as current factual grounding", () => {
+    const metrics = calculateDashboardMetrics([], [
+      { id: "historical", origin: "engine" },
+      {
+        id: "grounded",
+        origin: "web",
+        evidenceClaimCount: 2,
+        groundedClaimCount: 2,
+        rewardedCitationCount: 1,
+      },
+      {
+        id: "withheld",
+        origin: "engine",
+        evidenceClaimCount: 2,
+        groundedClaimCount: 0,
+        rewardedCitationCount: 0,
+      },
+    ]);
+
+    expect(metrics.evidenceRunSamples).toBe(2);
+    expect(metrics.evidenceClaimSamples).toBe(4);
+    expect(metrics.groundedClaimRate).toBeNull();
+    expect(metrics.evidenceQuality).toMatchObject({ status: "unavailable", basis: "recorded-unreassessed" });
+    expect(metrics.evidenceQuality.explanation).toContain("have not been reassessed");
+    expect(metrics.citationPoolWithheldRuns).toBe(1);
+  });
+
+  it("withholds aggregate factual quality even for all-grounded stored counters while preserving every payment state", () => {
+    const payments = [
+      { amountUsdc: 0.003, sourceId: "demo", queryId: "old-demo", kind: "citation" as const, settled: true },
+      { amountUsdc: 0.02, sourceId: "keryx", queryId: "old-demo", kind: "inbound" as const, settled: true },
+      { amountUsdc: 0.004, sourceId: "pending", queryId: "unknown", kind: "fetch" as const, settled: false, settlementStatus: "pending" as const },
+      { amountUsdc: 0.006, sourceId: "failed", queryId: "failed", kind: "fetch" as const, settled: false, settlementStatus: "failed" as const },
+    ];
+    const runs = [{ id: "old-demo", evidenceClaimCount: 1, groundedClaimCount: 1, rewardedCitationCount: 1 }];
+    const original = structuredClone({ payments, runs });
+    const metrics = calculateDashboardMetrics(payments, runs);
+    expect(metrics.groundedClaimRate).toBeNull();
+    expect(metrics.evidenceQuality.status).toBe("unavailable");
+    expect(metrics).toMatchObject({ totalPayments: 2, totalVolumeUsdc: 0.023, totalCreatorPayoutsUsdc: 0.003,
+      pendingPaymentConfirmations: 1, pendingPaymentVolumeUsdc: 0.004, failedPaymentAttempts: 1, failedPaymentVolumeUsdc: 0.006 });
+    expect({ payments, runs }).toEqual(original);
+    expect(calculateDashboardMetrics([], []).groundedClaimRate).toBeNull();
+  });
+
+  it("derives additive evidence telemetry from QueryRun JSON", () => {
+    expect(
+      runEvidenceMetrics({
+        citations: [citation({ sourceId: "s1" })],
+        claimCoverage: [
+          { claimIndex: 0, claim: "a", coverage: 0.8, coveredBy: ["S1"] },
+          { claimIndex: 1, claim: "b", coverage: 0.1, coveredBy: [] },
+        ],
+      }),
+    ).toEqual({
+      evidenceClaimCount: 2,
+      groundedClaimCount: 1,
+      rewardedCitationCount: 1,
+    });
+    expect(runEvidenceMetrics("{}").evidenceClaimCount).toBeNull();
+  });
+
+  it.each([
+    {
+      name: "funding-unknown public fallback",
+      citations: [citation({ sourceId: "public:free", sourceKind: "public-reference", reward: 0 })],
+      count: 0, withheld: 1,
+    },
+    {
+      name: "positive planned creator reward",
+      citations: [citation()], count: 1, withheld: 0,
+    },
+    {
+      name: "mixed public and planned creator rewards",
+      citations: [citation(), citation({ sourceId: "public:free", sourceKind: "public-reference", reward: 0 })],
+      count: 1, withheld: 0,
+    },
+    {
+      name: "known-zero creator reward",
+      citations: [citation({ reward: 0 })], count: 0, withheld: 1,
+    },
+    { name: "actual empty citation pool", citations: [], count: 0, withheld: 1 },
+    {
+      name: "public identity with malformed positive reward",
+      citations: [citation({ sourceKind: "public-reference" }), citation({ sourceId: "public:reserved" })],
+      count: 0, withheld: 1,
+    },
+  ])("reports withheld pools honestly for $name without manufacturing settlement", ({ citations, count, withheld }) => {
+    const run = {
+      id: "synthetic",
+      citations,
+      claimCoverage: [{ claimIndex: 0, claim: "Supported claim", coverage: 0.8, coveredBy: ["S1"] }],
+      totalSpent: 0,
+      trace: [{ phase: "fetch", message: "Funding readiness is unknown", detail: { fundingReadiness: "unknown" } }],
+    };
+    const sample = runEvidenceMetrics(JSON.stringify(run));
+    expect(sample).toEqual({
+      evidenceClaimCount: 1,
+      groundedClaimCount: 1,
+      rewardedCitationCount: count,
+    });
+    const metrics = calculateDashboardMetrics([], [{ id: run.id, ...sample }]);
+    expect(metrics.citationPoolWithheldRuns).toBe(withheld);
+    expect(metrics.totalPayments).toBe(0);
+    expect(metrics.totalVolumeUsdc).toBe(0);
+    expect(metrics.totalCreatorPayoutsUsdc).toBe(0);
+  });
+
+  it.each([
+    undefined, null, {}, [null], [{ sourceId: "legacy" }],
+    [citation({ reward: NaN })], [citation({ reward: -1 })],
+    [citation(), { sourceId: "legacy" }],
+  ].map(citations => ({ citations })))("keeps absent or malformed historical reward evidence unknown: $citations", ({ citations }) => {
+    const sample = runEvidenceMetrics({ citations, claimCoverage: [{ coverage: 0.8 }] });
+    expect(sample.rewardedCitationCount).toBeNull();
+    expect(calculateDashboardMetrics([], [{ id: "legacy", ...sample }]).citationPoolWithheldRuns).toBe(0);
+  });
+
+  it("does not fabricate evidence samples for historical runs without claim coverage", () => {
+    const sample = runEvidenceMetrics({ citations: [citation()] });
+    expect(sample).toEqual({
+      evidenceClaimCount: null,
+      groundedClaimCount: null,
+      rewardedCitationCount: null,
+    });
+    const metrics = calculateDashboardMetrics([], [{ id: "legacy", ...sample }]);
+    expect(metrics.evidenceRunSamples).toBe(0);
+    expect(metrics.citationPoolWithheldRuns).toBe(0);
+  });
+
+  it("reports the wanted-claim fulfillment funnel separately from query traction", () => {
+    const metrics = calculateDashboardMetrics([], [], [], [
+      { status: "filled" },
+      { status: "pending" },
+      { status: "running" },
+      { status: "missed" },
+    ]);
+    expect(metrics.gapIntentOffers).toBe(4);
+    expect(metrics.gapIntentFilled).toBe(1);
+    expect(metrics.gapIntentPending).toBe(2);
+    expect(metrics.gapIntentFillRate).toBe(0.25);
+  });
+});

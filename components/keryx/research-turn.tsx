@@ -1,0 +1,102 @@
+"use client";
+
+import { useState } from "react";
+import type { AskStreamState } from "@/lib/hooks/use-ask-stream";
+import { AnswerCard } from "./answer-card";
+import { ReasoningConsole } from "./reasoning-console";
+import { CreatorsPaidPanel } from "./creators-paid-panel";
+import { stepPaymentTotals } from "./budget-meter";
+import { fmtUsdc } from "./phase-style";
+import { ReportActions } from "./report-actions";
+import { SelectionFailureDownload } from "./selection-failure-download";
+import { DecisionReviews } from "./decision-reviews";
+
+import { savedReportRecoveryPath } from "@/lib/research/ask-stream-lifecycle";
+import { UiMessage, useUiMessages } from "@/lib/i18n/ui-copy";
+import { recordedAnswerLanguage } from "@/lib/research/answer-language-provenance";
+import { researchRecoveryCopy } from "@/lib/research/research-recovery-copy";
+
+
+
+
+
+export interface ResearchTurnData {
+  id: number;
+  question: string;
+  payer: string;
+  state: AskStreamState;
+  stopped?: boolean;
+}
+
+export function ResearchTurn({ turn, publicFollowUp = false, onPrepareEvidenceFollowUp }: {
+  turn: ResearchTurnData; publicFollowUp?: boolean; onPrepareEvidenceFollowUp?: (draft: string) => void;
+}) {
+  const message = useUiMessages();
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const { state, stopped } = turn;
+  const streaming = !stopped && state.status === "streaming";
+  const latestMessage = state.steps.at(-1)?.message;
+  const recoveryPath = !stopped && state.status === "error" && !state.run ? savedReportRecoveryPath(state.meta) : null;
+  const totals = stepPaymentTotals(state.steps);
+  const gateway = state.errorKind === "gateway" && (state.gatewayStatus === 502 || state.gatewayStatus === 504);
+  const unsettled = (["pending", "simulated", "unverified", "failed"] as const)
+    .filter(status => totals[status] > 0)
+    .map(status => message(({ pending: "researchTurn.paymentPending", simulated: "researchTurn.paymentSimulated", unverified: "researchTurn.paymentUnverified", failed: "researchTurn.paymentFailed" } as const)[status], { amount: fmtUsdc(totals[status]) })).join(" · ");
+  return <article className="min-w-0 space-y-4" aria-label={message("researchTurn.label", { question: turn.question })} data-testid="research-turn">
+    <div className="kx-research-request ml-auto max-w-[90%] border border-line bg-paper-2 px-4 py-3 sm:px-6">
+      <p className="font-mono text-[11px] uppercase tracking-wide text-ink-3"><UiMessage messageKey="researchTurn.requestSummary" values={{ payer: turn.payer, amount: fmtUsdc(state.budget) }} /></p>
+      <p lang="und" dir="auto" className="mt-1 whitespace-pre-wrap break-words font-serif text-lg text-ink">{turn.question}</p>
+    </div>
+    <div className="min-w-0">
+      {state.run && <div id={`answer-${turn.id}`} className="kx-research-answer">
+        <AnswerCard run={state.run} answerLanguage={recordedAnswerLanguage(state.run)} meta={state.meta} payments={state.payments} permalink={`${typeof window === "undefined" ? "" : window.location.origin}/dispatch/${state.run.id}`}
+          publicFollowUp={publicFollowUp} onPrepareEvidenceFollowUp={onPrepareEvidenceFollowUp} />
+        <ReportActions run={state.run} meta={state.meta} payments={state.payments} />
+      </div>}
+      {streaming && !state.run && <div className="kx-research-live border border-line bg-paper" role="status" aria-live="polite">
+        <div className="flex items-start gap-3 px-4 py-5 sm:gap-4 sm:px-6 sm:py-6">
+          <span className="kx-research-signal" aria-hidden="true">
+            <span className="kx-research-orbit" />
+            <span className="kx-research-signal-core" />
+          </span>
+          <div className="min-w-0 pt-1">
+            <p className="font-mono text-[11px] uppercase tracking-[0.12em] text-seal"><UiMessage messageKey="researchTurn.inProgress" /></p>
+            <p className="mt-2 break-words font-serif text-lg leading-relaxed sm:text-xl">{latestMessage != null ? <span lang="und" dir="auto">{latestMessage}</span> : <UiMessage messageKey="researchTurn.findingSources" />}</p>
+          </div>
+        </div>
+        <div className="kx-research-track" aria-hidden="true"><span /></div>
+      </div>}
+      {stopped && <p role="status" className="border border-line bg-paper p-4 text-sm text-ink-2"><UiMessage messageKey="researchTurn.stoppedNotice" /></p>}
+      {!stopped && state.status === "error" && <div role="alert" className="border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+        {gateway ? <p><UiMessage messageKey="researchError.httpFallback" values={{ status: state.gatewayStatus! }} />{" "}<UiMessage messageKey="researchError.unknownOutcome" /></p>
+          : <p lang={state.error === researchRecoveryCopy.interrupted ? "en" : state.error != null ? "und" : undefined} dir={state.error === researchRecoveryCopy.interrupted ? "ltr" : state.error != null ? "auto" : undefined}>{state.error ?? <UiMessage messageKey="researchTurn.failed" />}</p>}
+        {gateway && <a href="/status" target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" className="mt-2 inline-block underline underline-offset-4"><UiMessage messageKey="researchError.serviceStatus" /></a>}
+        {recoveryPath && <div className="mt-3 space-y-2">
+          <a href={recoveryPath} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" className="break-all underline underline-offset-4"><UiMessage messageKey="reportActions.openSaved" /></a>
+        </div>}
+        {state.errorKind === "maintenance" && state.maintenance && <div className="mt-2">
+          <a href="/maintenance/status" className="underline underline-offset-4"><UiMessage messageKey="researchError.serviceStatus" /></a>
+          {state.retryAfter !== null && <p><UiMessage messageKey="researchError.checkStatusAfter" values={{ seconds: state.retryAfter }} /></p>}
+        </div>}
+        <SelectionFailureDownload diagnostic={state.selectionDiagnostic} />
+        {state.errorKind === "rate-limit" && <p className="mt-2">{state.retryAfter ? <UiMessage messageKey="researchTurn.retryAfter" values={{ seconds: state.retryAfter }} /> : <UiMessage messageKey="researchTurn.retryShortly" />}</p>}
+      </div>}
+      {state.decisionReviews?.length ? <DecisionReviews records={state.decisionReviews} capturedOwner={state.meta?.reviewOwner} live={streaming} /> : null}
+      <details className="mt-3 border border-line bg-paper" onToggle={event => setEvidenceOpen(event.currentTarget.open)}>
+        <summary className="min-h-11 cursor-pointer break-words px-4 py-3 font-mono text-xs text-ink-2">
+          {state.meta?.mode === "offline"
+            ? unsettled
+              ? <UiMessage messageKey={state.steps.length === 1 ? "researchTurn.offlineSummaryWithUnsettled.one" : "researchTurn.offlineSummaryWithUnsettled.other"} values={{ count: state.steps.length, settled: fmtUsdc(totals.settled), cap: fmtUsdc(state.budget), unsettled }} />
+              : <UiMessage messageKey={state.steps.length === 1 ? "researchTurn.offlineSummary.one" : "researchTurn.offlineSummary.other"} values={{ count: state.steps.length, settled: fmtUsdc(totals.settled), cap: fmtUsdc(state.budget) }} />
+            : unsettled
+              ? <UiMessage messageKey={state.steps.length === 1 ? "researchTurn.summaryWithUnsettled.one" : "researchTurn.summaryWithUnsettled.other"} values={{ count: state.steps.length, settled: fmtUsdc(totals.settled), cap: fmtUsdc(state.budget), unsettled }} />
+              : <UiMessage messageKey={state.steps.length === 1 ? "researchTurn.summary.one" : "researchTurn.summary.other"} values={{ count: state.steps.length, settled: fmtUsdc(totals.settled), cap: fmtUsdc(state.budget) }} />}
+        </summary>
+        {evidenceOpen && <div className="grid min-w-0 gap-6 border-t border-line p-4 lg:grid-cols-[1.6fr_1fr]">
+          <ReasoningConsole steps={state.steps} streaming={streaming} budget={state.budget} />
+          <CreatorsPaidPanel payments={state.payments} mode={state.meta?.mode ?? null} streaming={streaming} />
+        </div>}
+      </details>
+    </div>
+  </article>;
+}

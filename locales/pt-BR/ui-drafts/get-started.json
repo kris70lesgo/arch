@@ -1,0 +1,420 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "locales/en/get-started.ts",
+  "sourceSha256": "9450616cf1959d638de574cbeec2f3a445dbdea9d93bc8dcd67301299373e2fa",
+  "entries": {
+    "navigation.start": {
+      "source": "Get started",
+      "text": "Primeiros passos"
+    },
+    "navigation.download": {
+      "source": "Download",
+      "text": "Baixar"
+    },
+    "navigation.integrations": {
+      "source": "Integrations",
+      "text": "Integrações"
+    },
+    "navigation.label": {
+      "source": "Ways to use Keryx",
+      "text": "Formas de usar o Keryx"
+    },
+    "navigation.downloadAction": {
+      "source": "Get the app or extension",
+      "text": "Obter o aplicativo ou a extensão"
+    },
+    "navigation.connectAction": {
+      "source": "Connect MCP, API or CLI",
+      "text": "Conectar MCP, API ou CLI"
+    },
+    "start.title": {
+      "source": "Your research. Wherever you work.",
+      "text": "Sua pesquisa, onde você trabalha."
+    },
+    "start.body": {
+      "source": "Ask in your browser, research a page you are reading, connect your AI assistant, or build Keryx into your own workflow. Pick a starting point below.",
+      "text": "Pergunte pelo navegador, pesquise uma página que está lendo, conecte seu assistente de IA ou integre o Keryx ao seu trabalho. Escolha por onde começar."
+    },
+    "start.try": {
+      "source": "Try Keryx in the browser",
+      "text": "Testar o Keryx no navegador"
+    },
+    "start.browse": {
+      "source": "Browse downloads",
+      "text": "Ver downloads"
+    },
+    "start.firstTitle": {
+      "source": "Your first cited answer",
+      "text": "Sua primeira resposta com citações"
+    },
+    "start.choose": {
+      "source": "Choose how you use Keryx",
+      "text": "Escolha como usar o Keryx"
+    },
+    "common.steps": {
+      "source": "Get set up",
+      "text": "Configurar"
+    },
+    "common.requirements": {
+      "source": "What you need",
+      "text": "O que você precisa"
+    },
+    "common.help": {
+      "source": "Need a hand?",
+      "text": "Precisa de ajuda?"
+    },
+    "common.support": {
+      "source": "Contact support",
+      "text": "Falar com o suporte"
+    },
+    "common.docs": {
+      "source": "Read the full guide",
+      "text": "Ler o guia completo"
+    },
+    "common.copy": {
+      "source": "Copy",
+      "text": "Copiar"
+    },
+    "common.copied": {
+      "source": "Copied",
+      "text": "Copiado"
+    },
+    "navigation.entryBody": {
+      "source": "Use Keryx in your browser, on Windows, from an AI assistant or inside your own tools. Find the right setup and see what each option supports.",
+      "text": "Use o Keryx no navegador, no Windows, em um assistente de IA ou nas suas próprias ferramentas. Encontre a configuração adequada e veja o que cada opção oferece."
+    },
+    "common.status": {
+      "source": "Service status",
+      "text": "Status do serviço"
+    },
+    "common.version": {
+      "source": "Version",
+      "text": "Versão"
+    },
+    "common.release": {
+      "source": "Release notes & checksums",
+      "text": "Notas da versão e somas de verificação"
+    },
+    "start.accountTitle": {
+      "source": "An account is optional for the trial",
+      "text": "A conta é opcional para o teste"
+    },
+    "start.accountAction": {
+      "source": "Sign in & account setup",
+      "text": "Entrar e configurar a conta"
+    },
+    "start.faqTitle": {
+      "source": "Before you install",
+      "text": "Antes de instalar"
+    },
+    "start.faq.0.question": {
+      "source": "Which option should I choose?",
+      "text": "Qual opção devo escolher?"
+    },
+    "start.faq.2.question": {
+      "source": "Can I use Keryx on my phone, Mac or Linux?",
+      "text": "Posso usar o Keryx no celular, Mac ou Linux?"
+    },
+    "start.faq.2.answer": {
+      "source": "Use the web app in a supported browser. The downloadable Operator alpha currently supports Windows x64. There are no Keryx mobile, macOS or Linux installers offered here; compatible MCP and API clients have their own platform requirements.",
+      "text": "Use o aplicativo web em um navegador compatível. A versão alfa do Operator disponível para download atualmente suporta Windows x64. Não há instaladores do Keryx para celular, macOS ou Linux aqui; os clientes MCP e API compatíveis têm seus próprios requisitos de plataforma."
+    },
+    "surfaces.0.title": {
+      "source": "Web app",
+      "text": "Aplicativo web"
+    },
+    "surfaces.0.tag": {
+      "source": "No install",
+      "text": "Sem instalação"
+    },
+    "surfaces.0.body": {
+      "source": "Ask a shareable question, inspect source choices and reopen a cited report.",
+      "text": "Faça uma pergunta que possa compartilhar, confira a seleção de fontes e reabra um relatório com citações."
+    },
+    "surfaces.0.action": {
+      "source": "Open the web app",
+      "text": "Abrir o aplicativo web"
+    },
+    "surfaces.1.title": {
+      "source": "Windows desktop",
+      "text": "Aplicativo para Windows"
+    },
+    "surfaces.1.tag": {
+      "source": "Operator alpha",
+      "text": "Operator alpha"
+    },
+    "surfaces.1.action": {
+      "source": "Download & install",
+      "text": "Baixar e instalar"
+    },
+    "surfaces.2.title": {
+      "source": "Browser extension",
+      "text": "Extensão do navegador"
+    },
+    "surfaces.2.tag": {
+      "source": "Manual install",
+      "text": "Instalação manual"
+    },
+    "surfaces.2.body": {
+      "source": "Highlight text, ask from your toolbar and keep the original source links close by.",
+      "text": "Selecione um texto, pergunte pela barra de ferramentas e mantenha os links das fontes originais por perto."
+    },
+    "surfaces.2.action": {
+      "source": "Install the extension",
+      "text": "Instalar a extensão"
+    },
+    "surfaces.3.title": {
+      "source": "MCP for AI assistants",
+      "text": "MCP para assistentes de IA"
+    },
+    "surfaces.3.tag": {
+      "source": "Remote or local",
+      "text": "Remoto ou local"
+    },
+    "surfaces.3.body": {
+      "source": "Bring Keryx tools into Codex, Claude Code, Cursor or a compatible MCP client.",
+      "text": "Adicione as ferramentas do Keryx ao Codex, Claude Code, Cursor ou a um cliente MCP compatível."
+    },
+    "surfaces.3.action": {
+      "source": "Choose an MCP connection",
+      "text": "Escolher uma conexão MCP"
+    },
+    "surfaces.4.title": {
+      "source": "API for developers",
+      "text": "API para desenvolvedores"
+    },
+    "surfaces.4.tag": {
+      "source": "OpenAI compatible",
+      "text": "Compatível com OpenAI"
+    },
+    "surfaces.4.body": {
+      "source": "Integrate cited research and streamed source decisions into your own application.",
+      "text": "Integre pesquisa com citações e decisões sobre fontes transmitidas em tempo real ao seu próprio aplicativo."
+    },
+    "surfaces.4.action": {
+      "source": "Explore the API",
+      "text": "Explorar a API"
+    },
+    "surfaces.5.title": {
+      "source": "Command line",
+      "text": "Linha de comando"
+    },
+    "surfaces.5.tag": {
+      "source": "From source",
+      "text": "A partir do código-fonte"
+    },
+    "surfaces.5.body": {
+      "source": "Inspect Operator tasks or use the documented research and buyer commands.",
+      "text": "Inspecione tarefas do Operator ou use os comandos documentados de pesquisa e compra."
+    },
+    "surfaces.5.action": {
+      "source": "Set up the CLI",
+      "text": "Configurar a CLI"
+    },
+    "surfaces.6.title": {
+      "source": "Chat bots",
+      "text": "Bots de chat"
+    },
+    "surfaces.6.tag": {
+      "source": "Telegram · Discord · Slack",
+      "text": "Telegram · Discord · Slack"
+    },
+    "surfaces.6.body": {
+      "source": "Ask Keryx from a chat or a community workspace.",
+      "text": "Pergunte ao Keryx em um chat ou em um espaço de trabalho da comunidade."
+    },
+    "surfaces.6.action": {
+      "source": "Find your chat app",
+      "text": "Encontrar seu aplicativo de chat"
+    },
+    "download.title": {
+      "source": "Bring Keryx to your workflow.",
+      "text": "Leve o Keryx para seu fluxo de trabalho."
+    },
+    "download.desktopTitle": {
+      "source": "Keryx Operator for Windows",
+      "text": "Keryx Operator para Windows"
+    },
+    "download.desktopTag": {
+      "source": "Windows x64 · Alpha",
+      "text": "Windows x64 · Alfa"
+    },
+    "download.desktopRequirements": {
+      "source": "Windows x64 and Microsoft Edge WebView2 Runtime. Node is bundled; a separate Node installation is not required. Updates are manual in this alpha.",
+      "text": "Windows x64 e Microsoft Edge WebView2 Runtime. O Node já vem incluído; não é necessário instalá-lo separadamente. Nesta versão alfa, as atualizações são manuais."
+    },
+    "download.installer": {
+      "source": "Choose Windows installer",
+      "text": "Escolher o instalador do Windows"
+    },
+    "download.portable": {
+      "source": "Choose portable ZIP",
+      "text": "Escolher o ZIP portátil"
+    },
+    "download.manifest": {
+      "source": "Release manifest and checksums",
+      "text": "Manifesto da versão e somas de verificação"
+    },
+    "download.webview": {
+      "source": "Get WebView2 Runtime",
+      "text": "Obter WebView2 Runtime"
+    },
+    "download.desktopSteps.0": {
+      "source": "Open the release assets and choose the -setup.exe installer or -win32-x64.zip portable build. Review the matching -release.json manifest and -SHA256SUMS.txt checksums.",
+      "text": "Abra os arquivos da versão e escolha o instalador -setup.exe ou a versão portátil -win32-x64.zip. Confira o manifesto -release.json e as somas de verificação -SHA256SUMS.txt correspondentes."
+    },
+    "download.desktopSteps.1": {
+      "source": "Run the installer in your normal Windows user session. Install WebView2 Runtime if it is missing. For the portable build, extract and keep the whole folder together.",
+      "text": "Execute o instalador na sua sessão normal de usuário do Windows. Instale o WebView2 Runtime se ele não estiver presente. Para a versão portátil, extraia o conteúdo e mantenha a pasta inteira junta."
+    },
+    "download.extensionTitle": {
+      "source": "Keryx in your browser",
+      "text": "Keryx no seu navegador"
+    },
+    "download.extensionTag": {
+      "source": "Chromium · Manual install",
+      "text": "Chromium · Instalação manual"
+    },
+    "download.extensionBody": {
+      "source": "Ask about selected text from the toolbar or right-click menu. Inspect the research trace, open cited sources and export recorded references from a completed report.",
+      "text": "Pergunte sobre o texto selecionado pela barra de ferramentas ou pelo menu do botão direito. Inspecione o percurso da pesquisa, abra as fontes citadas e exporte as referências registradas de um relatório concluído."
+    },
+    "download.extensionDownload": {
+      "source": "Download extension ZIP",
+      "text": "Baixar o ZIP da extensão"
+    },
+    "download.extensionRequirements": {
+      "source": "Use Chrome or Edge on desktop, or another compatible Chromium browser. For the ZIP, follow the unpacked-install steps below and enable Developer mode. The public Chrome Web Store listing is also available; check its displayed version before installing.",
+      "text": "Use Chrome ou Edge no computador, ou outro navegador Chromium compatível. Para o ZIP, siga as etapas de instalação sem compactação abaixo e ative o modo do desenvolvedor (Developer mode). A página pública na Chrome Web Store também está disponível; confira a versão exibida antes de instalar."
+    },
+    "download.extensionSteps.0": {
+      "source": "Download and extract the extension ZIP. The extracted directory contains manifest.json directly.",
+      "text": "Baixe e extraia o ZIP da extensão. O arquivo manifest.json fica diretamente na pasta extraída."
+    },
+    "download.extensionSteps.1": {
+      "source": "Open chrome://extensions in Chrome or edge://extensions in Edge, then turn on Developer mode.",
+      "text": "Abra chrome://extensions no Chrome ou edge://extensions no Edge e ative o modo do desenvolvedor (Developer mode)."
+    },
+    "download.extensionSteps.2": {
+      "source": "Choose Load unpacked and select the extracted directory containing manifest.json. Pin Keryx to your toolbar.",
+      "text": "Escolha Carregar sem compactação (Load unpacked) e selecione a pasta extraída que contém manifest.json. Fixe o Keryx na barra de ferramentas."
+    },
+    "download.alternativeTitle": {
+      "source": "Use Keryx without a download",
+      "text": "Use o Keryx sem baixar nada"
+    },
+    "download.alternativeBody": {
+      "source": "The web app works on desktop and mobile browsers. AI assistants can connect through remote MCP; developers can use the hosted API.",
+      "text": "O aplicativo web funciona em navegadores de computador e celular. Assistentes de IA podem se conectar pelo MCP remoto; desenvolvedores podem usar a API hospedada."
+    },
+    "integrations.title": {
+      "source": "Keryx, connected.",
+      "text": "Keryx, conectado."
+    },
+    "integrations.mcpTitle": {
+      "source": "Connect an AI assistant with MCP",
+      "text": "Conecte um assistente de IA com MCP"
+    },
+    "integrations.remoteTitle": {
+      "source": "Remote MCP",
+      "text": "MCP remoto"
+    },
+    "integrations.remoteAction": {
+      "source": "Open remote MCP setup",
+      "text": "Abrir a configuração do MCP remoto"
+    },
+    "integrations.remoteEndpoint": {
+      "source": "Hosted MCP endpoint",
+      "text": "Endpoint MCP hospedado"
+    },
+    "integrations.stdioTitle": {
+      "source": "Local stdio MCP",
+      "text": "MCP local por stdio"
+    },
+    "integrations.stdioConfig": {
+      "source": "Stdio client configuration",
+      "text": "Configuração do cliente Stdio"
+    },
+    "integrations.apiTitle": {
+      "source": "Build with the API",
+      "text": "Desenvolva com a API"
+    },
+    "integrations.apiBase": {
+      "source": "Chat Completions base URL",
+      "text": "URL base de Chat Completions"
+    },
+    "integrations.apiModel": {
+      "source": "Model",
+      "text": "Modelo"
+    },
+    "integrations.apiConfigTitle": {
+      "source": "Connect an OpenAI-compatible client",
+      "text": "Conecte um cliente compatível com OpenAI"
+    },
+    "integrations.apiReadOnly": {
+      "source": "Check available models (Bash, read-only)",
+      "text": "Consultar os modelos disponíveis (Bash, somente leitura)"
+    },
+    "integrations.apiReference": {
+      "source": "OpenAPI reference",
+      "text": "Referência de OpenAPI"
+    },
+    "integrations.apiRecipes": {
+      "source": "SDK examples & streaming guide",
+      "text": "Exemplos de SDK e guia de streaming"
+    },
+    "integrations.cliTitle": {
+      "source": "Work from the command line",
+      "text": "Trabalhe pela linha de comando"
+    },
+    "integrations.cliBody": {
+      "source": "The source checkout includes Operator, research and buyer commands. The CLI is currently distributed with the repository; keryx-mcp is the separate npm MCP package.",
+      "text": "O código-fonte inclui comandos de Operator, pesquisa e compra. A CLI é distribuída atualmente com o repositório; keryx-mcp é o pacote MCP separado do npm."
+    },
+    "integrations.cliRequirements": {
+      "source": "Git, Node 22.19+ or 24+, and the pinned npm 11.19.0 installer. Clone the project and install dependencies before running commands.",
+      "text": "Git, Node 22.19+ ou 24+ e npm na versão fixada 11.19.0. Clone o projeto e instale as dependências antes de executar comandos."
+    },
+    "integrations.cliSetup": {
+      "source": "Install from source & inspect help",
+      "text": "Instalar a partir do código-fonte e consultar a ajuda"
+    },
+    "integrations.cliGuide": {
+      "source": "CLI commands & configuration",
+      "text": "Comandos e configuração da CLI"
+    },
+    "integrations.botsTitle": {
+      "source": "Ask from your chat app",
+      "text": "Pergunte pelo seu aplicativo de chat"
+    },
+    "integrations.telegramBody": {
+      "source": "Open the Keryx bot and send a question. In a group, use /ask followed by your question.",
+      "text": "Abra o bot do Keryx e envie uma pergunta. Em um grupo, use /ask seguido da sua pergunta."
+    },
+    "integrations.telegramAction": {
+      "source": "Open Telegram bot",
+      "text": "Abrir o bot do Telegram"
+    },
+    "integrations.discordAction": {
+      "source": "Add to Discord",
+      "text": "Adicionar ao Discord"
+    },
+    "integrations.slackAction": {
+      "source": "Slack administrator setup",
+      "text": "Configuração para administradores do Slack"
+    },
+    "integrations.selfHost": {
+      "source": "Self-hosting guide",
+      "text": "Guia de hospedagem própria"
+    },
+    "integrations.discordBody": {
+      "source": "Add the Keryx application to a server you manage, then use /ask with your question. Review Discord's requested permissions before installing.",
+      "text": "Adicione o aplicativo do Keryx a um servidor que você gerencia e use /ask seguido da sua pergunta. Revise as permissões solicitadas pelo Discord antes de instalar."
+    },
+    "integrations.slackBody": {
+      "source": "A workspace administrator creates the Slack app from Keryx's documented manifest and configures /keryx. A public one-click OAuth installer is not offered here.",
+      "text": "Um administrador do espaço de trabalho cria o aplicativo do Slack a partir do manifesto documentado do Keryx e configura /keryx. Não há um instalador OAuth público de um clique disponível aqui."
+    }
+  }
+}

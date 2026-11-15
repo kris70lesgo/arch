@@ -1,0 +1,23 @@
+{
+  "name": "keryx-operator-desktop",
+  "version": "0.4.45",
+  "private": true,
+  "scripts": {
+    "native:build": "node --import tsx ../scripts/build-native-writer.mts",
+    "build": "node --import tsx build.mjs",
+    "start": "npm run native:build && npm run build && tauri dev",
+    "package:win": "npm run native:build && npm run build && node scripts/build-tauri-bundle.mjs && node scripts/stage-package.mjs && npm run verify:package",
+    "verify:package": "node --import tsx scripts/check-package.mjs release/KeryxOperator-win32-x64",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
+  }
+}

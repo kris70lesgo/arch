@@ -1,0 +1,170 @@
+name: Native read-only artifact acceptance
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - "test-support/**"
+      - "lib/**"
+      - "scripts/create-rust-readonly-manifest.mts"
+      - "scripts/evaluate-rust-readonly.mts"
+      - "scripts/test-rust-native-artifact.mts"
+      - "scripts/test-rust-native-handoff.mts"
+      - "scripts/rust-native-synthetic-fixture.mts"
+      - "scripts/rust-native-test-fixture.rs"
+      - "scripts/rust-offline-fallback-guard.mjs"
+      - "scripts/operator.mts"
+      - "scripts/build-native-writer.mts"
+      - "scripts/pe-imports.mjs"
+      - "scripts/pe-imports.test.mjs"
+      - "scripts/test-native-task-creation.mts"
+      - "scripts/run-standard-user-native-test.ps1"
+      - "scripts/standard-user-native-child.ps1"
+      - "package.json"
+      - "package-lock.json"
+      - "docs/native-inspection-evaluation.md"
+      - ".github/workflows/native-inspection-adapter.yml"
+
+# Superseded PR checks are cancelled; push/manual/release runs stay independent.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  artifact_producer:
+    name: Build and stage native artifact (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rust: 1.98.1-x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-gnu
+            binary: keryx-engine
+          - os: windows-latest
+            rust: 1.98.1-x86_64-pc-windows-msvc
+            target: x86_64-pc-windows-msvc
+            binary: keryx-engine.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+          cache: npm
+
+      - name: Install official Rust toolchain
+        run: rustup toolchain install ${{ matrix.rust }} --profile minimal
+
+      - name: Install JavaScript dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Test Windows PE runtime dependency gate
+        run: node --test scripts/pe-imports.test.mjs
+
+      - name: Test artifact verification and transport edge cases
+        run: npx vitest run lib/operator/native-readonly-artifact.test.ts lib/operator/native-readonly-transport.test.ts lib/operator/native-writer-artifact.test.ts lib/operator/native-task-writer.test.ts
+
+      - name: Build read-only artifact from checked-out source
+        run: cargo +${{ matrix.rust }} build --manifest-path rust/Cargo.toml -p keryx-engine --release --locked
+
+      - name: Build trusted writer artifact from exact checked-out source
+        run: npm run native:build
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
+
+      - name: Exercise native Operator creation and reopening
+        if: runner.os != 'Windows'
+        run: node --import tsx scripts/test-native-task-creation.mts
+
+      - name: Exercise native Operator creation as a real standard Windows user
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/run-standard-user-native-test.ps1 -TestScript scripts/test-native-task-creation.mts
+
+      - name: Exercise bounded Operator request-file admission with native writer
+        if: runner.os != 'Windows'
+        run: npx vitest run scripts/operator-request-input.test.ts
+        env:
+          KERYX_NATIVE_WRITER_TEST: "1"
+
+      - name: Exercise copied artifact, fault processes and explicit rollback
+        run: node --import tsx scripts/test-rust-native-artifact.mts
+        env:
+          KERYX_NATIVE_TEST_SOURCE_COMMIT: ${{ github.sha }}
+          KERYX_NATIVE_TEST_TARGET: ${{ matrix.target }}
+          KERYX_TEST_RUST_TOOLCHAIN: ${{ matrix.rust }}
+
+      - name: Stage only the checked-out release binary and fresh manifest
+        run: node --import tsx scripts/test-rust-native-handoff.mts stage
+        env:
+          KERYX_HANDOFF_SHA: ${{ github.sha }}
+          KERYX_HANDOFF_TARGET: ${{ matrix.target }}
+          KERYX_HANDOFF_BINARY: ${{ github.workspace }}/rust/target/release/${{ matrix.binary }}
+          KERYX_HANDOFF_DIR: ${{ runner.temp }}/keryx-native-readonly-staged-${{ matrix.target }}
+
+      # Stable within one run across attempts: rerun-all replaces only this
+      # target's artifact; rerun-failed consumer still finds the earlier upload.
+      - name: Upload the two-file handoff artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-readonly-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/keryx-native-readonly-staged-${{ matrix.target }}/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+      - name: Upload exact-revision writer binary and manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-writer-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}
+          path: .artifacts/native-writer/
+          if-no-files-found: error
+          include-hidden-files: true
+          overwrite: true
+          retention-days: 7
+
+  artifact_consumer:
+    name: Fresh runner native artifact handoff (${{ matrix.os }})
+    needs: artifact_producer
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+          cache: npm
+
+      - name: Install JavaScript dependencies without building Rust
+        run: npm ci --no-audit --no-fund
+
+      - name: Download exact same-run target/source artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: native-readonly-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/keryx-native-readonly-downloaded-${{ matrix.target }}
+
+      - name: Verify downloaded artifact and explicit read-only rollback
+        run: node --import tsx scripts/test-rust-native-handoff.mts consume
+        env:
+          KERYX_HANDOFF_SHA: ${{ github.sha }}
+          KERYX_HANDOFF_TARGET: ${{ matrix.target }}
+          KERYX_HANDOFF_DIR: ${{ runner.temp }}/keryx-native-readonly-downloaded-${{ matrix.target }}

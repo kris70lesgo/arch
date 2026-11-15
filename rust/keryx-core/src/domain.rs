@@ -1,0 +1,518 @@
+use crate::json::{canonical, digest, stringify, JsString, Result, Value};
+use serde_json::json;
+
+const NETWORK: &str = "eip155:5042002";
+const USDC: &str = "0x3600000000000000000000000000000000000000";
+const GATEWAY: &str = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
+
+pub(crate) fn field<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {
+    value.get(key).ok_or_else(|| format!("missing {key}"))
+}
+pub(crate) fn str_field<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
+    field(value, key)?
+        .as_str()
+        .ok_or_else(|| format!("invalid {key}"))
+}
+pub(crate) fn js_field<'a>(value: &'a Value, key: &str) -> Result<&'a JsString> {
+    field(value, key)?
+        .as_js_string()
+        .ok_or_else(|| format!("invalid {key}"))
+}
+pub(crate) fn obj_keys(value: &Value, expected: &[&str]) -> Result<()> {
+    let obj = value.as_object().ok_or("expected JSON object")?;
+    if obj.len() != expected.len()
+        || obj
+            .iter()
+            .any(|(key, _)| !key.as_str().is_some_and(|key| expected.contains(&key)))
+    {
+        return Err("unsupported object fields".into());
+    }
+    Ok(())
+}
+fn hex(value: &str, bytes: usize) -> bool {
+    value.len() == bytes * 2 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+pub(crate) fn lower_hex(value: &str, bytes: usize) -> bool {
+    value.len() == bytes * 2
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+fn address(v: &str) -> bool {
+    v.strip_prefix("0x")
+        .is_some_and(|s| hex(s, 20) && s.bytes().any(|b| b != b'0'))
+}
+fn atomic(s: &str) -> Result<u64> {
+    if s.is_empty() || s.starts_with('0') || s.len() > 7 || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("invalid atomic amount".into());
+    }
+    s.parse::<u64>().map_err(|_| "invalid atomic amount".into())
+}
+pub(crate) fn micros(value: &Value, exact: bool) -> Result<u64> {
+    let n = value.as_f64().ok_or("invalid USDC number")?;
+    if !n.is_finite() || n < 0.0 || n > 1_000_000.0 {
+        return Err("invalid USDC number".into());
+    }
+    let rounded = (n * 1_000_000.0).round();
+    if exact && (n * 1_000_000.0 - rounded).abs() >= 1e-8 {
+        return Err("non-atomic USDC amount".into());
+    }
+    Ok(rounded as u64)
+}
+pub(crate) fn normalized_request(value: &Value) -> Result<Value> {
+    obj_keys(
+        value,
+        &[
+            "question",
+            "budget",
+            "researchMode",
+            "packageVersion",
+            "responseMode",
+        ],
+    )?;
+    let question = js_field(value, "question")?.trim_matches(js_whitespace);
+    if question.utf16_len() == 0 || question.utf16_len() > 2000 {
+        return Err("invalid question".into());
+    }
+    let raw_budget = field(value, "budget")?
+        .as_f64()
+        .ok_or("invalid creator budget")?;
+    // Zod's positive().max(0.5) applies to the original number, before the
+    // atomic-micro tolerance. Rounded micros alone admits values above 0.5.
+    if !raw_budget.is_finite() || raw_budget <= 0.0 || raw_budget > 0.5 {
+        return Err("invalid creator budget".into());
+    }
+    let budget = micros(field(value, "budget")?, true)?;
+    if budget == 0 {
+        return Err("creator budget rounds to zero micro-USDC in this Rust inspection candidate. If this is a TypeScript-readable v1 directory, use the TypeScript Operator status/result/brief commands on the original directory; do not rewrite files or repurchase.".into());
+    }
+    if budget > 500_000 {
+        return Err("invalid creator budget".into());
+    }
+    let mode = str_field(value, "researchMode")?;
+    if !["quick", "deep"].contains(&mode)
+        || str_field(value, "packageVersion")? != "1.0.0"
+        || str_field(value, "responseMode")? != "async"
+    {
+        return Err("unsupported request".into());
+    }
+    Ok(Value::object(vec![
+        ("question", Value::String(question)),
+        ("budget", field(value, "budget")?.clone()),
+        ("researchMode", mode.into()),
+        ("packageVersion", "1.0.0".into()),
+        ("responseMode", "async".into()),
+    ]))
+}
+fn js_whitespace(c: char) -> bool {
+    matches!(c, '\u{0009}'..='\u{000D}' | '\u{0020}' | '\u{00A0}' | '\u{1680}' |
+        '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' |
+        '\u{3000}' | '\u{FEFF}')
+}
+fn same_request(a: &Value, b: &Value) -> Result<bool> {
+    let a = normalized_request(a)?;
+    let b = normalized_request(b)?;
+    Ok(stringify(&a)? == stringify(&b)?)
+}
+fn package(mode: &str) -> Value {
+    let (id, attention, rounds, target) = if mode == "quick" {
+        ("keryx-quick", 2, 0, 180_000)
+    } else {
+        ("keryx-deep", 4, 1, 300_000)
+    };
+    json!({"schema":"urn:keryx:a2a-research-package:1","id":id,"version":"1.0.0","researchMode":mode,
+        "execution":{"attentionLimit":attention,"reevaluateRounds":rounds},
+        "serviceLevel":{"kind":"provisional_slo","targetCompletionMs":target,"startsAt":"accepted_at","remedy":"none"},
+        "quality":{"measurement":"evidence-ledger-v1","groundingThreshold":0.4,"commitment":"best_effort"}}).into()
+}
+pub(crate) fn package_fingerprint(mode: &str) -> Result<String> {
+    // These fixed package keys have identical UTF-16 and localeCompare ordering.
+    Ok(digest(&canonical(&package(mode))?)
+        .trim_start_matches("sha256:")
+        .to_owned())
+}
+pub(crate) fn valid_digest(s: &str) -> bool {
+    s.strip_prefix("sha256:").is_some_and(|x| lower_hex(x, 32))
+}
+fn valid_uuid(s: &str) -> bool {
+    s.len() == 36
+        && s.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
+}
+pub(crate) fn valid_time(s: &str) -> bool {
+    // Match the installed Zod v3 `z.string().datetime()` default: four-digit
+    // Gregorian date, uppercase T/Z, minutes, optional seconds and fraction.
+    // The schema keeps the original spelling; it does not normalize the time.
+    let b = s.as_bytes();
+    if b.len() < 17 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' {
+        return false;
+    }
+    let Some(year) = four_digits(&b[0..4]) else {
+        return false;
+    };
+    let (Some(month), Some(day), Some(hour), Some(minute)) = (
+        two_digits(&b[5..7]),
+        two_digits(&b[8..10]),
+        two_digits(&b[11..13]),
+        two_digits(&b[14..16]),
+    ) else {
+        return false;
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    if day == 0 || day > days || hour > 23 || minute > 59 {
+        return false;
+    }
+    let tail = &b[16..];
+    if tail == b"Z" {
+        return true;
+    }
+    if tail.len() < 4 || tail[0] != b':' || two_digits(&tail[1..3]).is_none_or(|v| v > 59) {
+        return false;
+    }
+    if tail[3..] == *b"Z" {
+        return true;
+    }
+    tail.len() >= 6
+        && tail[3] == b'.'
+        && tail[4..tail.len() - 1].iter().all(u8::is_ascii_digit)
+        && tail[tail.len() - 1] == b'Z'
+}
+
+fn two_digits(b: &[u8]) -> Option<u8> {
+    (b.len() == 2 && b.iter().all(u8::is_ascii_digit)).then(|| (b[0] - b'0') * 10 + b[1] - b'0')
+}
+
+fn four_digits(b: &[u8]) -> Option<u16> {
+    (b.len() == 4 && b.iter().all(u8::is_ascii_digit)).then(|| {
+        b.iter()
+            .fold(0_u16, |n, digit| n * 10 + u16::from(digit - b'0'))
+    })
+}
+pub struct Task {
+    pub id: String,
+    pub created_at: String,
+    pub request: Value,
+    pub payee: String,
+    pub cap: u64,
+    pub network: String,
+}
+pub struct Intent {
+    pub query_id: String,
+    pub amount: u64,
+}
+
+pub fn parse_task(task: &Value, request: &Value) -> Result<Task> {
+    let schema = str_field(task, "schema")?;
+    let network = match schema {
+        "keryx-operator-task-v1" => NETWORK,
+        "keryx-operator-task-v2" => str_field(task, "network")?,
+        _ => return Err("unsupported task schema".into()),
+    };
+    let mut keys = vec![
+        "schema",
+        "id",
+        "createdAt",
+        "kind",
+        "request",
+        "payee",
+        "maxTotalMicros",
+    ];
+    if schema == "keryx-operator-task-v2" {
+        keys.push("network");
+    }
+    obj_keys(task, &keys)?;
+    if ![NETWORK, "eip155:5042"].contains(&network) || str_field(task, "kind")? != "paid_research" {
+        return Err("unsupported task network or kind".into());
+    }
+    let id = str_field(task, "id")?;
+    let created = str_field(task, "createdAt")?;
+    if !valid_uuid(id) || !valid_time(created) {
+        return Err("invalid task identity".into());
+    }
+    let payee = str_field(task, "payee")?;
+    if !address(payee) {
+        return Err("invalid task payee".into());
+    }
+    let req = normalized_request(request)?;
+    if !same_request(field(task, "request")?, &req)? {
+        return Err("task request file mismatch".into());
+    }
+    let cap = atomic(str_field(task, "maxTotalMicros")?)?;
+    if cap > 1_000_000 || cap <= micros(field(&req, "budget")?, true)? {
+        return Err("invalid total cap".into());
+    }
+    Ok(Task {
+        id: id.into(),
+        created_at: created.into(),
+        request: req,
+        payee: payee.into(),
+        cap,
+        network: network.into(),
+    })
+}
+pub fn parse_intent(intent: &Value, task: &Task) -> Result<Intent> {
+    obj_keys(
+        intent,
+        &[
+            "schema",
+            "request",
+            "requirement",
+            "authorization",
+            "queryId",
+        ],
+    )?;
+    if str_field(intent, "schema")? != "keryx-buyer-intent-v1"
+        || !same_request(field(intent, "request")?, &task.request)?
+    {
+        return Err("journal request mismatch".into());
+    }
+    let req = field(intent, "requirement")?;
+    obj_keys(
+        req,
+        &[
+            "scheme",
+            "network",
+            "asset",
+            "amount",
+            "payTo",
+            "maxTimeoutSeconds",
+            "extra",
+        ],
+    )?;
+    let extra = field(req, "extra")?;
+    obj_keys(extra, &["name", "version", "verifyingContract"])?;
+    let pay_to = str_field(req, "payTo")?;
+    let timeout = field(req, "maxTimeoutSeconds")?
+        .as_f64()
+        .ok_or("invalid timeout")?;
+    if str_field(req, "scheme")? != "exact"
+        || str_field(req, "network")? != task.network
+        || !str_field(req, "asset")?.eq_ignore_ascii_case(USDC)
+        || !address(pay_to)
+        || !timeout.is_finite()
+        || timeout.fract() != 0.0
+        || !(604_860.0..=691_200.0).contains(&timeout)
+        || str_field(extra, "name")? != "GatewayWalletBatched"
+        || str_field(extra, "version")? != "1"
+        || !str_field(extra, "verifyingContract")?.eq_ignore_ascii_case(
+            if task.network == NETWORK {
+                GATEWAY
+            } else {
+                "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE"
+            },
+        )
+    {
+        return Err("unsupported payment requirement".into());
+    }
+    let amount = atomic(str_field(req, "amount")?)?;
+    if !pay_to.eq_ignore_ascii_case(&task.payee)
+        || amount > task.cap
+        || amount <= micros(field(&task.request, "budget")?, true)?
+    {
+        return Err("journal amount or payee outside task bounds".into());
+    }
+    let auth = field(intent, "authorization")?;
+    obj_keys(
+        auth,
+        &["from", "to", "value", "validAfter", "validBefore", "nonce"],
+    )?;
+    let payer = str_field(auth, "from")?;
+    let to = str_field(auth, "to")?;
+    let nonce = str_field(auth, "nonce")?;
+    if !address(payer)
+        || !address(to)
+        || !to.eq_ignore_ascii_case(pay_to)
+        || atomic(str_field(auth, "value")?)? != amount
+        || !decimal_string(str_field(auth, "validAfter")?)
+        || !decimal_string(str_field(auth, "validBefore")?)
+        || !nonce.strip_prefix("0x").is_some_and(|x| lower_hex(x, 32))
+    {
+        return Err("invalid authorization".into());
+    }
+    let preimage = format!(
+        "keryx-a2a-v2|{}|{}|{}|{}",
+        task.network,
+        payer.to_ascii_lowercase(),
+        to.to_ascii_lowercase(),
+        nonce.to_ascii_lowercase()
+    );
+    let expected = format!("a2a_{}", digest(&preimage).trim_start_matches("sha256:"));
+    if str_field(intent, "queryId")? != expected {
+        return Err("journal authorization/job binding mismatch".into());
+    }
+    Ok(Intent {
+        query_id: expected,
+        amount,
+    })
+}
+fn decimal_string(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn positive_budget_rounding_boundary_keeps_candidate_admission() {
+        fn request(budget: &str) -> Value {
+            crate::json::parse(
+                &format!(
+                    r#"{{"question":"synthetic","budget":{budget},"researchMode":"quick","packageVersion":"1.0.0","responseMode":"async"}}"#
+                ),
+            )
+            .unwrap()
+        }
+
+        let tiny = normalized_request(&request("1e-15")).unwrap_err();
+        assert!(tiny.contains("rounds to zero micro-USDC"));
+        assert!(tiny.contains("TypeScript Operator status/result/brief"));
+        assert!(tiny.contains("do not rewrite files or repurchase"));
+        assert!(normalized_request(&request("0.000001")).is_ok());
+        assert_eq!(
+            normalized_request(&request("0.500001")).unwrap_err(),
+            "invalid creator budget"
+        );
+        assert!(normalized_request(&request("0.5")).is_ok());
+        assert_eq!(
+            normalized_request(&request("0.500000000000001")).unwrap_err(),
+            "invalid creator budget"
+        );
+        let above_limit = request("0.500000000000001");
+        let task = Value::object(vec![
+            ("schema", "keryx-operator-task-v1".into()),
+            ("id", "00000000-0000-4000-8000-000000000001".into()),
+            ("createdAt", "2026-09-29T01:02:03.004Z".into()),
+            ("kind", "paid_research".into()),
+            ("request", above_limit.clone()),
+            ("payee", "0x1111111111111111111111111111111111111111".into()),
+            ("maxTotalMicros", "500001".into()),
+        ]);
+        assert_eq!(
+            parse_task(&task, &above_limit).err().unwrap(),
+            "invalid creator budget"
+        );
+    }
+
+    #[test]
+    fn package_fingerprints_match_typescript() {
+        assert_eq!(
+            package_fingerprint("quick").unwrap(),
+            "97d169ee73d9bab3034b139d438a51e77cfedca976f1ffb649c148a3d7f2d89a"
+        );
+        assert_eq!(
+            package_fingerprint("deep").unwrap(),
+            "3bbbf0c9954c8c7d8a075eb028a71a88819ace0d9230cbc4cd83cc33f0fa65ea"
+        );
+    }
+    #[test]
+    fn javascript_whitespace_boundaries() {
+        assert!(js_whitespace('\u{FEFF}'));
+        assert!(!js_whitespace('\u{0085}'));
+    }
+    #[test]
+    fn timestamps_match_zod_datetime_default() {
+        for valid in [
+            "2026-09-28T00:00Z",
+            "2026-09-28T23:59:59Z",
+            "2026-09-28T00:00:00.1Z",
+            "2026-09-28T00:00:00.12345678901234567890Z",
+            "0000-02-29T00:00Z",
+            "2000-02-29T00:00Z",
+            "2400-02-29T00:00Z",
+            "2024-02-29T00:00Z",
+        ] {
+            assert!(valid_time(valid), "valid Zod timestamp: {valid:?}");
+        }
+        for invalid in [
+            "2026-09-28T00:00:60Z",
+            "2026-09-28 00:00Z",
+            "2026-09-28t00:00Z",
+            "2026-09-28T00:00z",
+            "2026-09-28T00:00+00:00",
+            "2026-09-28T00:00.1Z",
+            "2026-09-28T00:00:00.Z",
+            "2026-09-28T00:00:00.1+00:00",
+            "2026-09-28T24:00Z",
+            "2026-09-28T23:60Z",
+            "2026-09-31T00:00Z",
+            "2026-02-29T00:00Z",
+            "1900-02-29T00:00Z",
+            "2100-02-29T00:00Z",
+            "9999-02-30T00:00Z",
+            "2026-09-28T00:00Z\n",
+            "2026-09-28T00:00Z\r",
+            "2026-09-28T00:00Z\r\n",
+            "2026-09-28T00:00Z\u{2028}",
+            "2026-09-28T00:00Z\u{2029}",
+            "2026-09-28T00:00Z\0",
+            "２０２６-09-28T00:00Z",
+            "2026-09-28T００:00Z",
+        ] {
+            assert!(!valid_time(invalid), "invalid Zod timestamp: {invalid:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod mainnet_task_tests {
+    use super::*;
+    #[test]
+    fn retained_mainnet_task_binds_gateway_and_job_identity() {
+        let payee = "0x1111111111111111111111111111111111111111";
+        let payer = "0x2222222222222222222222222222222222222222";
+        let nonce = format!("0x{}", "a".repeat(64));
+        let request: Value = json!({"question":"synthetic", "budget":0.01, "researchMode":"quick", "packageVersion":"1.0.0", "responseMode":"async"}).into();
+        let prepared = crate::prepare_task_for_network(
+            &request,
+            payee,
+            "100000",
+            "00000000-0000-4000-8000-000000000001",
+            "2026-09-29T01:02:03.004Z",
+            "eip155:5042",
+        )
+        .unwrap();
+        let task_bytes = crate::parse_json(prepared.task_json()).unwrap();
+        assert_eq!(
+            str_field(&task_bytes, "schema").unwrap(),
+            "keryx-operator-task-v2"
+        );
+        let task = parse_task(&task_bytes, &request).unwrap();
+        assert_eq!(task.network, "eip155:5042");
+        let query = format!(
+            "a2a_{}",
+            digest(&format!("keryx-a2a-v2|eip155:5042|{payer}|{payee}|{nonce}"))
+                .trim_start_matches("sha256:")
+        );
+        let mut intent = json!({"schema":"keryx-buyer-intent-v1", "request": {"question":"synthetic", "budget":0.01, "researchMode":"quick", "packageVersion":"1.0.0", "responseMode":"async"},
+            "requirement":{"scheme":"exact", "network":"eip155:5042", "asset":USDC, "amount":"30000", "payTo":payee, "maxTimeoutSeconds":691200,
+                "extra":{"name":"GatewayWalletBatched","version":"1","verifyingContract":"0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE"}},
+            "authorization":{"from":payer,"to":payee,"value":"30000","validAfter":"1","validBefore":"2","nonce":nonce}, "queryId":query});
+        assert!(parse_intent(&intent.clone().into(), &task).is_ok());
+        intent["requirement"]["network"] = json!(NETWORK);
+        assert!(parse_intent(&intent.clone().into(), &task).is_err());
+        intent["requirement"]["network"] = json!("eip155:5042");
+        intent["requirement"]["extra"]["verifyingContract"] = json!(GATEWAY);
+        assert!(parse_intent(&intent.into(), &task).is_err());
+        assert!(crate::prepare_task_for_network(
+            &request,
+            payee,
+            "100000",
+            "00000000-0000-4000-8000-000000000001",
+            "2026-09-29T01:02:03.004Z",
+            "eip155:1"
+        )
+        .is_err());
+    }
+}

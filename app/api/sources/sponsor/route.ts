@@ -1,0 +1,84 @@
+import { z } from "zod";
+import { config } from "@/lib/config";
+import { getDb } from "@/lib/db";
+import { getSession } from "@/lib/auth";
+import { RegistrationSponsorError } from "@/lib/db/registration-sponsor";
+import { SourceClaimError } from "@/lib/db/public-source-claims";
+import { claimBody } from "../../source-claims/shared";
+import { inspectSponsoredRegistrationFunding, prepareSponsoredRegistration, recoverSponsoredRegistration, resolveExpiredSponsoredRegistration, resumeSponsoredRegistration, submitSponsoredRegistration } from "@/lib/sources/registration-sponsor-service";
+import { registrationSponsorReadChain, registrationSponsorRuntime } from "@/lib/sources/registration-sponsor-runtime";
+import { registrationPolicyDigest, registrationWalletMayPrepare } from "@/lib/sources/registration-sponsor-protocol";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+const idSchema = z.string().regex(/^0x[0-9a-f]{64}$/).transform(value => value as `0x${string}`);
+const bodySchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("prepare"), claimId: z.string().regex(/^[a-f0-9]{64}$/), fetchPrice: z.number().finite().min(0).max(1_000_000), replacesRequestId: idSchema.optional() }).strict(),
+  z.object({ operation: z.literal("submit"), id: idSchema, signature: z.string().regex(/^0x[0-9a-fA-F]{130}$/).transform(value => value as `0x${string}`) }).strict(),
+  z.object({ operation: z.literal("resume"), id: idSchema }).strict(),
+  z.object({ operation: z.literal("resolveExpired"), id: idSchema }).strict(),
+]);
+const headers = { "Cache-Control": "no-store", Vary: "Cookie, Origin", "Referrer-Policy": "no-referrer" };
+const response = (value: unknown, status = 200) => Response.json(value, { status, headers });
+function availabilityFailure(error: unknown) {
+  const reason = error instanceof RegistrationSponsorError && error.code === "registration_sponsor_rpc_unavailable"
+    ? "rpc_unavailable" : "configuration_unavailable";
+  return response({ available: false, reservedGasAvailable: false, reason });
+}
+function failure(error: unknown) {
+  if (error instanceof RegistrationSponsorError || error instanceof SourceClaimError)
+    return response({ error: error.message, code: error.code }, error.status);
+  if (error instanceof z.ZodError) return response({ error: "Invalid sponsored registration request", code: "invalid_request" }, 400);
+  return response({ error: "Sponsorship is unavailable. Retain the original request and inspect its status before another action.", code: "sponsor_unavailable" }, 503);
+}
+export async function GET(req: Request) {
+  try {
+    const url = new URL(req.url), session = await getSession();
+    const requestId = url.searchParams.get("id"), claimId = url.searchParams.get("claimId");
+    if (requestId || claimId) {
+      if (!session) return response({ error: "Sign in with the original creator wallet" }, 401);
+      const db = await getDb();
+      const claim = claimId ? await db.getSourceClaim?.(z.string().regex(/^[a-f0-9]{64}$/).parse(claimId)) : null;
+      if (claimId && (!claim || claim.ownerWallet !== session.address.toLowerCase())) return response({ error: "Original registration not found" }, 404);
+      const row = await db.getRegistrationSponsor?.({ wallet: session.address,
+        ...(requestId ? { id: idSchema.parse(requestId) } : { canonicalUrl: claim!.canonicalUrl }) });
+      if (!row) return response({ error: "Original registration not found" }, 404);
+      try { return response({ original: await recoverSponsoredRegistration(db, session.address, row.id, registrationSponsorReadChain(row)) }); }
+      catch { return response({ original: row, recoveryUnavailable: true }); }
+    }
+    if (!session) return response({ available: false, reservedGasAvailable: false, reason: "authentication_required" });
+    const ctx = await registrationSponsorRuntime();
+    if (!ctx) return response({ available: false, reservedGasAvailable: false, reason: "sponsor_disabled" });
+    if (!registrationWalletMayPrepare(ctx.policy, session.address)) return response({ available: false, reservedGasAvailable: false, reason: "publisher_ineligible" });
+    try { await ctx.chain.assertRegistry(); }
+    catch { return response({ available: false, reservedGasAvailable: false, reason: "rpc_unavailable" }); }
+    const funding = await inspectSponsoredRegistrationFunding(ctx);
+    return response({ available: funding?.available ?? true, network: ctx.policy.network, registryAddress: ctx.policy.registryAddress,
+      sponsorAddress: ctx.policy.sponsorAddress, policyDigest: registrationPolicyDigest(ctx.policy),
+      maxGasWei: ctx.policy.maxTransactionWei, requiresPublishingProof: true,
+      ...(funding ? { reservedGasAvailable: funding.reservedGasCovered,
+        ...(!funding.available ? { reason: "insufficient_funds" } : {}) } : {}),
+      ...(ctx.policy.protocol === "keryx-registration-sponsor-v2" ? { eligibility: "verified-publisher", funding: "wallet-balance" } : {}),
+      ...(ctx.policy.protocol === "keryx-registration-sponsor-v1" && ctx.policy.allowlistedPublisherOrigins?.length && !ctx.policy.allowlistedCreators.includes(session.address.toLowerCase() as `0x${string}`)
+        ? { publisherOrigins: ctx.policy.allowlistedPublisherOrigins } : {}) });
+  } catch (error) { return availabilityFailure(error); }
+}
+export async function POST(req: Request) {
+  try {
+    const origin = new URL(config.baseUrl).origin;
+    // Next may expose its internal listener in req.url behind a reverse proxy.
+    // Browser Origin is pinned here; ingress Host/proxy validation belongs to the public wrapper.
+    if (req.headers.get("origin") !== origin)
+      return response({ error: "Use this deployment's creator registration page", code: "origin_mismatch" }, 403);
+    const session = await getSession();
+    if (!session) return response({ error: "Sign in with the source owner wallet" }, 401);
+    const body = await claimBody(req, bodySchema), ctx = await registrationSponsorRuntime();
+    if (!ctx) return response({ error: "Registration gas sponsorship is not enabled", code: "sponsor_disabled" }, 503);
+    const original = body.operation === "prepare"
+      ? await prepareSponsoredRegistration(ctx, session.address, body)
+      : body.operation === "resume" ? await resumeSponsoredRegistration(ctx, session.address, body.id)
+      : body.operation === "resolveExpired" ? await resolveExpiredSponsoredRegistration(ctx, session.address, body.id)
+      : await submitSponsoredRegistration(ctx, session.address, body.id, body.signature);
+    return response({ original }, body.operation === "prepare" ? 200 : 202);
+  } catch (error) { return failure(error); }
+}

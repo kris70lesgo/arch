@@ -1,0 +1,252 @@
+"use client";
+import { DisplayTime } from "@/components/keryx/display-time";
+import { createRichMessages as createDateMessages } from "@/lib/i18n/rich-messages";
+import { formatAmount } from "@/lib/i18n/format";
+
+/**
+ * FaucetPanel — "Get testnet USDC" affordance shown near the grant-spend panel.
+ *
+ * Calls POST /api/faucet (SIWE-gated) to drip native + ERC-20 USDC once per
+ * address. Shows the tx hash with ArcScan link on success, and always exposes
+ * a static link to the Circle faucet as a fallback.
+ *
+ * Also displays the wallet's current Arc ERC-20 USDC balance so the user knows
+ * whether they need to claim before activating a session grant.
+ *
+ * "Add USDC to wallet" button calls wallet_watchAsset (EIP-747) so the user
+ * can see their Arc USDC balance without manually importing the token address.
+ */
+
+
+import { createRichMessages } from "@/lib/i18n/rich-messages";
+import { useState, useEffect, useCallback } from "react";
+import { useAccount, useReadContract, useConnectorClient } from "wagmi";
+import { erc20Abi, formatUnits } from "viem";
+import { Loader2, Droplets, ExternalLink, PlusCircle } from "lucide-react";
+import { browserPaymentProfile } from "@/lib/browser-payment-profile";
+import { currentArcLabel } from "@/lib/arc-network-display";
+import { useUiMessages, useUiRichMessages } from "@/lib/i18n/ui-copy";
+
+
+
+
+
+
+const CIRCLE_FAUCET = "https://faucet.circle.com/";
+const EXPLORER = "https://testnet.arcscan.app";
+
+interface FaucetResult {
+  ok?: boolean;
+  error?: string;
+  tx?: string;
+  amount?: string;
+  claimedAt?: string;
+  faucet?: string;
+}
+
+export function FaucetPanel() {
+  return browserPaymentProfile().testnet ? <TestnetFaucetPanel /> : <MainnetFundingPanel />;
+}
+
+function MainnetFundingPanel() {
+  const copy = useUiMessages();
+  const { address, isConnected } = useAccount();
+  const profile = browserPaymentProfile();
+  const { data: rawBalance, isError, isFetching, refetch } = useReadContract({
+    address: profile.usdcAddress,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: address ? [address] : undefined,
+    chainId: profile.chainId,
+    query: { enabled: isConnected && !!address },
+  });
+  if (!isConnected) return null;
+  return <section className="space-y-2 border border-line bg-paper-2 px-4 py-3 text-sm" aria-label={copy("walletFunding.label")}>
+    <h2 className="font-mono text-xs">{copy("walletFunding.title", { network: currentArcLabel })}</h2>
+    <p>{copy("walletFunding.introduction", { network: currentArcLabel })}</p>
+    <p className="font-mono text-xs">{copy("walletFunding.balance", { balance: isError || rawBalance === undefined ? copy("walletFunding.unavailable") : formatAmount(rawBalance) })}</p>
+    <button type="button" disabled={isFetching} onClick={() => void refetch()} className="font-mono text-xs underline disabled:opacity-50">{isFetching ? copy("walletFunding.checking") : copy("walletFunding.refresh")}</button>
+    <p className="text-xs text-ink-3">{copy("walletFunding.networkNotice", { network: currentArcLabel })}</p>
+  </section>;
+}
+
+function TestnetFaucetPanel() {
+  const copy = useUiMessages();
+  const richCopy = useUiRichMessages();
+  const profile = browserPaymentProfile();
+  const { address, isConnected } = useAccount();
+  const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [result, setResult] = useState<FaucetResult | null>(null);
+  const [watchStatus, setWatchStatus] = useState<"idle" | "ok" | "unsupported">("idle");
+  const { data: connectorClient } = useConnectorClient();
+
+  // Read the wallet's ERC-20 USDC balance on Arc (6 decimals).
+  const { data: rawBalance, refetch: refetchBalance } = useReadContract({
+    address: profile.usdcAddress,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: address ? [address] : undefined,
+    chainId: profile.chainId,
+    query: { enabled: isConnected && !!address },
+  });
+
+  // Refresh balance after a successful drip.
+  useEffect(() => {
+    if (status === "done") {
+      const t = setTimeout(() => { refetchBalance(); }, 4000);
+      return () => clearTimeout(t);
+    }
+  }, [status, refetchBalance]);
+
+  const handleClaim = useCallback(async () => {
+    setStatus("loading");
+    setResult(null);
+    try {
+      const res = await fetch("/api/faucet", { method: "POST" });
+      const data = (await res.json()) as FaucetResult;
+      setResult(data);
+      setStatus(res.ok ? "done" : "error");
+    } catch {
+      setResult({ error: copy("walletFunding.networkError") });
+      setStatus("error");
+    }
+  }, []);
+
+  /**
+   * EIP-747 wallet_watchAsset — prompts the wallet to import Arc USDC so the
+   * user sees the balance without manually pasting the token address.
+   * Graceful no-op + visual feedback if the wallet does not support the method.
+   */
+  const handleWatchAsset = useCallback(async () => {
+    if (!connectorClient) return;
+    try {
+      // connectorClient.request is the raw EIP-1193 provider interface.
+      await connectorClient.request({
+        method: "wallet_watchAsset",
+        params: {
+          type: "ERC20",
+          options: {
+            address: profile.usdcAddress,
+            symbol: "USDC",
+            decimals: 6,
+          },
+        },
+      });
+      setWatchStatus("ok");
+    } catch (err) {
+      // 4200 = Method not supported; any rejection is treated as unsupported.
+      console.warn("[faucet] wallet_watchAsset:", err instanceof Error ? err.message : String(err));
+      setWatchStatus("unsupported");
+    }
+  }, [connectorClient, profile.usdcAddress]);
+
+  if (!isConnected) return null;
+
+  const usdcBalance = rawBalance !== undefined
+    ? formatAmount(rawBalance, { minimumFractionDigits: 4 })
+    : null;
+
+  return (
+    <div className="border border-line bg-paper-2 px-4 py-3 text-sm">
+      {/* Header */}
+      <div className="mb-2 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-1.5">
+          <Droplets className="h-3.5 w-3.5 text-seal" />
+          <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-3">
+            {copy("walletFunding.testnetTitle")}
+          </span>
+        </div>
+        {usdcBalance !== null && (
+          <span className="font-mono text-[10px] text-ink-3">
+            {richCopy("walletFunding.testnetBalance", { balance: <span className="text-ink">{usdcBalance} USDC</span> })}
+          </span>
+        )}
+      </div>
+
+      {/* Success state */}
+      {status === "done" && result?.ok && (
+        <div className="mb-2 space-y-1">
+          <p className="font-mono text-[11px] text-paid">
+            {copy("walletFunding.dripped", { amount: result.amount ?? "" })}
+          </p>
+          {result.tx && (
+            <a
+              href={`${EXPLORER}/tx/${result.tx}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-mono text-[10px] text-seal underline underline-offset-2 hover:text-ink"
+            >
+              {copy("walletFunding.arcScan")} <ExternalLink className="h-2.5 w-2.5" />
+            </a>
+          )}
+        </div>
+      )}
+
+      {/* Already claimed / error state */}
+      {(status === "error") && result && (
+        <div className="mb-2">
+          <p className="font-mono text-[11px] text-destructive">
+            {result.error}
+            {result.claimedAt && (
+              <span className="ml-1 text-ink-3">
+                {dateCopy("walletFunding.claimedAt", { time: <DisplayTime value={result.claimedAt} /> })}
+              </span>
+            )}
+          </p>
+        </div>
+      )}
+
+      {/* Action row */}
+      <div className="flex flex-wrap items-center gap-3">
+        {status !== "done" && (
+          <button
+            type="button"
+            onClick={handleClaim}
+            disabled={status === "loading"}
+            className="flex items-center gap-1.5 border border-ink/40 bg-paper px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink transition-all hover:-translate-y-0.5 hover:border-seal hover:text-seal hover:shadow-[0_3px_0_var(--seal)] active:translate-y-0 active:shadow-none disabled:cursor-wait disabled:opacity-60"
+          >
+            {status === "loading" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Droplets className="h-3 w-3" />
+            )}
+            {status === "loading" ? copy("walletFunding.claiming") : copy("walletFunding.claim")}
+          </button>
+        )}
+
+        {/* EIP-747: import Arc USDC token into the wallet so balance shows without manual setup */}
+        {watchStatus !== "unsupported" && (
+          <button
+            type="button"
+            onClick={handleWatchAsset}
+            className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3 underline underline-offset-2 hover:text-seal"
+          >
+            <PlusCircle className="h-2.5 w-2.5" />
+            {watchStatus === "ok" ? copy("walletFunding.added") : copy("walletFunding.addToken")}
+          </button>
+        )}
+        {watchStatus === "unsupported" && (
+          <span className="font-mono text-[10px] text-faint">
+            {copy("walletFunding.importManually", { address: profile.usdcAddress.slice(0, 10) })}
+          </span>
+        )}
+
+        {/* Always show the Circle faucet link as a fallback */}
+        <a
+          href={CIRCLE_FAUCET}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3 underline underline-offset-2 hover:text-seal"
+        >
+          {copy("walletFunding.circleFaucet")} <ExternalLink className="h-2.5 w-2.5" />
+        </a>
+      </div>
+
+      <p className="mt-1.5 font-mono text-[9px] leading-relaxed tracking-wide text-faint">
+        {copy("walletFunding.testnetNotice")}
+      </p>
+    </div>
+  );
+}
+
+const dateCopy = createDateMessages("en");

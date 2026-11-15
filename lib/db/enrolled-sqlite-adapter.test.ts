@@ -1,0 +1,851 @@
+import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from "vitest";
+import { botControlResponse, botControlsCatalogues, botPreferenceKey, readBotHelpPreference,
+  type BotRecipient } from "../bots/language";
+import { DatabaseSync } from "node:sqlite";
+import { requirePrivateProfiles } from "../profiles/private-profile";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, renameSync, copyFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { canonicalJson } from "../canonical-json";
+import { randomBytes, createHash } from "node:crypto";
+import { installSqliteApplicationSchema } from "./sqlite-application-schema";
+import { installMainnetApplicationSchema } from "./mainnet-application-schema";
+import { insertStorageIdentity, installStorageFences, registerStorageCapability } from "./storage-identity-sqlite";
+import { STORAGE_MAINNET_PROFILE_DIGEST, type StorageIdentity } from "./storage-identity";
+import { syntheticStorageIdentity } from "./storage-identity-fixture";
+import { inspectSqliteEnrollment, enrollSqliteStorage } from "./storage-identity-provision";
+import type { SqliteAdapter } from "./sqlite-adapter";
+import type { QueryRun } from "../types";
+import { sealEnrolledCacheText } from "../sources/enrolled-content-cache";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { GATEWAY_FUNDING_SCHEMA, GATEWAY_FUNDING_INDEXES } from "./gateway-funding-sqlite-schema";
+import { createServer } from "node:http";
+import { once } from "node:events";
+import { encodeFunctionResult } from "viem";
+import { REGISTRY_ABI } from "../registry/registry-abi";
+import { browserSourceRegistryId } from "../payments/browser-original-source-context";
+import type { BrowserSourceOriginalAdmission } from "./browser-signing-originals";
+import type { BrowserQueryPolicy } from "../payments/browser-query-policy";
+import type { RegistrationSponsorFundingObservation, WalletFundedRegistrationSponsorPolicy } from "../sources/registration-sponsor-protocol";
+
+function fixtureDiagnostics(label?: string) {
+  const started = performance.now();
+  return (phase: string) => {
+    if (label && process.env.KERYX_ENROLLED_TEST_DIAGNOSTICS === "1")
+      console.error(JSON.stringify({ fixtureTiming: label, phase, elapsedMs: Math.round(performance.now() - started),
+        rssMiB: Math.round(process.memoryUsage().rss / 1048576) }));
+  };
+}
+const fixtures: { folder: string; adapters: SqliteAdapter[]; phase: (name: string) => void }[] = [];
+afterEach(() => {
+  for (const fixture of fixtures.splice(0)) {
+    fixture.phase("cleanup:start");
+    for (const adapter of fixture.adapters) adapter.close();
+    rmSync(fixture.folder, { recursive: true, force: true });
+    fixture.phase("cleanup:end");
+  }
+  vi.unstubAllEnvs();
+});
+async function fixture(mode: "testnet-real" | "testnet-offline" = "testnet-real", funding = false, diagnosticLabel?: string) {
+  const phase = fixtureDiagnostics(diagnosticLabel);
+  phase("fixture:start");
+  vi.resetModules();
+  const folder = mkdtempSync(join(tmpdir(), "keryx-enrolled-adapter-"));
+  const file = join(folder, "synthetic.sqlite");
+  const manifestPath = join(folder, "deployment.json");
+  const identity = syntheticStorageIdentity(mode);
+  const adapters: SqliteAdapter[] = [];
+  fixtures.push({ folder, adapters, phase });
+  phase("schema:start");
+  const native = new DatabaseSync(file);
+  try {
+    // Batch the actual fresh schema DDL in one native commit. Browser installers
+    // retain their own savepoints when the caller already owns a transaction.
+    native.exec("BEGIN IMMEDIATE");
+    installSqliteApplicationSchema(native);
+    if (funding) {
+      for (const sql of Object.values(GATEWAY_FUNDING_SCHEMA)) native.exec(sql);
+      for (const sql of Object.values(GATEWAY_FUNDING_INDEXES)) native.exec(sql);
+    }
+    native.exec("COMMIT");
+  } catch (error) {
+    if (native.isTransaction) native.exec("ROLLBACK");
+    throw error;
+  } finally { native.close(); }
+  phase("schema:end");
+  phase("inspection:start");
+  const inspection = await inspectSqliteEnrollment(file, identity);
+  phase("inspection:end");
+  phase("enrollment:start");
+  await enrollSqliteStorage(file, identity, {
+    format: "keryx-reviewed-storage-enrollment-v1", inspection,
+    provenanceDocumentDigest: identity.provenanceDigest,
+    unknownClassAttestation: inspection.unknownClasses,
+  });
+  phase("enrollment:end");
+  const manifest = { format: "keryx-storage-deployment-v1", identity,
+    backend: { kind: "sqlite", databasePath: file } };
+  writeFileSync(manifestPath, canonicalJson(manifest));
+  vi.stubEnv("KERYX_STORAGE_MANIFEST", manifestPath);
+  vi.stubEnv("KERYX_SQLITE_PATH", file);
+  vi.stubEnv("KERYX_FORCE_OFFLINE", mode === "testnet-offline" ? "1" : "0");
+  vi.stubEnv("CONTENT_MASTER_KEY", randomBytes(32).toString("hex"));
+  phase("import:start");
+  const api = await import("./enrolled-sqlite-adapter");
+  phase("import:end");
+  return { file, manifestPath, manifest, identity, adapters, api, phase };
+}
+
+it("private-profile capability is absent on the actual enrolled facade and refuses before native or manifest guard I/O", async () => {
+  const f = await fixture("testnet-offline");
+  const adapter = await f.api.createEnrolledSqliteAdapter(); f.adapters.push(adapter);
+  writeFileSync(f.manifestPath, "{}", "utf8");
+  const prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), exec = vi.spyOn(DatabaseSync.prototype, "exec");
+  try {
+    expect(Object.hasOwn(adapter, "privateProfiles")).toBe(false);
+    expect(Object.hasOwn(adapter, "privateBibliographies")).toBe(false);
+    expect(() => requirePrivateProfiles(adapter)).toThrow("profile_unavailable");
+    expect(prepare).not.toHaveBeenCalled(); expect(exec).not.toHaveBeenCalled();
+  } finally { prepare.mockRestore(); exec.mockRestore(); }
+});
+
+async function mainnetProfileFixture(migrated: boolean, archive = false) {
+  vi.resetModules();
+  const folder = mkdtempSync(join(tmpdir(), "keryx-enrolled-profile-facade-"));
+  const file = join(folder, "synthetic.sqlite"), manifestPath = join(folder, "deployment.json");
+  const identity: StorageIdentity = { ...syntheticStorageIdentity("testnet-real"), format: "keryx-mainnet-storage-identity-v1",
+    authorityMode: "mainnet-real", network: "eip155:5042", profileDigest: STORAGE_MAINNET_PROFILE_DIGEST };
+  const adapters: SqliteAdapter[] = []; fixtures.push({ folder, adapters, phase: () => {} });
+  const native = new DatabaseSync(file);
+  try {
+    native.exec("BEGIN IMMEDIATE"); installMainnetApplicationSchema(native, { publicReferenceArchive: archive });
+    insertStorageIdentity(native, identity); installStorageFences(native, identity); native.exec("COMMIT");
+  } finally { native.close(); }
+  if (migrated) {
+    const { migratePrivateProfilesStorage } = await import("./private-profiles-storage-migration");
+    migratePrivateProfilesStorage(file, identity, () => {});
+  }
+  writeFileSync(manifestPath, canonicalJson({ format: "keryx-storage-deployment-v1", identity, backend: { kind: "sqlite", databasePath: file } }));
+  vi.stubEnv("KERYX_STORAGE_MANIFEST", manifestPath); vi.stubEnv("KERYX_SQLITE_PATH", file); vi.stubEnv("KERYX_FORCE_OFFLINE", "0");
+  vi.stubEnv("CONTENT_MASTER_KEY", randomBytes(32).toString("hex"));
+  return { file, manifestPath, identity, adapters, api: await import("./enrolled-sqlite-adapter") };
+}
+
+it("mainnet without an installed profile domain preserves the honest absent-capability branch and zero startup DDL", async () => {
+  const f = await mainnetProfileFixture(false), before = readFileSync(f.file);
+  const adapter = await f.api.createEnrolledSqliteAdapter(); f.adapters.push(adapter);
+  expect(adapter.privateProfiles).toBeUndefined(); expect(Object.hasOwn(adapter, "privateProfiles")).toBe(false);
+  expect(() => requirePrivateProfiles(adapter)).toThrow("profile_unavailable");
+  expect(await adapter.getUser(`0x${"a".repeat(40)}`)).toBeNull(); expect(readFileSync(f.file)).toEqual(before);
+});
+
+describe.each([false, true])("actual migrated mainnet profile facade (archive=%s)", archive => {
+  let f: Awaited<ReturnType<typeof mainnetProfileFixture>>;
+  // Pure module loading and authentic temporary-schema preparation are setup, not
+  // a sequence of independent application requests inside one 20-second deadline.
+  beforeEach(async () => { f = await mainnetProfileFixture(true, archive); });
+
+  it("attaches one frozen non-enumerable port and preserves native writer CRUD and close", async () => {
+    const before = readFileSync(f.file), adapter = await f.api.createEnrolledSqliteAdapter(); f.adapters.push(adapter);
+    const port = requirePrivateProfiles(adapter), wallet = `0x${"a".repeat(40)}`;
+    expect(Object.isFrozen(adapter)).toBe(true); expect(Object.isFrozen(port)).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(adapter, "privateProfiles")).toMatchObject({ enumerable: false, writable: false, configurable: false });
+    expect(Object.keys(adapter)).not.toContain("privateProfiles"); expect(Object.keys(f.api.ENROLLED_SQLITE_METHOD_ACCESS)).not.toContain("privateProfiles");
+    expect(Reflect.get(adapter, "db")).toBeUndefined(); expect(readFileSync(f.file)).toEqual(before);
+    await port.update(wallet, { displayName: "Reader", handle: "native_reader", bio: "", purpose: "", links: [] });
+    expect((await port.get(wallet, f.identity.network)).profile?.handle).toBe("native_reader");
+    await port.delete(wallet); expect((await port.get(wallet, f.identity.network)).profile).toBeNull();
+    adapter.close(); await expect(port.get(wallet, f.identity.network)).rejects.toThrow("profile_unavailable");
+  });
+
+  it("denies readonly deletion without losing the genuine native reader or changing stored bytes", async () => {
+    const wallet = `0x${"a".repeat(40)}`, seed = new DatabaseSync(f.file);
+    // Fixed synthetic input precedes the application facade; no genuine mutation is mocked.
+    try {
+      registerStorageCapability(seed, f.identity, () => true);
+      seed.exec("BEGIN IMMEDIATE");
+      seed.prepare("INSERT INTO private_profiles(wallet,handle,display_name,bio,purpose,links,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)")
+        .run(wallet, "native_reader", "Reader", "", "", "[]", "2026-10-01T00:00:00.000Z", "2026-10-01T00:00:00.000Z");
+      seed.exec("COMMIT");
+    } finally { seed.close(); }
+    const before = readFileSync(f.file), readonly = await f.api.createReadonlyEnrolledSqliteAdapter(); f.adapters.push(readonly);
+    await expect(requirePrivateProfiles(readonly).delete(wallet)).rejects.toThrow("profile_unavailable");
+    expect((await requirePrivateProfiles(readonly).get(wallet, f.identity.network)).profile?.handle).toBe("native_reader");
+    expect(readFileSync(f.file)).toEqual(before);
+  });
+});
+
+it("uses the exact installed application schema without startup migration and retains enrolled provenance", async () => {
+  const f = await fixture("testnet-real", false, "exact-schema");
+  const before = readFileSync(f.file);
+  f.phase("open:start");
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.phase("open:end");
+  f.adapters.push(adapter);
+  expect(f.api.assertEnrolledSqliteAdapter(adapter)).toEqual(f.identity);
+  expect(() => f.api.assertEnrolledSqliteAdapter({})).toThrow();
+  expect(Reflect.get(adapter, "db")).toBeUndefined();
+  expect(Reflect.get(adapter, "fromVerifiedConnection")).toBeUndefined();
+  expect(Reflect.get(adapter, "assembleConnectionCore")).toBeUndefined();
+  for (const method of ["claimResearchPurchase", "createResearchMonthly", "getResearchMonthly", "redeemResearchMonthly"] as const) {
+    expect(f.api.ENROLLED_SQLITE_METHOD_ACCESS[method]).toMatch(/^mainnet-/);
+    expect(() => Reflect.apply(adapter[method], adapter, [])).toThrow("unavailable in enrolled storage");
+  }
+  f.phase("guard:start");
+  await adapter.init();
+  expect(await adapter.listSources()).toEqual([]);
+  expect(await adapter.getSessionGrant("missing")).toBeNull();
+  expect(readFileSync(f.file)).toEqual(before);
+  await adapter.setSyncState("native", "retained");
+  expect(await adapter.getSyncState("native")).toBe("retained");
+  const raw = new DatabaseSync(f.file);
+  try {
+    expect(() => raw.prepare("UPDATE sync_state SET value='bypass' WHERE key='native'").run()).toThrow();
+    expect(raw.prepare("SELECT value FROM sync_state WHERE key='native'").get()?.value).toBe("retained");
+  } finally { raw.close(); }
+  f.phase("guard:end");
+});
+
+it("refuses every explicitly reviewed readonly mutator before invocation, including reads that write usage", async () => {
+  const f = await fixture();
+  const adapter = await f.api.createReadonlyEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  const before = readFileSync(f.file);
+  expect(f.api.assertEnrolledSqliteAdapter(adapter, "read")).toEqual(f.identity);
+  expect(() => f.api.assertEnrolledSqliteAdapter(adapter, "write")).toThrow();
+  expect(() => Reflect.apply(f.api.assertEnrolledSqliteAdapter, null, [adapter, "unknown"])).toThrow();
+  expect(() => Reflect.apply(f.api.assertEnrolledSqliteAdapter, null, [adapter, "read", "extra"])).toThrow();
+  for (const [name, access] of Object.entries(f.api.ENROLLED_SQLITE_METHOD_ACCESS)) {
+    if (access === "write") expect(() => Reflect.apply(Reflect.get(adapter, name), adapter, [])).toThrow("mutation refused");
+    if (access.startsWith("mainnet-")) expect(() => Reflect.apply(Reflect.get(adapter, name), adapter, [])).toThrow("unavailable in enrolled storage");
+  }
+  expect(await adapter.listSources()).toEqual([]);
+  expect(f.api.ENROLLED_SQLITE_METHOD_ACCESS.listUnfinishedA2aOrders).toBe("read");
+  expect(await adapter.listUnfinishedA2aOrders!(5)).toEqual({ orders: [], unreadable: 0, truncated: false });
+  expect(readFileSync(f.file)).toEqual(before);
+});
+
+it("exposes wallet funding inspection on the actual readonly enrolled facade without journal or schema writes", async () => {
+  const f = await fixture();
+  const adapter = await f.api.createReadonlyEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  const now = Date.UTC(2026, 9, 12, 12);
+  const hash = `0x${"12".repeat(32)}` as const;
+  const policy: WalletFundedRegistrationSponsorPolicy = {
+    protocol: "keryx-registration-sponsor-v2", eligibility: "verified-publisher", funding: "wallet-balance",
+    network: f.identity.network, deploymentOrigin: "https://keryx.example",
+    registryAddress: "0x3333333333333333333333333333333333333333", registryCodeHash: hash,
+    sponsorAddress: "0x4444444444444444444444444444444444444444",
+    maxTransactionWei: "40000000000000000", maxGas: 21000, maxFeePerGasWei: "20000000000",
+  };
+  const observation: RegistrationSponsorFundingObservation = {
+    network: policy.network, sponsorAddress: policy.sponsorAddress, blockNumber: "100", blockHash: hash,
+    blockTimestamp: Math.floor(now / 1000), observedAt: now,
+    nativeBalanceWei: policy.maxTransactionWei, latestTransactionNonce: 0,
+  };
+  const before = readFileSync(f.file);
+  expect(f.api.ENROLLED_SQLITE_METHOD_ACCESS.inspectRegistrationSponsorFunding).toBe("read");
+  expect(await adapter.inspectRegistrationSponsorFunding(policy, observation, now)).toEqual({
+    available: true, reservedGasCovered: false, heldWei: "0", spendableWei: policy.maxTransactionWei,
+  });
+  expect(readFileSync(f.file)).toEqual(before);
+  writeFileSync(f.manifestPath, "{}", "utf8");
+  expect(() => adapter.inspectRegistrationSponsorFunding(policy, observation, now)).toThrow();
+  expect(readFileSync(f.file)).toEqual(before);
+});
+
+it("guards verified-only source CAS and projects item provenance without exposing internal metadata lookup", async () => {
+  const f = await fixture();
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  const wallet = `0x${"aB".repeat(20)}`, feed = "https://publisher.test/feed";
+  const source = { id: "mixed", name: "Mixed publisher", url: "https://publisher.test/", rssUrl: feed,
+    description: "Fixture", walletAddress: wallet, fetchPrice: 0.019, active: false, verified: false,
+    tags: [], authors: [], createdAt: new Date().toISOString() };
+  await adapter.upsertSource(source);
+  await adapter.addItems([{ id: "demo", sourceId: source.id, title: "Synthetic item", summary: "Demo",
+    content: "Unread ciphertext", link: "https://publisher.test/demo", evidenceProvenance: "synthetic-demo" }]);
+  expect(f.api.ENROLLED_SQLITE_METHOD_ACCESS.verifySourceIfUnchanged).toBe("write");
+  expect(Reflect.get(adapter, "readEvidenceProvenance")).toBeUndefined();
+  expect(await adapter.verifySourceIfUnchanged({ sourceId: source.id, walletAddress: wallet.toLowerCase(), feedUrl: feed })).toBe(true);
+  expect(await adapter.getSource(source.id)).toMatchObject({ verified: true, active: false, fetchPrice: 0.019, authors: [] });
+  expect(await adapter.verifySourceIfUnchanged({ sourceId: source.id, walletAddress: wallet, feedUrl: "https://changed.test/feed" })).toBe(false);
+  const run: QueryRun = { id: crypto.randomUUID(), question: "Synthetic question", budget: 0.02,
+    engine: "fixture", subClaims: [], decisions: [], citations: [{ marker: "S1", sourceId: source.id,
+      sourceName: source.name, itemId: "demo", weight: 1, reward: 0.003, rationale: "Historical fixture" }],
+    answer: "Historical illustrative fact [S1]", totalSpent: 0.003, totalToCreators: 0.003, trace: [], createdAt: new Date().toISOString() };
+  await adapter.saveQueryRun(run);
+  const readonly = await f.api.createReadonlyEnrolledSqliteAdapter();
+  f.adapters.push(readonly);
+  const before = readFileSync(f.file);
+  expect(() => readonly.verifySourceIfUnchanged({ sourceId: source.id, walletAddress: wallet, feedUrl: feed })).toThrow("mutation refused");
+  const projected = await readonly.getQueryRun(run.id);
+  expect(projected?.citations[0].evidenceProvenance).toBe("synthetic-demo");
+  expect(projected?.answer).toContain("Illustrative demo content");
+  expect(projected?.totalSpent).toBe(run.totalSpent);
+  expect(readFileSync(f.file)).toEqual(before);
+  writeFileSync(f.manifestPath, canonicalJson({ ...f.manifest, identity: { ...f.identity, storageId: crypto.randomUUID() } }));
+  expect(() => adapter.verifySourceIfUnchanged({ sourceId: source.id, walletAddress: wallet, feedUrl: feed })).toThrow();
+  expect(readFileSync(f.file)).toEqual(before);
+});
+
+it("refuses schema drift rather than repairing it and keeps close usable after manifest drift", async () => {
+  const f = await fixture();
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  const raw = new DatabaseSync(f.file);
+  try { raw.exec("DROP INDEX query_runs_parent"); } finally { raw.close(); }
+  const before = readFileSync(f.file);
+  expect(() => adapter.getSource("missing")).toThrow("schema migration required");
+  expect(readFileSync(f.file)).toEqual(before);
+  writeFileSync(f.manifestPath, canonicalJson({ ...f.manifest,
+    identity: { ...f.identity, storageId: crypto.randomUUID() } }));
+  expect(() => adapter.listSources()).toThrow();
+  adapter.close();
+  expect(() => f.api.assertEnrolledSqliteAdapter(adapter)).toThrow();
+});
+
+it("rejects a new unreviewed public method before publishing an adapter", async () => {
+  const f = await fixture();
+  const { SqliteAdapter: Core } = await import("./sqlite-adapter");
+  Object.defineProperty(Core.prototype, "futureAuthorityMethod", { configurable: true, value: () => true });
+  try { await expect(f.api.createEnrolledSqliteAdapter()).rejects.toThrow("inventory requires review"); }
+  finally { Reflect.deleteProperty(Core.prototype, "futureAuthorityMethod"); }
+});
+
+it("rejects cloned facades and verified cores as runtime provenance and refuses malformed or missing readiness keys", async () => {
+  const f = await fixture();
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  expect(() => f.api.assertEnrolledSqliteAdapter({ ...adapter })).toThrow();
+  const { openVerifiedSqliteStorage } = await import("./storage-identity-connection");
+  const { SqliteAdapter: Core } = await import("./sqlite-adapter");
+  const verified = openVerifiedSqliteStorage(f.file, f.identity);
+  try {
+    expect(() => f.api.assertEnrolledSqliteAdapter(Core.assembleConnectionCore(verified.db, f.identity, () => {}))).toThrow();
+  } finally { verified.close(); }
+  const before = readFileSync(f.file);
+  for (const key of ["", "invalid"]) {
+    vi.stubEnv("CONTENT_MASTER_KEY", key);
+    await expect(f.api.createEnrolledSqliteAdapter()).rejects.toThrow("key unavailable");
+    expect(readFileSync(f.file)).toEqual(before);
+  }
+});
+
+function fixtureFailureStages() {
+  const started = performance.now();
+  const stages: { stage: string; elapsedMs: number }[] = [];
+  onTestFailed(() => {
+    console.error("Enrolled adapter fixture stages", JSON.stringify(stages));
+  });
+  return (stage: string) => {
+    if (stages.length >= 12) throw new Error("Adapter fixture stage bound exceeded");
+    stages.push({ stage, elapsedMs: Math.round(performance.now() - started) });
+  };
+}
+
+it("enforces real cache AEAD on reads and readiness without rewriting bad rows", async () => {
+  const stage = fixtureFailureStages();
+  stage("fixture-start");
+  const f = await fixture();
+  stage("factory-start");
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  stage("cache-roundtrip");
+  await adapter.setCached("source", "Synthetic cached body");
+  expect(await adapter.getCached("source")).toBe("Synthetic cached body");
+  stage("owner-open");
+  const { openVerifiedSqliteStorage } = await import("./storage-identity-connection");
+  const owner = openVerifiedSqliteStorage(f.file, f.identity);
+  try {
+    owner.db.prepare("UPDATE cache_items SET source_id='other' WHERE source_id='source'").run();
+    const before = owner.db.prepare("SELECT * FROM cache_items").all();
+    stage("wrong-aad-read");
+    await expect(adapter.getCached("other")).rejects.toThrow("unavailable");
+    stage("wrong-aad-readiness");
+    await expect(f.api.createEnrolledSqliteAdapter()).rejects.toThrow("unavailable");
+    expect(owner.db.prepare("SELECT * FROM cache_items").all()).toEqual(before);
+  } finally { stage("owner-close"); owner.close(); }
+  stage("complete");
+});
+
+it("refuses plaintext real cache readiness without rewriting the retained row", async () => {
+  const stage = fixtureFailureStages();
+  stage("fixture-start");
+  const f = await fixture();
+  stage("factory-start");
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  stage("cache-write");
+  await adapter.setCached("source", "Synthetic cached body");
+  stage("owner-open");
+  const { openVerifiedSqliteStorage } = await import("./storage-identity-connection");
+  const owner = openVerifiedSqliteStorage(f.file, f.identity);
+  try {
+    owner.db.prepare("UPDATE cache_items SET text='plain:v1:legacy' WHERE source_id='source'").run();
+    const legacy = owner.db.prepare("SELECT * FROM cache_items").all();
+    stage("plaintext-readiness");
+    await expect(f.api.createEnrolledSqliteAdapter()).rejects.toThrow("unavailable");
+    expect(owner.db.prepare("SELECT * FROM cache_items").all()).toEqual(legacy);
+  } finally { stage("owner-close"); owner.close(); }
+  stage("complete");
+});
+
+it("retains the exact cache row quota atomically and permits replacement without new startup failure", async () => {
+  const f = await fixture();
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  const { openVerifiedSqliteStorage } = await import("./storage-identity-connection");
+  const owner = openVerifiedSqliteStorage(f.file, f.identity);
+  try {
+    const values = Array.from({ length: 511 }, (_, index) => {
+      const id = `slot-${index}`;
+      const encoded = sealEnrolledCacheText("Synthetic body", id, f.identity);
+      return `('${id}','${encoded}','synthetic')`;
+    });
+    owner.db.exec(`INSERT INTO cache_items(source_id,text,updated_at) VALUES ${values.join(",")}`);
+    await adapter.setCached("last", "Last allowed body");
+    const before = owner.db.prepare("SELECT * FROM cache_items ORDER BY source_id").all();
+    await expect(adapter.setCached("overflow", "Refused body")).rejects.toThrow("inspection limit");
+    expect(owner.db.prepare("SELECT * FROM cache_items ORDER BY source_id").all()).toEqual(before);
+    await adapter.setCached("last", "Replacement body");
+    expect(await adapter.getCached("last")).toBe("Replacement body");
+    const reopened = await f.api.createEnrolledSqliteAdapter();
+    f.adapters.push(reopened);
+    expect(await reopened.getCached("last")).toBe("Replacement body");
+  } finally { owner.close(); }
+});
+
+it("guards early computed results and iterator publication after actual runtime mode drift", async () => {
+  const f = await fixture();
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  const run: QueryRun = { id: crypto.randomUUID(), question: "Synthetic question", budget: 0,
+    engine: "fixture", subClaims: [], decisions: [], citations: [], answer: "Synthetic answer",
+    totalSpent: 0, totalToCreators: 0, trace: [], createdAt: new Date().toISOString() };
+  await adapter.saveQueryRun(run);
+  const iterator = adapter.iterateRecentQueries(2)[Symbol.asyncIterator]();
+  expect((await iterator.next()).value).toEqual(run); // Default OFF retains the admitted ordinary lane.
+  vi.stubEnv("KERYX_FORCE_OFFLINE", "1");
+  await expect(iterator.next()).rejects.toThrow();
+  await expect(async () => adapter.getQueryRun(run.id)).rejects.toThrow();
+  expect(() => adapter.newestItemDates([])).toThrow();
+  expect(() => f.api.assertEnrolledSqliteAdapter(adapter)).toThrow();
+});
+
+it("refuses post-write async publication after manifest drift without claiming the committed write rolled back", async () => {
+  const f = await fixture();
+  const { SqliteAdapter: Core } = await import("./sqlite-adapter");
+  const original = Core.prototype.setSyncState;
+  Core.prototype.setSyncState = async function (key, value) {
+    await original.call(this, key, value);
+    writeFileSync(f.manifestPath, canonicalJson({ ...f.manifest,
+      identity: { ...f.identity, storageId: crypto.randomUUID() } }));
+  };
+  try {
+    const adapter = await f.api.createEnrolledSqliteAdapter();
+    f.adapters.push(adapter);
+    await expect(adapter.setSyncState("committed", "retained")).rejects.toThrow();
+    const raw = new DatabaseSync(f.file);
+    try { expect(raw.prepare("SELECT value FROM sync_state WHERE key='committed'").get()?.value).toBe("retained"); }
+    finally { raw.close(); }
+  } finally { Core.prototype.setSyncState = original; }
+});
+
+it("uses native authentication, immutable private intent and exact private treasury helpers through the same enrolled core", async () => {
+  const f = await fixture("testnet-real", false, "native-private-authority");
+  f.phase("open:start");
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.phase("open:end");
+  f.adapters.push(adapter);
+  f.phase("guard:start");
+  const payer = privateKeyToAccount(generatePrivateKey());
+  const challenge = createHash("sha256").update("synthetic-challenge").digest("hex");
+  await adapter.createAuthChallenge(challenge, Date.now(), Date.now() + 60000);
+  expect(await adapter.consumeAuthChallenge(challenge, Date.now())).toBe(true);
+  expect(await adapter.consumeAuthChallenge(challenge, Date.now())).toBe(false);
+  const { createPrivateAuthorization } = await import("../buyer/private-request-commitment");
+  const { preparePrivateResearchIntent } = await import("../a2a/private-research-intent");
+  const { BUYER_GATEWAY, BUYER_NETWORK, BUYER_USDC, buyerTypedData } = await import("../buyer/protocol");
+  const merchants = { privatePayee: `0x${"ab".repeat(20)}`, publicResearchPayee: `0x${"cd".repeat(20)}` };
+  const requirement = { scheme: "exact", network: BUYER_NETWORK, asset: BUYER_USDC,
+    amount: "50000", payTo: merchants.privatePayee, maxTimeoutSeconds: 604860,
+    extra: { name: "GatewayWalletBatched", version: "1", verifyingContract: BUYER_GATEWAY } };
+  const request = { question: "Synthetic private question", budget: 0.03,
+    researchMode: "quick", packageVersion: "1.0.0", responseMode: "async", access: "payer-private-v1", model: null };
+  const fresh = await createPrivateAuthorization(request, requirement, payer.address, merchants, Date.now());
+  const submission = { request: fresh.request, salt: fresh.salt,
+    payment: { authorization: fresh.authorization, signature: await payer.signTypedData(buyerTypedData(fresh.authorization)) } };
+  const intent = await preparePrivateResearchIntent(submission, requirement, merchants);
+  expect(await adapter.reservePrivateResearchIntent(intent)).toEqual(intent);
+  expect(await adapter.reservePrivateResearchIntent(intent)).toEqual(intent);
+  expect(await adapter.getPrivateResearchIntent(intent.id, payer.address)).toEqual(intent);
+  const policy = { signer: payer.address, capacityMicros: "100000" };
+  const reserved = await adapter.reservePrivateTreasury(intent.id, payer.address, policy);
+  expect(await adapter.reservePrivateTreasury(intent.id, payer.address, policy)).toEqual(reserved);
+  expect(await adapter.getPrivateTreasury(intent.id, payer.address)).toEqual({ signer: payer.address.toLowerCase(), amountMicros: "30000" });
+  const raw = new DatabaseSync(f.file);
+  try {
+    expect(raw.prepare("SELECT count(*) AS n FROM private_treasury_reservations").get()?.n).toBe(1);
+    expect(() => raw.prepare("DELETE FROM private_research_intents WHERE id=?").run(intent.id)).toThrow();
+  } finally { raw.close(); }
+  f.phase("guard:end");
+});
+
+it("refuses Supabase selection without SQLite fallback and refuses foreign identity before application mutation", async () => {
+  const f = await fixture();
+  const before = readFileSync(f.file);
+  writeFileSync(f.manifestPath, canonicalJson({ ...f.manifest,
+    backend: { kind: "supabase", url: "https://synthetic.invalid" } }));
+  vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://synthetic.invalid");
+  vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "synthetic-noncredential");
+  await expect(f.api.createEnrolledSqliteAdapter()).rejects.toThrow("backend not selected");
+  expect(readFileSync(f.file)).toEqual(before);
+  vi.resetModules();
+  const fresh = await import("./enrolled-sqlite-adapter");
+  writeFileSync(f.manifestPath, canonicalJson({ ...f.manifest,
+    identity: { ...f.identity, storageId: crypto.randomUUID() } }));
+  await expect(fresh.createEnrolledSqliteAdapter()).rejects.toThrow("identity_mismatch");
+  expect(readFileSync(f.file)).toEqual(before);
+});
+
+it("holds the actual target across replacement and keeps close usable after refusal", async () => {
+  const f = await fixture();
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  await adapter.setSyncState("retained", "native value");
+  const before = readFileSync(f.file);
+  if (process.platform === "win32") {
+    try { renameSync(f.file, f.file + ".old"); throw new Error("Fixture unexpectedly renamed held target"); }
+    catch (error) { expect((error as NodeJS.ErrnoException).code).toBe("EBUSY"); }
+    expect(await adapter.getSyncState("retained")).toBe("native value");
+  } else {
+    renameSync(f.file, f.file + ".old");
+    copyFileSync(f.file + ".old", f.file);
+    expect(() => adapter.getSyncState("retained")).toThrow("target_replaced");
+  }
+  expect(readFileSync(f.file)).toEqual(before);
+  adapter.close();
+  expect(() => f.api.assertEnrolledSqliteAdapter(adapter)).toThrow();
+});
+
+it("guards actual stale statements and native iterators with captured runtime configuration", async () => {
+  const f = await fixture();
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  await adapter.setSyncState("retained", "native value");
+  const { openVerifiedSqliteStorage } = await import("./storage-identity-connection");
+  const options = { readOnly: true, runtimeGuard: () => { f.api.assertEnrolledSqliteAdapter(adapter); } };
+  const verified = openVerifiedSqliteStorage(f.file, f.identity, options);
+  try {
+    const statement = verified.db.prepare("SELECT value FROM sync_state WHERE key='retained'");
+    const iterator = statement.iterate();
+    expect(statement.get()?.value).toBe("native value");
+    options.runtimeGuard = () => {};
+    vi.stubEnv("KERYX_FORCE_OFFLINE", "1");
+    expect(() => statement.get()).toThrow();
+    expect(() => iterator.next()).toThrow();
+  } finally { verified.close(); }
+});
+
+it("composes the exact complete installed funding domain without granting its separate writer authority", async () => {
+  const stage = fixtureFailureStages();
+  stage("fixture-start");
+  const f = await fixture("testnet-real", true);
+  stage("factory-start");
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  stage("application-roundtrip");
+  await adapter.setSyncState("full-domain", "retained");
+  expect(await adapter.getSyncState("full-domain")).toBe("retained");
+  const { openVerifiedSqliteStorage } = await import("./storage-identity-connection");
+  stage("owner-open");
+  const owner = openVerifiedSqliteStorage(f.file, f.identity);
+  try {
+    stage("funding-read-and-writer-refusal");
+    expect(owner.db.prepare("SELECT count(*) AS n FROM gateway_funding_operations").get()?.n).toBe(0);
+    expect(() => owner.db.prepare("INSERT INTO gateway_funding_namespaces(sender,data) VALUES('synthetic','{}')").run()).toThrow("no such function: keryx_funding_capability");
+  } finally { stage("owner-close"); owner.close(); }
+  stage("complete");
+});
+
+it("refuses a tampered complete funding index without rewriting data or retaining a failed-open handle", async () => {
+  const stage = fixtureFailureStages();
+  stage("fixture-start");
+  const f = await fixture("testnet-real", true);
+  stage("factory-start");
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  stage("application-seed");
+  await adapter.setSyncState("full-domain", "retained");
+  stage("index-tamper");
+  const raw = new DatabaseSync(f.file);
+  try { raw.exec("DROP INDEX gateway_funding_observations_slot_kind"); }
+  finally { raw.close(); }
+  const before = readFileSync(f.file);
+  stage("existing-adapter-refusal");
+  expect(() => adapter.listSources()).toThrow();
+  stage("readiness-refusal");
+  await expect(f.api.createEnrolledSqliteAdapter()).rejects.toThrow();
+  expect(readFileSync(f.file)).toEqual(before);
+  renameSync(f.file, f.file + ".closed");
+  renameSync(f.file + ".closed", f.file);
+  expect(readFileSync(f.file)).toEqual(before);
+  stage("complete");
+});
+
+it("refuses an oversized raw cache value inserted after readiness before publishing its body", async () => {
+  const f = await fixture("testnet-real", false, "oversized-cache");
+  f.phase("open:start");
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.phase("open:end");
+  f.adapters.push(adapter);
+  const { openVerifiedSqliteStorage } = await import("./storage-identity-connection");
+  f.phase("owner-open:start");
+  const owner = openVerifiedSqliteStorage(f.file, f.identity);
+  f.phase("owner-open:end");
+  try {
+    f.phase("oversized-write:start");
+    owner.db.prepare("INSERT INTO cache_items(source_id,text) VALUES('oversized',?)").run("x".repeat(2 * 1024 * 1024 + 1));
+    const before = owner.db.prepare("SELECT length(CAST(text AS BLOB)) AS bytes FROM cache_items WHERE source_id='oversized'").get();
+    f.phase("oversized-write:end");
+    f.phase("guard:start");
+    await expect(adapter.getCached("oversized")).rejects.toThrow("unavailable");
+    expect(owner.db.prepare("SELECT length(CAST(text AS BLOB)) AS bytes FROM cache_items WHERE source_id='oversized'").get()).toEqual(before);
+    f.phase("guard:end");
+  } finally { f.phase("owner-close:start"); owner.close(); f.phase("owner-close:end"); }
+});
+
+it("uses explicit offline cache without a content key and preserves the offline financial fence", async () => {
+  const f = await fixture("testnet-offline");
+  vi.stubEnv("CONTENT_MASTER_KEY", "");
+  vi.stubEnv("NODE_ENV", "production");
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  await adapter.setCached("offline", "Synthetic offline content");
+  expect(await adapter.getCached("offline")).toBe("Synthetic offline content");
+  await expect(adapter.activateBrowserJournal()).rejects.toThrow("offline storage denies journal activation");
+  expect(await adapter.browserJournalActive()).toBe(false);
+});
+
+it.each([
+  "DROP TABLE gateway_funding_observations",
+  "DROP TRIGGER funding_terminal_observer_required",
+  "CREATE INDEX unreviewed_source_index ON sources(name)",
+])("refuses a partial or unreviewed installed profile without repair: %s", async sql => {
+  const f = await fixture("testnet-real", true);
+  const raw = new DatabaseSync(f.file);
+  try { raw.exec(sql); } finally { raw.close(); }
+  const before = readFileSync(f.file);
+  await expect(f.api.createEnrolledSqliteAdapter()).rejects.toThrow();
+  expect(readFileSync(f.file)).toEqual(before);
+});
+
+it("bounds schema drift metadata before loading an oversized DDL string", async () => {
+  const f = await fixture();
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  const raw = new DatabaseSync(f.file);
+  try { raw.exec(`CREATE INDEX oversized_schema_index ON sources(name) /*${"x".repeat(131073)}*/`); }
+  finally { raw.close(); }
+  const before = readFileSync(f.file);
+  expect(() => adapter.listSources()).toThrow();
+  expect(readFileSync(f.file)).toEqual(before);
+  await expect(f.api.createEnrolledSqliteAdapter()).rejects.toThrow();
+  renameSync(f.file, f.file + ".closed");
+  renameSync(f.file + ".closed", f.file);
+  expect(readFileSync(f.file)).toEqual(before);
+});
+
+it("preserves the same aggregate byte quota on native writes and subsequent readiness", async () => {
+  const f = await fixture("testnet-offline");
+  const { openVerifiedSqliteStorage } = await import("./storage-identity-connection");
+  const owner = openVerifiedSqliteStorage(f.file, f.identity);
+  const maximum = 8 * 1024 * 1024;
+  const full = "plain:v1:" + "x".repeat(1024 * 1024);
+  const remaining = maximum - 7 * Buffer.byteLength(full);
+  try {
+    owner.db.exec("BEGIN IMMEDIATE");
+    for (let i = 0; i < 7; i++)
+      owner.db.prepare("INSERT INTO cache_items(source_id,text) VALUES(?,?)").run(`seed-${i}`, full);
+    owner.db.exec("COMMIT");
+  } finally { owner.close(); }
+  const adapter = await f.api.createEnrolledSqliteAdapter();
+  f.adapters.push(adapter);
+  await adapter.setCached("last", "y".repeat(remaining - Buffer.byteLength("plain:v1:")));
+  const raw = new DatabaseSync(f.file);
+  try {
+    const snapshot = () => raw.prepare("SELECT source_id,length(CAST(text AS BLOB)) AS bytes FROM cache_items ORDER BY source_id").all();
+    const before = snapshot();
+    expect(before.reduce((sum, row) => sum + Number(row.bytes), 0)).toBe(maximum);
+    await expect(adapter.setCached("last", "y".repeat(remaining - 8))).rejects.toThrow();
+    expect(snapshot()).toEqual(before);
+    const reopened = await f.api.createEnrolledSqliteAdapter();
+    f.adapters.push(reopened);
+    expect((await reopened.getCached("last"))?.length).toBe(remaining - 9);
+  } finally { raw.close(); }
+});
+
+it("admits, exposes and canonically acknowledges a real v3 original through the closed factory and native localhost registry", async () => {
+  const owner = privateKeyToAccount(generatePrivateKey());
+  const signer = privateKeyToAccount(generatePrivateKey());
+  const creator = privateKeyToAccount(generatePrivateKey());
+  const payout = "0x2222222222222222222222222222222222222222";
+  const registry = "0x3333333333333333333333333333333333333333";
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const result = payload.method === "eth_chainId" ? "0x4cef52"
+      : payload.method === "eth_call" ? encodeFunctionResult({ abi: REGISTRY_ABI, functionName: "get",
+        result: { creator: creator.address, payoutWallet: payout, authors: [], fetchPriceUsdc6: BigInt(1000),
+          contentCid: "", tags: "", active: true } })
+      : { number: "0x1", hash: `0x${"77".repeat(32)}`, timestamp: `0x${Math.floor(Date.now() / 1000).toString(16)}` };
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify({ jsonrpc: "2.0", id: payload.id, result }));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = (server.address() as { port: number }).port;
+  vi.stubEnv("KERYX_RPC_URL", `http://127.0.0.1:${port}`);
+  vi.stubEnv("NEXT_PUBLIC_KERYX_REGISTRY_ADDRESS", registry);
+  try {
+    const f = await fixture(); const adapter = await f.api.createEnrolledSqliteAdapter();
+    f.adapters.push(adapter);
+    const { browserQueryPolicyTypedData } = await import("../payments/browser-query-policy");
+    const { browserSigningTypedData, serializeBrowserSigningHeader } = await import("../payments/browser-signing-original");
+    const { sourceItemContentVersion } = await import("../sources/source-item-asset");
+    const { openVerifiedSqliteStorage } = await import("./storage-identity-connection");
+    const privileged = openVerifiedSqliteStorage(f.file, f.identity);
+    try { privileged.db.exec("UPDATE browser_signing_v2_control SET active=1,min_original_version=3 WHERE id=1"); }
+    finally { privileged.close(); }
+    await adapter.activateBrowserJournal(); const epoch = crypto.randomUUID();
+    const sessionId = owner.address.toLowerCase();
+    await adapter.upsertSessionGrant({ sessionId, sessAddr: signer.address, ownerAddr: owner.address,
+      cap: 1, expiry: Date.now() + 120000, txHash: "synthetic", grantEpoch: epoch });
+    await adapter.upsertSource({ id: "source", name: "Synthetic source", url: "https://source.example/",
+      description: "fixture", walletAddress: payout, fetchPrice: 0.001, tags: [], authors: [],
+      createdAt: new Date().toISOString(), active: true, verified: true,
+      onchainId: browserSourceRegistryId(creator.address, "https://source.example/") });
+    await adapter.addItems([{ id: "item", sourceId: "source", title: "Fixture item", summary: "Preview",
+      content: "Synthetic body", link: "https://source.example/item" }]);
+    const item = await adapter.getItem("source", "item");
+    if (!item) throw new Error("Synthetic item missing");
+    const policy: BrowserQueryPolicy = { protocol: "durable-v2", service: "https://keryx.cc",
+      owner: owner.address, signer: signer.address, policyId: `0x${"44".repeat(32)}`, grantEpoch: epoch,
+      requestNonce: `0x${"55".repeat(32)}`, queryId: crypto.randomUUID(), questionDigest: `0x${"66".repeat(32)}`,
+      queryCeilingMicros: "2000", lifetimeCeilingMicros: "4000", jobLimit: 2, expiresAt: Date.now() + 60000 };
+    const admitted = await adapter.admitBrowserQueryPolicy({ policy,
+      signature: await owner.signTypedData(browserQueryPolicyTypedData(policy)) }, sessionId);
+    if (admitted.status !== "admitted") throw new Error("Synthetic query refused");
+    const requestId = crypto.randomUUID();
+    const input: BrowserSourceOriginalAdmission = { protocol: "durable-v3", queryNamespace: admitted.namespace, queryId: admitted.queryId,
+      source: { sourceId: "source", itemId: "item", contentVersion: sourceItemContentVersion(item), offerId: null },
+      journal: { sessionId, requestId, queryId: admitted.queryId, grantEpoch: epoch, signer: signer.address,
+        network: "eip155:5042002", token: "0x3600000000000000000000000000000000000000",
+        gatewayContract: "0x0077777d7eba4688bdef3e311b846f25870a19b9", sourceId: "source", offerId: null,
+        payee: payout, amountMicroUsdc: 1000, kind: "fetch",
+        requirements: { scheme: "exact", network: "eip155:5042002",
+          asset: "0x3600000000000000000000000000000000000000", amount: "1000", payTo: payout,
+          maxTimeoutSeconds: 691200, extra: { name: "GatewayWalletBatched", version: "1",
+            verifyingContract: "0x0077777d7eba4688bdef3e311b846f25870a19b9" } },
+        payment: { kind: "fetch", queryId: admitted.queryId, sourceId: "source", sourceName: "Synthetic source",
+          payer: signer.address, payee: payout, amountUsdc: 0.001, network: "eip155:5042002", grantEpoch: epoch,
+          itemId: "item", contentVersion: sourceItemContentVersion(item) } } };
+    const original = await adapter.admitBrowserSourceSigningOriginal(input); if (original.status !== "admitted") throw new Error("Synthetic original refused");
+    expect(await adapter.readExposedBrowserSigningSnapshotForSigner(signer.address, sessionId, requestId)).toBeNull();
+    expect(await adapter.exposeBrowserJournal(sessionId, requestId)).toBe(true);
+    const header = serializeBrowserSigningHeader(original.original,
+      await signer.signTypedData(browserSigningTypedData(original.original)));
+    expect(await adapter.signBrowserSigningOriginal(sessionId, requestId, header)).toBe(true);
+    expect(await adapter.signBrowserSigningOriginal(sessionId, requestId, header)).toBe(true);
+    expect((await adapter.readExposedBrowserSigningSnapshotForSigner(signer.address, sessionId, requestId))?.original).toEqual(original.original);
+    expect(await adapter.browserSignerConfirmedSpendMicro(signer.address)).toBe(0);
+    const raw = new DatabaseSync(f.file);
+    try {
+      expect(raw.prepare("SELECT count(*) AS n FROM browser_signing_originals").get()?.n).toBe(1);
+      expect(raw.prepare("SELECT spent_micro FROM browser_signing_queries").get()?.spent_micro).toBe(1000);
+      expect(() => raw.prepare("UPDATE browser_signing_queries SET spent_micro=0").run()).toThrow();
+    } finally { raw.close(); }
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+it("persists explicit private bot language on the genuine enrolled facade across reopen with recipient isolation and group no-write", async () => {
+  const f = await mainnetProfileFixture(false), manifestBefore = readFileSync(f.manifestPath);
+  const recipient: BotRecipient = { platform: "discord", scope: "123", userId: "789" };
+  const helpKey = botPreferenceKey(recipient);
+  if (!helpKey) throw new Error("Synthetic recipient was refused");
+  const answerKey = helpKey.replace("keryx:bot-help-language:v1:", "keryx:bot-answer-language:v1:");
+  // Only the two explicit preference rows may change. Preserve every other raw
+  // row, including storage identity, financial records and signing originals.
+  const retained = () => {
+    const raw = new DatabaseSync(f.file, { readOnly: true });
+    try {
+      return {
+        schema: raw.prepare("SELECT type,name,tbl_name,rootpage,sql FROM sqlite_schema ORDER BY type,name").all(),
+        tables: raw.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all().map(({ name }) => ({
+          name,
+          rows: name === "sync_state"
+            ? raw.prepare("SELECT * FROM sync_state WHERE key<>? AND key<>? ORDER BY key").all(helpKey, answerKey)
+            : raw.prepare(`SELECT * FROM "${String(name).replaceAll('"', '""')}"`).all(),
+        })),
+      };
+    } finally { raw.close(); }
+  };
+  const adapter = await f.api.createEnrolledSqliteAdapter(); f.adapters.push(adapter);
+  expect(f.api.assertEnrolledSqliteAdapter(adapter)).toEqual(f.identity);
+  expect(Object.isFrozen(adapter)).toBe(true); expect(Reflect.get(adapter, "db")).toBeUndefined();
+  expect(f.api.ENROLLED_SQLITE_METHOD_ACCESS.getSyncState).toBe("read");
+  expect(f.api.ENROLLED_SQLITE_METHOD_ACCESS.setSyncState).toBe("write");
+  await adapter.setSyncState("native-bot-retained-control", "unchanged");
+  const before = retained(), copy = botControlsCatalogues.pt;
+  // The collaborator returns the actual typed facade; neither native method nor
+  // its runtime/metadata guard is replaced with a mock or an ordinary adapter.
+  const saved = await botControlResponse({ control: { action: "language", value: "pt-BR" }, recipient,
+    platformLocale: "en-US" }, async () => adapter);
+  expect(saved).toEqual({ language: "pt",
+    text: copy.languageSaved.replace("{preference}", "pt") + "\n" + copy.languageHelp });
+  adapter.close();
+  const reopened = await f.api.createEnrolledSqliteAdapter(); f.adapters.push(reopened);
+  expect(reopened).not.toBe(adapter);
+  expect(f.api.assertEnrolledSqliteAdapter(reopened)).toEqual(f.identity);
+  const store = async () => reopened, afterSave = readFileSync(f.file);
+  expect(await reopened.getSyncState(answerKey)).toBe("pt");
+  expect(await reopened.getSyncState(helpKey)).toBe("pt");
+  expect(await readBotHelpPreference(recipient, store)).toEqual({ available: true, preference: "pt" });
+  // /language inspection reads the answer preference; /help reads its own key.
+  expect(await botControlResponse({ control: { action: "language" }, recipient, platformLocale: "en-US" }, store))
+    .toEqual({ language: "pt", text: copy.languageCurrent.replace("{preference}", "pt") + "\n" + copy.languageHelp });
+  expect(await botControlResponse({ control: { action: "help" }, recipient, platformLocale: "en-US" }, store))
+    .toEqual({ language: "pt", text: "" });
+  const others: BotRecipient[] = [{ ...recipient, userId: "790" }, { ...recipient, scope: "124" },
+    { platform: "telegram", scope: "telegram", userId: "789" },
+    { platform: "slack", scope: "T123", userId: "U789" }, { platform: "slack", scope: "T124", userId: "U789" }];
+  const english = botControlsCatalogues.en;
+  for (const other of others) {
+    expect(await readBotHelpPreference(other, store)).toEqual({ available: true, preference: "auto" });
+    expect(await botControlResponse({ control: { action: "language" }, recipient: other, platformLocale: "en-US" }, store))
+      .toEqual({ language: "en", text: english.languageCurrent.replace("{preference}", "auto") + "\n" + english.languageHelp });
+  }
+  // Observe collaborator calls without substituting storage. The same recipient
+  // in a group cannot open the store or overwrite either private preference.
+  const groupStore = vi.fn(async () => reopened);
+  expect(await botControlResponse({ control: { action: "language", value: "es" }, recipient,
+    privateOnly: true, platformLocale: "en-US" }, groupStore)).toEqual({ language: "en", text: english.languagePrivate });
+  expect(groupStore).not.toHaveBeenCalled();
+  expect(await botControlResponse({ control: { action: "help", value: "vi" }, recipient }, store))
+    .toEqual({ language: "vi", text: "" });
+  expect(readFileSync(f.file).equals(afterSave)).toBe(true);
+  expect(retained()).toEqual(before); expect(readFileSync(f.manifestPath)).toEqual(manifestBefore);
+  // Genuine runtime-mode drift must refuse a later save, never acknowledge it
+  // from cached preferences or replace the native storage authority.
+  vi.stubEnv("KERYX_FORCE_OFFLINE", "1");
+  expect(await botControlResponse({ control: { action: "language", value: "es" }, recipient,
+    platformLocale: "en-US" }, store)).toEqual({ language: "en", text: english.languageUnavailable + "\n" + english.languageHelp });
+  expect(() => f.api.assertEnrolledSqliteAdapter(reopened)).toThrow();
+  expect(readFileSync(f.file).equals(afterSave)).toBe(true);
+  expect(retained()).toEqual(before); expect(readFileSync(f.manifestPath)).toEqual(manifestBefore);
+}, 20_000);

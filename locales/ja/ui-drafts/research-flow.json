@@ -1,0 +1,164 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "locales/en/research-flow.ts",
+  "sourceSha256": "08624b2d69b1e55478bca2ec23697acc8155b21698c9019762c07581a9487014",
+  "entries": {
+    "researchTour.open": {
+      "source": "How it works",
+      "text": "使い方"
+    },
+    "researchTour.label": {
+      "source": "How Keryx works",
+      "text": "Keryxの使い方"
+    },
+    "researchTour.questionTitle": {
+      "source": "Ask a question",
+      "text": "質問する"
+    },
+    "researchTour.questionBody": {
+      "source": "Enter the research question you want answered. You can inspect decisions as the answer streams.",
+      "text": "答えを知りたい調査の質問を入力してください。回答の生成中に判断の過程を確認できます。"
+    },
+    "researchTour.startTitle": {
+      "source": "Start research",
+      "text": "調査を開始"
+    },
+    "researchTour.closeLabel": {
+      "source": "Close tour",
+      "text": "ガイドを閉じる"
+    },
+    "researchTour.close": {
+      "source": "Close",
+      "text": "閉じる"
+    },
+    "researchTour.back": {
+      "source": "Back",
+      "text": "戻る"
+    },
+    "researchTour.done": {
+      "source": "Done",
+      "text": "完了"
+    },
+    "researchTour.next": {
+      "source": "Next",
+      "text": "次へ"
+    },
+    "researchTour.step": {
+      "source": "Step {number} of {total}",
+      "text": "全{total}ステップ中の{number}番目"
+    },
+    "decisionLog.jumpToLatest": {
+      "source": "Jump to latest",
+      "text": "最新のステップへ"
+    },
+    "decisionLog.followingLatest": {
+      "source": "Following latest steps",
+      "text": "最新のステップを追跡中"
+    },
+    "decisionLog.readingEarlier": {
+      "source": "Reading earlier steps",
+      "text": "以前のステップを閲覧中"
+    },
+    "decisionLog.scrollHint": {
+      "source": "Scroll inside the log to read earlier steps. Jump to latest to follow new steps.",
+      "text": "ログ内をスクロールすると以前のステップを読めます。新しいステップを追うには、最新のステップへ移動してください。"
+    },
+    "decisionLog.title": {
+      "source": "The decision",
+      "text": "判断"
+    },
+    "decisionLog.label": {
+      "source": "Decision log",
+      "text": "判断ログ"
+    },
+    "researchChat.label": {
+      "source": "Research conversation",
+      "text": "調査の会話"
+    },
+    "researchChat.kicker": {
+      "source": "Research with Keryx",
+      "text": "Keryx で調査"
+    },
+    "researchChat.title": {
+      "source": "Ask Keryx",
+      "text": "Keryxに質問"
+    },
+    "researchChat.introduction": {
+      "source": "Get a cited answer. Inspect source decisions.",
+      "text": "引用付きの回答を得られます。情報源に関する判断を確認できます。"
+    },
+    "researchChat.turnsLabel": {
+      "source": "Conversation turns",
+      "text": "会話のやり取り"
+    },
+    "researchChat.followUpContext": {
+      "source": "Follow-ups use the previous question only, not its answer or the full chat. Include the details you want researched.",
+      "text": "追加の質問には直前の質問だけが使われます。その回答や会話全体は使われません。調査したい詳細を質問に含めてください。"
+    },
+    "researchChat.newResearch": {
+      "source": "New research",
+      "text": "新しい調査"
+    },
+    "researchChat.stopResearch": {
+      "source": "Stop research",
+      "text": "調査を停止"
+    },
+    "researchChat.toolsLabel": {
+      "source": "Research tools",
+      "text": "調査ツール"
+    },
+    "researchChat.savedReports": {
+      "source": "My saved reports",
+      "text": "保存したレポート"
+    },
+    "researchTurn.inProgress": {
+      "source": "Keryx · Research in progress",
+      "text": "Keryx · 調査中"
+    },
+    "researchTurn.findingSources": {
+      "source": "Finding sources worth reading…",
+      "text": "読む価値のある情報源を検索中…"
+    },
+    "decisionLog.deciding": {
+      "source": "deciding",
+      "text": "判断中"
+    },
+    "decisionLog.connecting": {
+      "source": "Waiting for research updates…",
+      "text": "調査の更新を待っています…"
+    },
+    "decisionLog.newSteps.one": {
+      "source": "{count} new step",
+      "text": "新しい手順 {count} 件"
+    },
+    "decisionLog.newSteps.other": {
+      "source": "{count} new steps",
+      "text": "新しい手順 {count} 件"
+    },
+    "decisionLog.steps.one": {
+      "source": "{count} steps",
+      "text": "手順 {count} 件"
+    },
+    "decisionLog.steps.other": {
+      "source": "{count} steps",
+      "text": "手順 {count} 件"
+    },
+    "followUp.title": {
+      "source": "Ask a follow-up",
+      "text": "追加の質問をする"
+    },
+    "followUp.questionLabel": {
+      "source": "Your follow-up question",
+      "text": "追加の質問"
+    },
+    "followUp.placeholder": {
+      "source": "How does that compare to…?",
+      "text": "それは…と比べてどうですか？"
+    },
+    "followUp.submit": {
+      "source": "Dispatch follow-up",
+      "text": "追加の質問を送信"
+    }
+  }
+}

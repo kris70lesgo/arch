@@ -1,0 +1,193 @@
+"use client";
+
+/**
+ * §III · The settlement — fills in real time as `settle` steps stream. A
+ * weighted split bar, a ledger of creator payouts (amount + Circle settlement ID / simulated),
+ * a Bodoni green total. When the herald has paid in full, the wax "PAID" stamp
+ * slams down over the receipt. Settlement IDs are Circle Gateway UUIDs (batched on-chain on Arc),
+ * not per-tx EVM hashes — the verifiable on-chain link is the settlement wallet, in the footer.
+ */
+
+
+
+
+
+import { Check, CircleX, Clock3 } from "lucide-react";
+import type { PaymentRecord } from "@/lib/types";
+import { isCreatorPayment } from "@/lib/payments/payment-kind";
+import {
+  paymentCountsAsSpent,
+  paymentSettlementStatus,
+} from "@/lib/payments/payment-state";
+import type { StreamMode } from "@/lib/hooks/use-ask-stream";
+import { fmtUsdc, shortAddr } from "./phase-style";
+import { SectionHeading } from "./banknote";
+import { PaidStamp } from "./paid-stamp";
+import { GatewayContractReferences } from "./gateway-contract-references";
+import { recordedArcLabel } from "@/lib/arc-network-display";
+import { useUiMessages } from "@/lib/i18n/ui-copy";
+
+
+
+interface CreatorsPaidPanelProps {
+  payments: PaymentRecord[];
+  mode: StreamMode | null;
+  streaming: boolean;
+  historicalNetwork?: string;
+}
+
+export function CreatorsPaidPanel({
+  payments,
+  mode,
+  streaming,
+  historicalNetwork,
+}: CreatorsPaidPanelProps) {
+  const message = useUiMessages();
+  const operatingPayments = payments.filter(payment => payment.kind === "operating-fee");
+  payments = payments.filter(isCreatorPayment);
+  const total = payments
+    .filter(paymentCountsAsSpent)
+    .reduce((sum, payment) => sum + (payment.amountUsdc ?? 0), 0);
+  const hasPayments = payments.length > 0;
+  const pendingCount = payments.filter(
+    (payment) => paymentSettlementStatus(payment) === "pending",
+  ).length;
+  const failedCount = payments.filter(
+    (payment) => paymentSettlementStatus(payment) === "failed",
+  ).length;
+  const settledPayments = payments.filter(payment => paymentSettlementStatus(payment) === "settled");
+  const paidInFull =
+    hasPayments &&
+    !streaming &&
+    payments.every((payment) => paymentSettlementStatus(payment) === "settled");
+  const pctOf = (p: PaymentRecord) =>
+    typeof p.weight === "number"
+      ? Math.round(p.weight * 100)
+      : total > 0
+        ? Math.round(((p.amountUsdc ?? 0) / total) * 100)
+        : 0;
+
+  return (
+    <div className="relative flex h-full min-w-0 flex-col">
+      <SectionHeading numeral="III" label={message("creatorPayments.title")} right={historicalNetwork ? message("creatorPayments.recordedNetwork", { network: recordedArcLabel(historicalNetwork) }) : message("creatorPayments.currentNetwork")} />
+      {operatingPayments.length > 0 && <aside aria-label={message("creatorPayments.operatingFees")} className="mb-3 border border-line bg-paper-2 px-4 py-3">
+        <p className="font-mono text-xs text-ink">{message("creatorPayments.operatingFees")}</p>
+        <p className="mt-1 text-xs leading-relaxed text-ink-2">{message("creatorPayments.operatingFeeNotice")}</p>
+        {operatingPayments.map((payment, index) => <p key={payment.id ?? index} className="mt-2 break-all font-mono text-xs text-ink-2">
+          {payment.txHash ? message("creatorPayments.operatingPaymentWithReference", { amount: fmtUsdc(payment.amountUsdc), state: paymentSettlementStatus(payment), reference: payment.txHash }) : message("creatorPayments.operatingPayment", { amount: fmtUsdc(payment.amountUsdc), state: paymentSettlementStatus(payment) })}
+        </p>)}
+      </aside>}
+      <div className="relative flex flex-1 flex-col overflow-hidden border border-ink bg-paper">
+        {hasPayments && (
+          <div className="flex h-7 border-b border-ink">
+            {payments.map((p, i) => (
+              <div
+                key={p.id ?? `seg-${i}`}
+                className="flex items-center justify-center overflow-hidden border-r border-paper font-mono text-[10px] text-cream last:border-r-0"
+                style={{
+                  flex: Math.max(p.amountUsdc ?? 0.0001, 0.0001),
+                  background:
+                    paymentSettlementStatus(p) === "failed"
+                      ? "#b91c1c"
+                      : paymentSettlementStatus(p) === "pending"
+                      ? "#b45309"
+                      : i % 2
+                        ? "var(--paid-2)"
+                        : "var(--paid)",
+                }}
+              >
+                {pctOf(p)}%
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto px-4 py-2">
+          {!hasPayments && (
+            <p className="px-2 py-10 text-center font-mono text-[12px] uppercase tracking-[0.08em] text-ink-3">
+              {streaming
+                ? message("creatorPayments.waiting")
+                : message("creatorPayments.empty")}
+            </p>
+          )}
+          {payments.map((p, i) => (
+            <div
+              key={p.id ?? `${p.payee}-${i}`}
+              className="flex items-baseline gap-3 border-b border-line py-3 animate-in fade-in slide-in-from-right-2 duration-300"
+            >
+              <span className="w-4 shrink-0 font-display text-[13px] font-semibold text-paid">
+                {i + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="break-all font-serif text-[15px] text-ink sm:truncate sm:break-normal" title={p.sourceName} data-payment-identity>
+                  {p.sourceName}
+                </p>
+                <p className="font-mono text-[11px] text-ink-3">
+                  {paymentSettlementStatus(p) === "settled" && p.txHash ? (
+                    <span
+                      className="inline-flex items-center gap-1 text-paid"
+                      title={message("creatorPayments.settlementTitle", { reference: p.txHash })}
+                    >
+                      <Check className="h-2.5 w-2.5" />
+                      {message("creatorPayments.batched")}
+                    </span>
+                  ) : paymentSettlementStatus(p) === "settled" ? (
+                    <span>{message("creatorPayments.settledWithoutReference", { payee: shortAddr(p.payee) })}</span>
+                  ) : paymentSettlementStatus(p) === "failed" ? (
+                    <span className="inline-flex items-center gap-1 text-red-700">
+                      <CircleX className="h-2.5 w-2.5" />
+                      {message("creatorPayments.failed")}
+                    </span>
+                  ) : paymentSettlementStatus(p) === "pending" ? (
+                    <span className="inline-flex items-center gap-1 text-amber-700">
+                      <Clock3 className="h-2.5 w-2.5" />
+                      {message("creatorPayments.pending")}
+                    </span>
+                  ) : (
+                    <span>{message("creatorPayments.simulated", { payee: shortAddr(p.payee) })}</span>
+                  )}
+                </p>
+              </div>
+              <span className="shrink-0 font-mono text-[11px] text-ink-3">
+                {pctOf(p)}%
+              </span>
+              <span className="w-[68px] shrink-0 text-right font-mono text-sm tabular-nums text-paid">
+                ${fmtUsdc(p.amountUsdc)}
+                {paymentSettlementStatus(p) === "pending"
+                  ? " ?"
+                  : paymentSettlementStatus(p) === "failed"
+                    ? " ×"
+                    : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {hasPayments && (
+          <div className="flex items-center justify-between gap-4 border-t border-ink px-5 py-3.5">
+            <span className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-3">
+              {pendingCount > 0 ? (
+                message(pendingCount === 1 ? "creatorPayments.pendingTotal.one" : "creatorPayments.pendingTotal.other", { count: pendingCount })
+              ) : failedCount > 0 ? (
+                message(failedCount === 1 ? "creatorPayments.failedTotal.one" : "creatorPayments.failedTotal.other", { count: failedCount })
+              ) : settledPayments.length > 0 ? (
+                <GatewayContractReferences records={settledPayments} className="mr-3 hover:text-paid hover:underline"/>
+              ) : mode === "offline" ? (
+                message("creatorPayments.offline")
+              ) : (
+                message("creatorPayments.recordedStates")
+              )}
+            </span>
+            <span className="letterpress font-display text-[30px] font-bold leading-none tracking-tight tabular-nums text-paid">
+              ${fmtUsdc(total)}
+            </span>
+          </div>
+        )}
+
+        {paidInFull && (
+          <PaidStamp className="absolute -bottom-5 -right-3 z-10 h-28 w-28" />
+        )}
+      </div>
+    </div>
+  );
+}

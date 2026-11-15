@@ -1,0 +1,56 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "locales/en/literature-search.ts",
+  "sourceSha256": "fdebf7104a5b7734ab952847616d89c58b13620f83909c1e3791638ce01d43f5",
+  "entries": {
+    "label": {
+      "source": "Search saved papers and notes",
+      "text": "Tìm tài liệu và ghi chú đã lưu"
+    },
+    "guidance": {
+      "source": "Search titles, authors, DOI/arXiv IDs, years, venues, links or saved notes. All words must match. Latin accents are optional. Search stays in this tab.",
+      "text": "Tìm theo tiêu đề, tác giả, mã DOI/arXiv, năm, nơi công bố, liên kết hoặc ghi chú đã lưu. Mọi từ đều phải khớp. Có thể bỏ dấu chữ Latin. Từ khóa chỉ ở trong tab này."
+    },
+    "clear": {
+      "source": "Clear search",
+      "text": "Xóa từ khóa"
+    },
+    "scope": {
+      "source": "Reference downloads contain only papers shown by both search and screening. CSV and JSON backup contain all saved papers. Notes stay out of reference downloads.",
+      "text": "Tệp tài liệu tham khảo chỉ chứa các bài đang hiển thị theo cả tìm kiếm và sàng lọc. CSV và bản sao lưu JSON chứa toàn bộ bài đã lưu. Ghi chú không có trong tệp tài liệu tham khảo."
+    },
+    "empty": {
+      "source": "No saved papers match this search and screening filter.",
+      "text": "Không có tài liệu đã lưu nào khớp từ khóa và bộ lọc sàng lọc này."
+    },
+    "outsideSearch": {
+      "source": "Outside the current search; still selected.",
+      "text": "Ngoài kết quả tìm kiếm hiện tại; vẫn được chọn."
+    },
+    "sortLabel": {
+      "source": "Sort saved papers",
+      "text": "Sắp xếp bài báo đã lưu"
+    },
+    "sortNotice": {
+      "source": "Sorting uses saved metadata, not new source observations. Missing years appear last. Visible reference downloads follow this order; CSV, JSON backup and your comparison selection keep their original order. Sort choices stay in this tab.",
+      "text": "Việc sắp xếp dùng siêu dữ liệu đã lưu, không phải quan sát nguồn mới. Bài thiếu năm được đặt cuối. Tải tài liệu tham khảo đang hiển thị sẽ theo thứ tự này; CSV, bản sao lưu JSON và lựa chọn so sánh giữ thứ tự gốc. Lựa chọn sắp xếp chỉ ở trong thẻ này."
+    },
+    "sorts.recent": {
+      "source": "Recently saved",
+      "text": "Mới lưu gần đây"
+    },
+    "sorts.saved": {
+      "source": "Saved order",
+      "text": "Thứ tự đã lưu"
+    },
+    "sorts.title": {
+      "source": "Title",
+      "text": "Tiêu đề"
+    },
+    "sorts.year": {
+      "source": "Recorded publication year — newest first",
+      "text": "Năm xuất bản đã ghi nhận — mới nhất trước"
+    }
+  }
+}

@@ -1,0 +1,78 @@
+import { constants } from "node:fs";
+import { ARC_MAINNET_PROFILE, ARC_TESTNET_PROFILE, type ArcNetworkProfile } from "../arc-network-profile";
+import { mkdir, open } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import type { EconomicsSnapshot } from "./testnet-economics";
+// Reuse the filesystem-only Linux operator boundary; this opens no relay or signer.
+import { inspectWithdrawalRelayDirectory } from "../gateway/withdrawal-relay-files";
+
+function legacyPrivateEconomicsReport(s: EconomicsSnapshot) {
+  return {
+    schema: "keryx-private-economics-v2", visibility: "operator-only", generatedAt: s.generatedAt,
+    scope: "Legacy testnet query_runs, payment_events and a2a_orders aggregates. Not complete business accounting or an atomic cross-table snapshot.",
+    accounting: { status: "unreconciled", providerInvoiceUsd: null, fixedOperatingCostUsd: null, realizedProfitUsd: null },
+    coverage: { sampledRuns: s.sampledRuns, pricedRuns: s.pricedRuns, unpricedRuns: s.unpricedRuns,
+      providerCalls: s.providerCalls, inputTokens: s.inputTokens, cachedInputTokens: s.cachedInputTokens,
+      outputTokens: s.outputTokens, unknownCacheCalls: s.unknownCacheCalls,
+      unpricedModels: [...s.unpricedModels], pricingPolicyIds: [...s.pricingPolicyIds] },
+    stageUsage: structuredClone(s.stageUsage ?? []),
+    estimates: { costAndMarginScope: s.costAndMarginScope, totalLlmCostUpperBoundUsd: s.totalLlmCostUpperBoundUsd,
+      llmCostUsdBounds: s.estimatedLlmCostUsdBounds ? { ...s.estimatedLlmCostUsdBounds } : null,
+      shadowServiceFeesAllSampledUsdc: s.shadowServiceFeesAllSampledUsdc,
+      shadowServiceFeesPricedRunsUsdc: s.shadowServiceFeesPricedRunsUsdc,
+      shadowGrossMarginUsdBounds: s.shadowGrossMarginUsdBounds ? { ...s.shadowGrossMarginUsdBounds } : null,
+      policy: { id: s.policy.id, capturedAt: s.policy.capturedAt, costBasis: s.policy.costBasis,
+        pricingSource: s.policy.pricingSource, infraAllowanceUsdPerRun: s.policy.infraAllowanceUsdPerRun,
+        serviceFeeUsdc: { quick: s.policy.serviceFeeUsdc.quick, deep: s.policy.serviceFeeUsdc.deep } } },
+    testnetLedger: { settledInboundUsdc: s.settledInboundRevenueUsdc, settledA2aServiceFeesUsdc: s.settledA2aV2ServiceFeesUsdc,
+      settledOperatingFeeUsdc: s.settledOperatingFeeUsdc ?? null, pendingOperatingFeeUsdc: s.pendingOperatingFeeUsdc ?? null,
+      prepaidCreatorCapsUsdc: s.prepaidA2aCreatorCapsUsdc, prepaidCreatorSpendUsdc: s.prepaidA2aCreatorSpendUsdc,
+      completedUnusedReserveUsdc: s.completedA2aUnusedReserveUsdc, browserCreatorSpendUsdc: s.browserCreatorSpendUsdc,
+      treasuryCreatorSubsidyUsdc: s.treasuryCreatorSubsidyUsdc, unknownFundingCreatorSpendUsdc: s.unknownFundingCreatorSpendUsdc,
+      pendingCreatorSpendUsdc: s.pendingCreatorSpendUsdc },
+    limitations: "Partial usage estimates and testnet ledger observations are not invoices, mainnet revenue, or realized profit. Missing costs remain unknown.",
+  };
+}
+
+/** Caller supplies its trusted selected profile; a snapshot cannot relabel itself. */
+export function privateEconomicsReport(s: EconomicsSnapshot, profile: ArcNetworkProfile = ARC_TESTNET_PROFILE) {
+  if (profile !== ARC_TESTNET_PROFILE && profile !== ARC_MAINNET_PROFILE ||
+    (profile.testnet ? s.label !== "testnet-observatory" || s.network !== undefined && s.network !== profile.networkId
+      : s.label !== "mainnet-observatory" || s.network !== profile.networkId))
+    throw new Error("Economics snapshot network refused");
+  const historical = legacyPrivateEconomicsReport(s);
+  if (profile.testnet) return historical;
+  const { testnetLedger, ...common } = historical;
+  return { ...common, schema: "keryx-private-economics-v3", network: profile.networkId,
+    scope: "Fresh identity-bound mainnet query_runs, payment_events and a2a_orders aggregates. Not complete business accounting or an atomic cross-table snapshot.",
+    ledger: testnetLedger,
+    limitations: "Partial usage estimates and recorded mainnet settlement observations are not reconciled invoices or realized profit. Missing costs remain unknown." };
+}
+
+/** Explicit new directory under an existing owner-only Linux parent. No stdout,
+ * overwrites or cleanup of retained partial output on failure. */
+export async function writePrivateEconomicsReport(directory: string, load: () => Promise<EconomicsSnapshot>,
+  profile: ArcNetworkProfile = ARC_TESTNET_PROFILE) {
+  try {
+    if (!isAbsolute(directory) || resolve(directory) !== directory) throw new Error();
+    const parent = await inspectWithdrawalRelayDirectory(dirname(directory));
+    await mkdir(directory, { mode: 0o700 });
+    await inspectWithdrawalRelayDirectory(directory);
+    const bytes = Buffer.from(JSON.stringify(privateEconomicsReport(await load(), profile), null, 2));
+    if (bytes.length > 65_536) throw new Error();
+    const file = await open(join(directory, "economics.json"), constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    try {
+      await file.writeFile(bytes); await file.sync();
+      const stat = await file.stat(), saved = Buffer.alloc(bytes.length);
+      const read = await file.read(saved, 0, saved.length, 0);
+      if (!stat.isFile() || stat.uid !== process.getuid!() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0
+        || stat.size !== bytes.length || read.bytesRead !== bytes.length || !saved.equals(bytes)) throw new Error();
+    } finally { await file.close(); }
+    await inspectWithdrawalRelayDirectory(directory);
+    for (const path of [directory, parent]) {
+      const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      try { await handle.sync(); } finally { await handle.close(); }
+    }
+    return { state: "saved" as const };
+  } catch { throw new Error("Private economics export unavailable. Retain existing output; use a new directory under a protected Linux parent. No private details emitted."); }
+}

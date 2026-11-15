@@ -1,0 +1,568 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "locales/en/reports.ts",
+  "sourceSha256": "c382523e9b0216952efe118a5e28d1ba77c298f0c6bb7c38fe28d5b8e1ca2b5b",
+  "entries": {
+    "reportEvidence.title": {
+      "source": "Recorded evidence",
+      "text": "दर्ज किए गए साक्ष्य"
+    },
+    "reportEvidence.recorded": {
+      "source": "Targets with inspectable excerpts: {count}/{total}.",
+      "text": "जिन शोध विषयों के अंश जाँचे जा सकते हैं: {count}/{total}।"
+    },
+    "reportEvidence.unavailable": {
+      "source": "This report has no stored excerpt ledger; target support cannot be inspected here.",
+      "text": "इस रिपोर्ट में अंशों का कोई सहेजा हुआ रिकॉर्ड नहीं है; यहाँ शोध विषयों के समर्थन की जाँच नहीं की जा सकती।"
+    },
+    "reportEvidence.notice": {
+      "source": "Excerpt presence and estimated support do not establish a complete or factually correct answer.",
+      "text": "अंशों की मौजूदगी और समर्थन का अनुमान यह साबित नहीं करते कि उत्तर पूरा या तथ्यात्मक रूप से सही है।"
+    },
+    "reportEvidence.inspectCount": {
+      "source": "Targets with missing excerpts or a low recorded support estimate: {count}.",
+      "text": "जिन शोध विषयों के अंश नहीं हैं या जिनके दर्ज समर्थन का अनुमान कम है: {count}।"
+    },
+    "reportEvidence.inspect": {
+      "source": "Inspect targets and prepare a follow-up",
+      "text": "शोध विषय जाँचें और आगे का प्रश्न तैयार करें"
+    },
+    "reportEvidence.targetUnavailable": {
+      "source": "Excerpt ledger unavailable",
+      "text": "अंशों का रिकॉर्ड उपलब्ध नहीं है"
+    },
+    "reportEvidence.missing": {
+      "source": "No qualifying excerpt recorded",
+      "text": "मानदंडों को पूरा करने वाला कोई अंश दर्ज नहीं है"
+    },
+    "reportEvidence.excerpts": {
+      "source": "Inspectable excerpts: {count}",
+      "text": "जाँचने योग्य अंश: {count}"
+    },
+    "reportEvidence.prepare": {
+      "source": "Prepare follow-up",
+      "text": "आगे का प्रश्न तैयार करें"
+    },
+    "reportEvidence.prepareNotice": {
+      "source": "Opens an editable question. Review the question and budget before starting a new research run, which may incur charges.",
+      "text": "एक ऐसा प्रश्न खोलता है जिसे आप संपादित कर सकते हैं। नया शोध शुरू करने से पहले प्रश्न और बजट की समीक्षा करें; इसमें शुल्क लग सकता है।"
+    },
+    "reportEvidence.draft": {
+      "source": "Investigate this research target: “{target}”. Find source excerpts, explain what they support and identify what remains unknown. Original question: “{question}”.",
+      "text": "इस शोध विषय की पड़ताल करें: “{target}”। स्रोतों के अंश खोजें, बताएँ कि वे किस बात का समर्थन करते हैं और पहचानें कि क्या अब भी अज्ञात है। मूल प्रश्न: “{question}”।"
+    },
+    "reportEvidence.selection": {
+      "source": "Selected sources: {selected}/{eligible} proposals",
+      "text": "चुने गए स्रोत: {selected}/{eligible} प्रस्ताव"
+    },
+    "reportEvidence.selectionNotice": {
+      "source": "Source selection is a plan. Inspect the recorded excerpts for actual evidence; selection counts do not measure answer support.",
+      "text": "स्रोतों का चयन एक योजना है। वास्तविक साक्ष्य के लिए दर्ज किए गए अंश जाँचें; चुने गए स्रोतों की संख्या उत्तर के समर्थन को नहीं मापती।"
+    },
+    "reportReading.estimated": {
+      "source": "{coverage}% estimated",
+      "text": "{coverage}% अनुमानित"
+    },
+    "reportActions.copy": {
+      "source": "Copy report",
+      "text": "रिपोर्ट कॉपी करें"
+    },
+    "reportActions.download": {
+      "source": "Download report",
+      "text": "रिपोर्ट डाउनलोड करें"
+    },
+    "reportActions.openSaved": {
+      "source": "Open saved report",
+      "text": "सहेजी गई रिपोर्ट खोलें"
+    },
+    "reportActions.copyUnavailable": {
+      "source": "Copy unavailable. Download the report instead.",
+      "text": "कॉपी नहीं हो सकी। इसके बजाय रिपोर्ट डाउनलोड करें।"
+    },
+    "reportActions.downloadUnavailable": {
+      "source": "Download unavailable. Open the saved report instead.",
+      "text": "डाउनलोड नहीं हो सका। इसके बजाय सहेजी गई रिपोर्ट खोलें।"
+    },
+    "citationExport.title": {
+      "source": "Reference export",
+      "text": "संदर्भ निर्यात"
+    },
+    "citationExport.bibtex": {
+      "source": "Download BibTeX",
+      "text": "BibTeX डाउनलोड करें"
+    },
+    "citationExport.cslJson": {
+      "source": "Download CSL-JSON",
+      "text": "CSL-JSON डाउनलोड करें"
+    },
+    "citationExport.ris": {
+      "source": "Download RIS (Zotero)",
+      "text": "RIS डाउनलोड करें (Zotero)"
+    },
+    "citationExport.references.one": {
+      "source": "{count} article references. Recorded titles, links and dates; observed scholarly records also include supplied authors, DOI and journal metadata with read limits. Review metadata before using in a paper. Import RIS into Zotero with File → Import.",
+      "text": "लेख संदर्भ: {count}। दर्ज शीर्षक, लिंक और तिथियाँ शामिल हैं; देखे गए शैक्षणिक रिकॉर्ड में दिए गए लेखक, DOI और पत्रिका के मेटाडेटा के साथ पढ़ने की सीमाएँ भी शामिल हैं। शोधपत्र में उपयोग करने से पहले मेटाडेटा की समीक्षा करें। Zotero में File → Import से RIS आयात करें।"
+    },
+    "citationExport.omitted.one": {
+      "source": "{count} citations omitted because an article title or usable article link is unavailable.",
+      "text": "लेख का शीर्षक या उपयोग योग्य लेख लिंक न होने के कारण छोड़े गए उद्धरण: {count}।"
+    },
+    "citationExport.references.other": {
+      "source": "{count} article references. Recorded titles, links and dates; observed scholarly records also include supplied authors, DOI and journal metadata with read limits. Review metadata before using in a paper. Import RIS into Zotero with File → Import.",
+      "text": "लेख संदर्भ: {count}। दर्ज शीर्षक, लिंक और तिथियाँ शामिल हैं; देखे गए शैक्षणिक रिकॉर्ड में दिए गए लेखक, DOI और पत्रिका के मेटाडेटा के साथ पढ़ने की सीमाएँ भी शामिल हैं। शोधपत्र में उपयोग करने से पहले मेटाडेटा की समीक्षा करें। Zotero में File → Import से RIS आयात करें।"
+    },
+    "citationExport.omitted.other": {
+      "source": "{count} citations omitted because an article title or usable article link is unavailable.",
+      "text": "लेख का शीर्षक या उपयोग योग्य लेख लिंक न होने के कारण छोड़े गए उद्धरण: {count}।"
+    },
+    "bibliographyExport.label": {
+      "source": "Bibliography exports",
+      "text": "ग्रंथसूची निर्यात"
+    },
+    "bibliographyExport.provenance": {
+      "source": "Original metadata and field provenance",
+      "text": "मूल मेटाडेटा और फ़ील्ड का स्रोत"
+    },
+    "bibliographyExport.bibtex": {
+      "source": "Download BibTeX",
+      "text": "BibTeX डाउनलोड करें"
+    },
+    "bibliographyExport.cslJson": {
+      "source": "Download CSL-JSON",
+      "text": "CSL-JSON डाउनलोड करें"
+    },
+    "bibliographyExport.ris": {
+      "source": "Download RIS",
+      "text": "RIS डाउनलोड करें"
+    },
+    "reportSourceLens.unavailable": {
+      "source": "Source inspection unavailable: this report has no stored excerpt ledger.",
+      "text": "स्रोत की जाँच उपलब्ध नहीं है: इस रिपोर्ट में अंशों का सहेजा गया रिकॉर्ड नहीं है।"
+    },
+    "reportSourceLens.empty": {
+      "source": "No inspectable non-demo excerpts are recorded for source inspection.",
+      "text": "स्रोत की जाँच के लिए डेमो के अलावा कोई जाँच योग्य अंश दर्ज नहीं है।"
+    },
+    "reportSourceLens.title": {
+      "source": "What if a source were missing?",
+      "text": "अगर कोई स्रोत न हो तो?"
+    },
+    "reportSourceLens.localView": {
+      "source": "Local excerpt view",
+      "text": "अंशों का स्थानीय दृश्य"
+    },
+    "reportSourceLens.originalExcerpts": {
+      "source": "Original excerpts",
+      "text": "मूल अंश"
+    },
+    "reportSourceLens.viewExcerpts": {
+      "source": "Excerpts in this view",
+      "text": "इस दृश्य के अंश"
+    },
+    "reportSourceLens.intro": {
+      "source": "Temporarily leave out one source to see which research targets retain excerpts in this report.",
+      "text": "किसी स्रोत को अस्थायी रूप से हटाकर देखें कि इस रिपोर्ट में किन शोध लक्ष्यों के अंश बने रहते हैं।"
+    },
+    "reportSourceLens.select": {
+      "source": "Inspect without",
+      "text": "इसके बिना जाँचें"
+    },
+    "reportSourceLens.keepAll": {
+      "source": "Keep every source",
+      "text": "सभी स्रोत रखें"
+    },
+    "reportSourceLens.restore": {
+      "source": "Restore source",
+      "text": "स्रोत वापस लाएँ"
+    },
+    "reportSourceLens.original": {
+      "source": "Showing the original excerpt ledger.",
+      "text": "अंशों का मूल रिकॉर्ड दिखाया जा रहा है।"
+    },
+    "reportSourceLens.missing": {
+      "source": "No inspectable excerpts in the original report.",
+      "text": "मूल रिपोर्ट में जाँच योग्य अंश नहीं हैं।"
+    },
+    "reportSourceLens.lost": {
+      "source": "No excerpts remain in this view.",
+      "text": "इस दृश्य में कोई अंश नहीं बचा है।"
+    },
+    "reportSourceLens.inspect": {
+      "source": "Inspect remaining excerpts",
+      "text": "शेष अंशों की जाँच करें"
+    },
+    "reportSourceLens.remaining.one": {
+      "source": "{count} recorded excerpt remains.",
+      "text": "{count} दर्ज अंश बचा है।"
+    },
+    "reportSourceLens.remaining.other": {
+      "source": "{count} recorded excerpts remain.",
+      "text": "{count} दर्ज अंश बचे हैं।"
+    },
+    "reportSourceLens.omitted.one": {
+      "source": "{count} research target loses its last recorded excerpt without {source}.",
+      "text": "{source} के बिना {count} शोध लक्ष्य का अंतिम दर्ज अंश हट जाता है।"
+    },
+    "reportSourceLens.omitted.other": {
+      "source": "{count} research targets lose their last recorded excerpt without {source}.",
+      "text": "{source} के बिना {count} शोध लक्ष्यों के अंतिम दर्ज अंश हट जाते हैं।"
+    },
+    "reportSourceLens.alreadyMissing.one": {
+      "source": " {count} target already had no inspectable excerpts.",
+      "text": " {count} लक्ष्य का पहले भी कोई जाँच योग्य अंश नहीं था।"
+    },
+    "reportSourceLens.alreadyMissing.other": {
+      "source": " {count} targets already had no inspectable excerpts.",
+      "text": " {count} लक्ष्यों के पहले भी कोई जाँच योग्य अंश नहीं थे।"
+    },
+    "reportSourceLens.version": {
+      "source": "{marker} · {source} · version {version}",
+      "text": "{marker} · {source} · संस्करण {version}"
+    },
+    "reportSourceLens.versionTitle": {
+      "source": "{marker} · {source} · {title} · version {version}",
+      "text": "{marker} · {source} · {title} · संस्करण {version}"
+    },
+    "literatureWorkspace.staleFocusError": {
+      "source": "Your review focus changed in another tab. Load the saved focus before saving again.",
+      "text": "दूसरे टैब में समीक्षा का विषय बदल गया है। फिर से सहेजने से पहले सहेजा गया विषय लोड करें।"
+    },
+    "literatureWorkspace.focusSaved": {
+      "source": "Review focus saved on this browser.",
+      "text": "समीक्षा का विषय इस ब्राउज़र में सहेजा गया।"
+    },
+    "literatureWorkspace.titleLabel": {
+      "source": "Review title",
+      "text": "समीक्षा का शीर्षक"
+    },
+    "literatureWorkspace.titlePlaceholder": {
+      "source": "My literature review",
+      "text": "मेरी साहित्य समीक्षा"
+    },
+    "literatureWorkspace.questionLabel": {
+      "source": "Research question or inclusion criteria",
+      "text": "शोध का प्रश्न या शामिल करने के मानदंड"
+    },
+    "literatureWorkspace.staleFocus": {
+      "source": "The saved review focus changed in another tab or restore. Your unsaved draft is still here.",
+      "text": "दूसरे टैब में या बैकअप बहाल करने से सहेजा गया समीक्षा का विषय बदल गया है। आपका बिना सहेजा मसौदा अभी यहीं है।"
+    },
+    "literatureWorkspace.loadFocus": {
+      "source": "Load saved focus",
+      "text": "सहेजा गया विषय लोड करें"
+    },
+    "literatureWorkspace.saveFocus": {
+      "source": "Save review focus",
+      "text": "समीक्षा का विषय सहेजें"
+    },
+    "literatureWorkspace.stalePaperError": {
+      "source": "This paper changed in another tab. Load its saved screening before saving again.",
+      "text": "दूसरे टैब में यह शोधपत्र बदल गया है। फिर से सहेजने से पहले उसका सहेजा गया चयन लोड करें।"
+    },
+    "literatureWorkspace.screeningSaved": {
+      "source": "Screening and notes saved on this browser.",
+      "text": "चयन और नोट इस ब्राउज़र में सहेजे गए।"
+    },
+    "literatureWorkspace.screeningDecision": {
+      "source": "Your screening decision",
+      "text": "चयन पर आपका निर्णय"
+    },
+    "literatureWorkspace.notesLabel": {
+      "source": "Why keep or exclude this paper? What needs checking?",
+      "text": "इस शोधपत्र को क्यों रखें या हटाएँ? क्या जाँचना ज़रूरी है?"
+    },
+    "literatureWorkspace.staleScreening": {
+      "source": "Saved screening changed in another tab or restore. Your unsaved notes are still here.",
+      "text": "दूसरे टैब में या बैकअप बहाल करने से सहेजा गया चयन बदल गया है। आपके बिना सहेजे नोट अभी यहीं हैं।"
+    },
+    "literatureWorkspace.loadScreening": {
+      "source": "Load saved screening",
+      "text": "सहेजा गया चयन लोड करें"
+    },
+    "literatureWorkspace.notesNotice": {
+      "source": "These are your own notes. Saving them does not read the paper or verify its findings.",
+      "text": "ये आपके अपने नोट हैं। इन्हें सहेजने से शोधपत्र पढ़ा नहीं जाता और न ही उसके निष्कर्षों की पुष्टि होती है।"
+    },
+    "literatureWorkspace.saveScreening": {
+      "source": "Save screening and notes",
+      "text": "चयन और नोट सहेजें"
+    },
+    "literatureWorkspace.compare": {
+      "source": "Compare",
+      "text": "तुलना करें"
+    },
+    "literatureWorkspace.contributorsUnavailable": {
+      "source": "Contributors unavailable",
+      "text": "योगदानकर्ताओं की जानकारी उपलब्ध नहीं है"
+    },
+    "literatureWorkspace.open": {
+      "source": "Open paper record ↗",
+      "text": "शोधपत्र का रिकॉर्ड खोलें ↗"
+    },
+    "literatureWorkspace.notes": {
+      "source": "Your screening notes",
+      "text": "चयन पर आपके नोट"
+    },
+    "literatureWorkspace.editNotes": {
+      "source": "Edit screening and notes",
+      "text": "चयन और नोट बदलें"
+    },
+    "literatureWorkspace.removalDetails": {
+      "source": "Saved record and removal",
+      "text": "सहेजा गया रिकॉर्ड और उसे हटाना"
+    },
+    "literatureWorkspace.removeCancelled": {
+      "source": "Removal cancelled. Your paper is still saved.",
+      "text": "हटाना रद्द किया गया। आपका शोधपत्र अभी भी सहेजा हुआ है।"
+    },
+    "literatureWorkspace.removed": {
+      "source": "Paper removed from this browser.",
+      "text": "इस ब्राउज़र से शोधपत्र हटा दिया गया।"
+    },
+    "literatureWorkspace.remove": {
+      "source": "Remove saved paper",
+      "text": "सहेजा गया शोधपत्र हटाएँ"
+    },
+    "literatureWorkspace.loading": {
+      "source": "Loading your saved workspace…",
+      "text": "आपका सहेजा गया कार्यक्षेत्र लोड हो रहा है…"
+    },
+    "literatureWorkspace.focusTitle": {
+      "source": "Start with your review question",
+      "text": "अपनी समीक्षा के प्रश्न से शुरू करें"
+    },
+    "literatureWorkspace.focusExample": {
+      "source": "Keep a focus for screening. For example: which retrieval methods improve factual grounding, and under what evaluation conditions?",
+      "text": "चयन के लिए एक विषय तय रखें। जैसे: कौन-सी पुनर्प्राप्ति विधियाँ तथ्यों पर आधारित समर्थन बेहतर करती हैं और मूल्यांकन की किन परिस्थितियों में?"
+    },
+    "literatureWorkspace.papers": {
+      "source": "Your papers",
+      "text": "आपके शोधपत्र"
+    },
+    "literatureWorkspace.find": {
+      "source": "Find and save papers →",
+      "text": "शोधपत्र खोजें और सहेजें →"
+    },
+    "literatureWorkspace.filter": {
+      "source": "Show screening decisions",
+      "text": "चयन के निर्णय दिखाएँ"
+    },
+    "literatureWorkspace.filterAll": {
+      "source": "All saved papers",
+      "text": "सभी सहेजे गए शोधपत्र"
+    },
+    "literatureWorkspace.ris": {
+      "source": "Download shown references (RIS)",
+      "text": "दिखाए गए संदर्भ डाउनलोड करें (RIS)"
+    },
+    "literatureWorkspace.csl": {
+      "source": "Download shown references (CSL-JSON)",
+      "text": "दिखाए गए संदर्भ डाउनलोड करें (CSL-JSON)"
+    },
+    "literatureWorkspace.prepare": {
+      "source": "Prepare comparison →",
+      "text": "तुलना की तैयारी करें →"
+    },
+    "literatureWorkspace.selectTwo": {
+      "source": "Select two papers to compare",
+      "text": "तुलना के लिए दो शोधपत्र चुनें"
+    },
+    "literatureWorkspace.clearSelection": {
+      "source": "Clear comparison selection",
+      "text": "तुलना का चयन हटाएँ"
+    },
+    "literatureWorkspace.emptyTitle": {
+      "source": "Build a review you can return to.",
+      "text": "ऐसी समीक्षा बनाएँ जिसे बाद में जारी रख सकें।"
+    },
+    "literatureWorkspace.emptyFind": {
+      "source": "Find papers in the starter library or search repositories.",
+      "text": "शुरुआती लाइब्रेरी में शोधपत्र ढूँढें या रिपॉज़िटरी में खोजें।"
+    },
+    "literatureWorkspace.emptySave": {
+      "source": "Save an exact paper record, then record why it belongs in your review.",
+      "text": "शोधपत्र का सटीक रिकॉर्ड सहेजें, फिर लिखें कि वह आपकी समीक्षा में क्यों शामिल है।"
+    },
+    "literatureWorkspace.emptyCompare": {
+      "source": "Compare two papers or export the screening list to continue your work.",
+      "text": "काम जारी रखने के लिए दो शोधपत्रों की तुलना करें या चयन सूची निर्यात करें।"
+    },
+    "literatureWorkspace.browse": {
+      "source": "Browse research papers →",
+      "text": "शोधपत्र देखें →"
+    },
+    "literatureWorkspace.filterEmpty": {
+      "source": "No papers have this screening decision. Choose another filter to see your saved list.",
+      "text": "इस चयन निर्णय वाला कोई शोधपत्र नहीं है। अपनी सहेजी सूची देखने के लिए दूसरा फ़िल्टर चुनें।"
+    },
+    "literatureWorkspace.portable": {
+      "source": "Keep your work portable",
+      "text": "अपना काम साथ ले जाएँ"
+    },
+    "literatureWorkspace.csvPrepared": {
+      "source": "Screening CSV download prepared.",
+      "text": "चयन के CSV का डाउनलोड तैयार है।"
+    },
+    "literatureWorkspace.csv": {
+      "source": "Download screening CSV",
+      "text": "चयन का CSV डाउनलोड करें"
+    },
+    "literatureWorkspace.backupPrepared": {
+      "source": "Workspace backup download prepared.",
+      "text": "कार्यक्षेत्र के बैकअप का डाउनलोड तैयार है।"
+    },
+    "literatureWorkspace.backup": {
+      "source": "Download JSON backup",
+      "text": "JSON बैकअप डाउनलोड करें"
+    },
+    "literatureWorkspace.storedPrepared": {
+      "source": "Original stored data download prepared.",
+      "text": "मूल संग्रहित डेटा का डाउनलोड तैयार है।"
+    },
+    "literatureWorkspace.stored": {
+      "source": "Download stored data",
+      "text": "संग्रहित डेटा डाउनलोड करें"
+    },
+    "literatureWorkspace.restoreLabel": {
+      "source": "Restore a workspace backup (JSON, up to 1 MiB)",
+      "text": "कार्यक्षेत्र का बैकअप बहाल करें (JSON, अधिकतम 1 MiB)"
+    },
+    "literatureWorkspace.tooLarge": {
+      "source": "Backup exceeds the 1 MiB limit. Existing workspace has been kept.",
+      "text": "बैकअप 1 MiB की सीमा से बड़ा है। मौजूदा कार्यक्षेत्र सुरक्षित रखा गया है।"
+    },
+    "literatureWorkspace.unreadable": {
+      "source": "Backup could not be read.",
+      "text": "बैकअप पढ़ा नहीं जा सका।"
+    },
+    "literatureWorkspace.untitled": {
+      "source": "Untitled review",
+      "text": "बिना शीर्षक की समीक्षा"
+    },
+    "literatureWorkspace.restored": {
+      "source": "Backup restored on this browser.",
+      "text": "इस ब्राउज़र में बैकअप बहाल किया गया।"
+    },
+    "literatureWorkspace.restoring": {
+      "source": "Restoring workspace…",
+      "text": "कार्यक्षेत्र बहाल किया जा रहा है…"
+    },
+    "literatureWorkspace.restore": {
+      "source": "Replace workspace with this backup",
+      "text": "इस बैकअप से कार्यक्षेत्र बदलें"
+    },
+    "literatureWorkspace.cancelRestore": {
+      "source": "Cancel restore",
+      "text": "बहाल करना रद्द करें"
+    },
+    "literatureWorkspace.clearDetails": {
+      "source": "Clear this browser’s literature workspace",
+      "text": "इस ब्राउज़र का साहित्य कार्यक्षेत्र खाली करें"
+    },
+    "literatureWorkspace.clearCancelled": {
+      "source": "Clear cancelled. Your workspace has been kept.",
+      "text": "खाली करना रद्द किया गया। आपका कार्यक्षेत्र सुरक्षित रखा गया है।"
+    },
+    "literatureWorkspace.cleared": {
+      "source": "Literature workspace cleared on this browser.",
+      "text": "इस ब्राउज़र का साहित्य कार्यक्षेत्र खाली कर दिया गया।"
+    },
+    "literatureWorkspace.clear": {
+      "source": "Clear saved workspace",
+      "text": "सहेजा गया कार्यक्षेत्र खाली करें"
+    },
+    "literatureWorkspace.compareLabel": {
+      "source": "Compare {title}",
+      "text": "{title} की तुलना करें"
+    },
+    "literatureWorkspace.metadata": {
+      "source": "Metadata only · Peer review unknown",
+      "text": "केवल मेटाडेटा · सहकर्मी समीक्षा की स्थिति अज्ञात"
+    },
+    "literatureWorkspace.metadataIncomplete": {
+      "source": "Metadata only · Peer review unknown · Incomplete contributors ({recorded}/{total})",
+      "text": "केवल मेटाडेटा · सहकर्मी समीक्षा की स्थिति अज्ञात · योगदानकर्ताओं की अधूरी जानकारी ({recorded}/{total})"
+    },
+    "literatureWorkspace.observed": {
+      "source": "Metadata observed {date} ↗",
+      "text": "मेटाडेटा देखने की तारीख {date} ↗"
+    },
+    "literatureWorkspace.snapshot": {
+      "source": "Saved {date}. Retains the first saved snapshot of this exact paper link; imported records are not revalidated.",
+      "text": "{date} को सहेजा गया। इस सटीक शोधपत्र लिंक का सबसे पहले सहेजा गया स्नैपशॉट रखा जाता है; आयात किए गए रिकॉर्ड फिर से सत्यापित नहीं होते।"
+    },
+    "literatureWorkspace.selection.one": {
+      "source": "{count} shown · {selected}/2 selected for comparison",
+      "text": "{count} दिखाया गया · तुलना के लिए {selected}/2 चुने गए"
+    },
+    "literatureWorkspace.risPrepared.one": {
+      "source": "RIS download prepared for {count} shown papers.",
+      "text": "दिखाए गए {count} शोधपत्र का RIS डाउनलोड तैयार है।"
+    },
+    "literatureWorkspace.cslPrepared.one": {
+      "source": "CSL-JSON download prepared for {count} shown papers.",
+      "text": "दिखाए गए {count} शोधपत्र का CSL-JSON डाउनलोड तैयार है।"
+    },
+    "literatureWorkspace.backupSummary.one": {
+      "source": "{filename}: {count} papers · {title}",
+      "text": "{filename}: {count} शोधपत्र · {title}"
+    },
+    "literatureWorkspace.selection.other": {
+      "source": "{count} shown · {selected}/2 selected for comparison",
+      "text": "{count} दिखाए गए · तुलना के लिए {selected}/2 चुने गए"
+    },
+    "literatureWorkspace.risPrepared.other": {
+      "source": "RIS download prepared for {count} shown papers.",
+      "text": "दिखाए गए {count} शोधपत्रों का RIS डाउनलोड तैयार है।"
+    },
+    "literatureWorkspace.cslPrepared.other": {
+      "source": "CSL-JSON download prepared for {count} shown papers.",
+      "text": "दिखाए गए {count} शोधपत्रों का CSL-JSON डाउनलोड तैयार है।"
+    },
+    "literatureWorkspace.backupSummary.other": {
+      "source": "{filename}: {count} papers · {title}",
+      "text": "{filename}: {count} शोधपत्र · {title}"
+    },
+    "literatureComparison.label": {
+      "source": "Comparison selection",
+      "text": "तुलना के लिए चयन"
+    },
+    "literatureComparison.title": {
+      "source": "Papers selected for comparison",
+      "text": "तुलना के लिए चुने गए शोधपत्र"
+    },
+    "literatureComparison.outsideFilter": {
+      "source": "Outside the current screening filter; still selected.",
+      "text": "वर्तमान चयन फ़िल्टर से बाहर है; फिर भी चयनित है।"
+    },
+    "literatureComparison.remove": {
+      "source": "Remove from comparison",
+      "text": "तुलना से हटाएँ"
+    },
+    "literatureComparison.focus": {
+      "source": "Saved focus used in the draft",
+      "text": "मसौदे में इस्तेमाल किया गया सहेजा हुआ समीक्षा विषय"
+    },
+    "literatureComparison.noFocus": {
+      "source": "No saved review focus. The draft uses the general comparison questions.",
+      "text": "समीक्षा का विषय सहेजा नहीं गया है। मसौदे में तुलना के सामान्य प्रश्नों का उपयोग होता है।"
+    },
+    "literatureComparison.reviewQuestion": {
+      "source": "Review prepared question",
+      "text": "तैयार प्रश्न की समीक्षा करें"
+    },
+    "literatureComparison.preparedQuestion": {
+      "source": "Prepared comparison question",
+      "text": "तुलना के लिए तैयार प्रश्न"
+    },
+    "literatureComparison.paper": {
+      "source": "Paper {number} · {screening} · {repository}",
+      "text": "शोधपत्र {number} · {screening} · {repository}"
+    },
+    "literatureComparison.removeLabel": {
+      "source": "Remove paper {number} from comparison",
+      "text": "शोधपत्र {number} को तुलना से हटाएँ"
+    }
+  }
+}

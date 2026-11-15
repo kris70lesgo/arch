@@ -1,0 +1,192 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "locales/en/topic-watches.ts",
+  "sourceSha256": "593327a33e3a61a9aaef82f82a9c0915325fc2ada94406c92bea1887aa9dae0c",
+  "entries": {
+    "topicWatch.accountChanged": {
+      "source": "Account changed. Refresh to verify this session.",
+      "text": "Tài khoản đã đổi. Làm mới để xác minh phiên này."
+    },
+    "topicWatch.authors": {
+      "source": "Authors, comma separated (optional, up to 4)",
+      "text": "Tác giả, ngăn cách bằng dấu phẩy (tùy chọn, tối đa 4)"
+    },
+    "topicWatch.cadence": {
+      "source": "Minimum minutes between manual check slots",
+      "text": "Số phút tối thiểu giữa các mốc kiểm tra thủ công"
+    },
+    "topicWatch.cancel": {
+      "source": "Cancel watch",
+      "text": "Hủy theo dõi"
+    },
+    "topicWatch.cancelled": {
+      "source": "Cancellation is retained. This watch ID cannot be reused.",
+      "text": "Đã lưu việc hủy. Không thể dùng lại ID theo dõi này."
+    },
+    "topicWatch.check": {
+      "source": "Check local metadata now",
+      "text": "Kiểm tra siêu dữ liệu cục bộ ngay"
+    },
+    "topicWatch.checking": {
+      "source": "Checking account…",
+      "text": "Đang kiểm tra tài khoản…"
+    },
+    "topicWatch.checks": {
+      "source": "Maximum checks per period",
+      "text": "Số lần kiểm tra tối đa mỗi kỳ"
+    },
+    "topicWatch.close": {
+      "source": "Close editor",
+      "text": "Đóng trình chỉnh sửa"
+    },
+    "topicWatch.consent": {
+      "source": "I consent to manual local metadata checks with zero spending. No scheduled operation is enabled.",
+      "text": "Tôi đồng ý kiểm tra siêu dữ liệu cục bộ theo cách thủ công với mức chi bằng không. Không bật thao tác theo lịch nào."
+    },
+    "topicWatch.create": {
+      "source": "Create watch",
+      "text": "Tạo theo dõi"
+    },
+    "topicWatch.createTitle": {
+      "source": "Create a private watch",
+      "text": "Tạo theo dõi riêng tư"
+    },
+    "topicWatch.edit": {
+      "source": "Edit settings",
+      "text": "Sửa cài đặt"
+    },
+    "topicWatch.editTitle": {
+      "source": "Edit unchecked watch",
+      "text": "Sửa theo dõi chưa được kiểm tra"
+    },
+    "topicWatch.empty": {
+      "source": "No private watches saved.",
+      "text": "Chưa lưu theo dõi riêng tư nào."
+    },
+    "topicWatch.expiry": {
+      "source": "Expires in days",
+      "text": "Hết hạn sau số ngày"
+    },
+    "topicWatch.heartbeat": {
+      "source": "Show a quiet line when nothing changes",
+      "text": "Hiện dòng trạng thái ngắn khi không có thay đổi"
+    },
+    "topicWatch.history": {
+      "source": "Check history ({count})",
+      "text": "Lịch sử kiểm tra ({count})"
+    },
+    "topicWatch.keywordValues": {
+      "source": "Keywords: {keywords}",
+      "text": "Từ khóa: {keywords}"
+    },
+    "topicWatch.keywords": {
+      "source": "Title keywords, comma separated (up to 8)",
+      "text": "Từ khóa tiêu đề, ngăn cách bằng dấu phẩy (tối đa 8)"
+    },
+    "topicWatch.listUnavailable": {
+      "source": "Watch list unavailable",
+      "text": "Danh sách theo dõi không khả dụng"
+    },
+    "topicWatch.menu": {
+      "source": "Private topic watches",
+      "text": "Theo dõi chủ đề riêng tư"
+    },
+    "topicWatch.metadataTitle": {
+      "source": "Private topic watches | Keryx",
+      "text": "Theo dõi chủ đề riêng tư · Keryx"
+    },
+    "topicWatch.missed": {
+      "source": "{count} missed slots retained; no catch-up was run.",
+      "text": "Đã giữ lại {count} mốc bị lỡ; không chạy bù."
+    },
+    "topicWatch.missedHistory": {
+      "source": "Missed slots {fromSlot}–{toSlot}; no catch-up",
+      "text": "Mốc bị lỡ {fromSlot}–{toSlot}; không chạy bù"
+    },
+    "topicWatch.newMatches": {
+      "source": "; {count} new lexical matches",
+      "text": "; {count} kết quả khớp từ vựng mới"
+    },
+    "topicWatch.pause": {
+      "source": "Pause",
+      "text": "Tạm dừng"
+    },
+    "topicWatch.period": {
+      "source": "Period in days",
+      "text": "Kỳ tính theo ngày"
+    },
+    "topicWatch.question": {
+      "source": "Review question",
+      "text": "Câu hỏi cần xem xét"
+    },
+    "topicWatch.refresh": {
+      "source": "Refresh watches",
+      "text": "Làm mới theo dõi"
+    },
+    "topicWatch.requestUnavailable": {
+      "source": "Watch request unavailable",
+      "text": "Yêu cầu theo dõi không khả dụng"
+    },
+    "topicWatch.result": {
+      "source": "{status}{code}. Paid requests: {paidRequests}.",
+      "text": "{status}{code}. Yêu cầu trả phí: {paidRequests}."
+    },
+    "topicWatch.resume": {
+      "source": "Resume",
+      "text": "Tiếp tục"
+    },
+    "topicWatch.retry": {
+      "source": "{message}. Refresh before retrying; an unconfirmed write may have completed.",
+      "text": "{message}. Làm mới trước khi thử lại; thao tác ghi chưa được xác nhận có thể đã hoàn tất."
+    },
+    "topicWatch.save": {
+      "source": "Save settings",
+      "text": "Lưu cài đặt"
+    },
+    "topicWatch.scope": {
+      "source": "Local checks compare the curated scholarly catalog. They do not search for newly published papers or read paper bodies. Spend: 0 USDC; spending capacity: 0. Scheduling and funded watches are unavailable.",
+      "text": "Kiểm tra cục bộ đối chiếu danh mục học thuật tuyển chọn. Chúng không tìm bài mới xuất bản hay đọc nội dung bài. Chi tiêu: 0 USDC; khả năng chi tiêu: 0. Tác vụ định kỳ và theo dõi có trả phí chưa khả dụng."
+    },
+    "topicWatch.signIn": {
+      "source": "Sign in to manage private watches",
+      "text": "Đăng nhập để quản lý theo dõi riêng tư"
+    },
+    "topicWatch.slotHistory": {
+      "source": "Slot {slot}: {status}{reason}{matches}",
+      "text": "Mốc {slot}: {status}{reason}{matches}"
+    },
+    "topicWatch.state": {
+      "source": "{status} · revision {revision} · expires {expires} · spend 0 USDC",
+      "text": "{status} · phiên bản {revision} · hết hạn {expires} · chi 0 USDC"
+    },
+    "topicWatch.title": {
+      "source": "Private topic watches",
+      "text": "Theo dõi chủ đề riêng tư"
+    },
+    "topicWatch.unavailable": {
+      "source": "Request unavailable",
+      "text": "Yêu cầu không khả dụng"
+    },
+    "topicWatch.venues": {
+      "source": "Venues, comma separated (optional, up to 4)",
+      "text": "Nơi xuất bản, ngăn cách bằng dấu phẩy (tùy chọn, tối đa 4)"
+    },
+    "topicWatch.currentScope": {
+      "source": "An optional current check sends your title keywords to Crossref once and compares up to six recently indexed metadata records. It does not send your private question, read papers or make paid requests. Index updates are not publication dates, and this bounded page is not a complete literature search. Check limits, pause, expiry and the existing watermark still apply.",
+      "text": "Một lần kiểm tra hiện tại tùy chọn gửi từ khóa tiêu đề của bạn tới Crossref và đối chiếu tối đa sáu bản ghi metadata được lập chỉ mục gần đây. Câu hỏi riêng tư không được gửi, nội dung bài không được đọc và không có yêu cầu trả phí. Thời điểm cập nhật chỉ mục không phải ngày xuất bản; trang kết quả có giới hạn này không phải tìm kiếm tài liệu đầy đủ. Giới hạn kiểm tra, tạm dừng, hết hạn và watermark hiện có vẫn áp dụng."
+    },
+    "topicWatch.currentConsent": {
+      "source": "Allow this check to send only these title keywords to Crossref: {keywords}. No paper bodies or paid requests.",
+      "text": "Cho phép lần kiểm tra này chỉ gửi các từ khóa tiêu đề sau tới Crossref: {keywords}. Không đọc nội dung bài hay tạo yêu cầu trả phí."
+    },
+    "topicWatch.checkCurrent": {
+      "source": "Check current Crossref metadata",
+      "text": "Kiểm tra metadata Crossref hiện tại"
+    },
+    "topicWatch.metadataCounts": {
+      "source": "Metadata observed: {observed}; incomplete rows: {unknown}; new lexical matches: {matches}.",
+      "text": "Metadata đã quan sát: {observed}; bản ghi chưa đầy đủ: {unknown}; kết quả từ khóa mới: {matches}."
+    }
+  }
+}

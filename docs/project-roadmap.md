@@ -1,0 +1,52 @@
+# Keryx roadmap
+
+October 12 owner direction: prioritize [commissioning missing evidence](evidence-procurement.md),
+then quotation value, useful refuting evidence and decision receipts. The first
+coherent increment is a private portable workbench shared across web/API/CLI/MCP.
+An actual provider/business pilot, hosted order authority and funded execution
+retain their separate acceptance gates; the owner requested a usable product first.
+
+The current acceptance map is the [product and mainnet delivery plan](./mainnet-delivery-plan.md).
+It covers buyer, creator, developer, operator, research-quality, economics, and
+mainnet release work. [DECISIONS.md](../DECISIONS.md) records why the architecture
+changed; [project-changelog.md](./project-changelog.md) records what shipped.
+
+The [Tameion 2026 plan](./tameion-2026.md) sets the September 27–October 17 event
+direction and its proposed Operator, Windows desktop, CLI, and pilot work. Its
+checklist is a plan, not release evidence; the acceptance map above remains in force.
+The [staged shared Rust engine migration](./rust-engine-migration.md) records the
+authorized evaluation, current read-only slice and domain cutover gates. It does not
+change the production payment authority or complete a Tauri desktop migration.
+
+## Current priorities
+
+Production is on Arc mainnet as observed October 4, 2026; [current status](mainnet-status.md)
+records network, contracts and release identities. Use the
+[post-launch update flow](mainnet-update-flow.md) for subsequent releases and the
+[24-task internal workload / 12-item backlog](research-workload.md) for proactive
+product work. Internal evaluation is separate from independent customer demand.
+
+1. Validate repeat paid research with independently funded buyers and useful
+   sources controlled by their creators.
+2. Improve answer quality and show the source decisions, evidence, and exact
+   creator payments in a short reviewer journey.
+3. Rehearse recovery, reconciliation, backup restore, and deployment rollback.
+4. Measure costs against actual bills and receipts before changing prices or
+   claiming operating profit.
+5. Maintain the deployed mainnet service through reviewed updates, isolated
+   offline/testnet validation and bounded mainnet acceptance where authorized.
+   Deployment does not close the remaining product/usefulness or financial gates.
+
+The [local-currency/EURC evaluation](currency-support-evaluation.md) stages optional
+display estimates before any owner-approved conversion. Current settlement and
+caps remain USDC-only; customer demand, executable costs and testnet conversion
+proof are open gates under [issue294](https://github.com/tang-vu/keryx/issues/294).
+
+The private [same-original fulfillment window](operator-original-fulfillment.md)
+keeps explicitly approved supplier time separate from deployment and historical
+metadata completion. The held paid original must pass native delivery and ordinary
+service restoration before its canary is counted as delivered.
+
+The former long-range roadmap and version table are preserved in
+[Git history](https://github.com/tang-vu/keryx/blob/742454a/docs/project-roadmap.md).
+They are historical, not current deadlines.

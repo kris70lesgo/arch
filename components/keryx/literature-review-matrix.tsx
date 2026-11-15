@@ -1,0 +1,246 @@
+"use client";
+
+import { useEffect, useId, useRef, useState } from "react";
+import Link from "next/link";
+import { downloadBrowserText } from "@/lib/browser-text-download";
+import { useUiCopy } from "@/lib/i18n/ui-copy";
+import { emptyMatrixRow, literatureMatrixCsv, MATRIX_FIELDS, MAX_MATRIX_CELL_CHARS, MAX_MATRIX_ROWS, type MatrixField, type MatrixRow } from "@/lib/research-tools/literature-matrix";
+import { appendLiteratureMatrix, literatureMatrixJson, MatrixFileError, MAX_MATRIX_FILE_BYTES, readLiteratureMatrixFile, type MatrixDocument, type MatrixFileKind } from "@/lib/research-tools/literature-matrix-file";
+import { MATRIX_RECOVERY_DISABLED, MATRIX_RECOVERY_KEY, readMatrixRecovery, writeMatrixRecovery } from "@/lib/research-tools/literature-matrix-recovery";
+import { researchGuidesCopy } from "@/locales/en/research-guides";
+
+const fieldClass = "mt-2 block min-h-11 w-full min-w-0 rounded-none border border-line bg-paper-2 px-3 py-2 font-serif text-base text-ink";
+const buttonBase = "inline-flex min-h-11 items-center justify-center border border-ink px-4 py-2 font-mono text-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-seal disabled:opacity-50";
+const buttonClass = `${buttonBase} text-seal hover:bg-panel`;
+
+export function LiteratureReviewMatrix() {
+  const { tool: copy } = useUiCopy("research-guides", researchGuidesCopy);
+  const [question, setQuestion] = useState("");
+  const [rows, setRows] = useState<{ id: number; value: MatrixRow }[]>([]);
+  const [status, setStatus] = useState("");
+  const [failure, setFailure] = useState("");
+  const [copyPending, setCopyPending] = useState(false);
+  const copyAttempt = useRef<symbol | null>(null);
+  const [pending, setPending] = useState<{ document: MatrixDocument; filename: string; kind: MatrixFileKind; revision: number }>();
+  const [reading, setReading] = useState(false);
+  const [revision, setRevision] = useState(0), [savedRevision, setSavedRevision] = useState(0);
+  const currentRevision = useRef(0), importGeneration = useRef(0);
+  const nextId = useRef(1);
+  const addButton = useRef<HTMLButtonElement>(null);
+  const focusAdded = useRef(false);
+  const prefix = useId();
+  const [recoveryReady, setRecoveryReady] = useState(false);
+  const [recoveryEnabled, setRecoveryEnabled] = useState(true);
+  const [recoveryBlocked, setRecoveryBlocked] = useState(false);
+  const [recoveryStatus, setRecoveryStatus] = useState<"saved" | "disabled" | "unavailable" | "invalid" | "empty">("empty");
+  const recoveryInitialized = useRef(false);
+  useEffect(() => {
+    if (!focusAdded.current) return;
+    focusAdded.current = false;
+    const last = rows.at(-1);
+    if (last) document.getElementById(`${prefix}-${last.id}-title`)?.focus();
+  }, [prefix, rows]);
+  const csv = () => literatureMatrixCsv(question, rows.map(row => row.value));
+  const snapshot = () => ({ question, rows: rows.map(row => row.value) });
+  const hasNotes = question !== "" || rows.length > 0;
+  const latest = useRef({ document: snapshot(), dirty: false, recover: false });
+  useEffect(() => {
+    latest.current = { document: { question, rows: rows.map(row => row.value) }, dirty: hasNotes && revision !== savedRevision,
+      recover: recoveryReady && recoveryEnabled && !recoveryBlocked };
+  }, [question, rows, hasNotes, revision, savedRevision, recoveryReady, recoveryEnabled, recoveryBlocked]);
+  useEffect(() => {
+    if (recoveryInitialized.current) return;
+    recoveryInitialized.current = true;
+    try {
+      const text = window.sessionStorage.getItem(MATRIX_RECOVERY_KEY);
+      if (text !== null) {
+        const recovered = readMatrixRecovery(text);
+        if (recovered === "disabled") { setRecoveryEnabled(false); setRecoveryStatus("disabled"); }
+        else if (currentRevision.current === 0) {
+          setQuestion(recovered.question); setRows(recovered.rows.map(value => ({ id: nextId.current++, value })));
+          currentRevision.current++; setRevision(currentRevision.current); setStatus(copy.recovered);
+        } else { setRecoveryBlocked(true); setRecoveryStatus("invalid"); }
+      }
+    } catch { setRecoveryBlocked(true); setRecoveryStatus("unavailable"); }
+    setRecoveryReady(true);
+  }, [copy.recovered]);
+  useEffect(() => {
+    if (!recoveryReady || !recoveryEnabled || recoveryBlocked) return;
+    try {
+      if (hasNotes) window.sessionStorage.setItem(MATRIX_RECOVERY_KEY, writeMatrixRecovery({ question, rows: rows.map(row => row.value) }));
+      else window.sessionStorage.removeItem(MATRIX_RECOVERY_KEY);
+      setRecoveryStatus(hasNotes ? "saved" : "empty");
+    } catch { setRecoveryStatus("unavailable"); }
+  }, [question, rows, hasNotes, recoveryReady, recoveryEnabled, recoveryBlocked]);
+  useEffect(() => {
+    function flush() {
+      const state = latest.current;
+      if (!state.recover) return;
+      try {
+        if (state.document.question !== "" || state.document.rows.length) window.sessionStorage.setItem(MATRIX_RECOVERY_KEY, writeMatrixRecovery(state.document));
+        else window.sessionStorage.removeItem(MATRIX_RECOVERY_KEY);
+      } catch { /* The visible save effect already reports refused recovery. */ }
+    }
+    function navigate(event: MouseEvent) {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+      if (!link || link.hasAttribute("download") || (link.target && link.target !== "_self")) return;
+      const target = new URL(link.href, window.location.href);
+      if (target.origin !== window.location.origin || (target.pathname === window.location.pathname && target.search === window.location.search)) return;
+      flush();
+      if (latest.current.dirty && !window.confirm(copy.leaveConfirmation)) {
+        event.preventDefault(); event.stopImmediatePropagation();
+      }
+    }
+    // Capture before a client-side Link can unmount the worksheet. Browser Back is
+    // recovered from the same tab copy; no router/history implementation is patched.
+    document.addEventListener("click", navigate, true);
+    window.addEventListener("pagehide", flush);
+    return () => { document.removeEventListener("click", navigate, true); window.removeEventListener("pagehide", flush); };
+  }, [copy.leaveConfirmation]);
+  function changeRecovery(enabled: boolean) {
+    try {
+      if (!enabled) window.sessionStorage.setItem(MATRIX_RECOVERY_KEY, MATRIX_RECOVERY_DISABLED);
+      else if (hasNotes) window.sessionStorage.setItem(MATRIX_RECOVERY_KEY, writeMatrixRecovery(snapshot()));
+      else window.sessionStorage.removeItem(MATRIX_RECOVERY_KEY);
+      setRecoveryEnabled(enabled); setRecoveryBlocked(false); setRecoveryStatus(enabled ? (hasNotes ? "saved" : "empty") : "disabled");
+    } catch { setRecoveryStatus("unavailable"); }
+  }
+  useEffect(() => () => { ++importGeneration.current; copyAttempt.current = null; }, []);
+  useEffect(() => {
+    if (!hasNotes || revision === savedRevision) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasNotes, revision, savedRevision]);
+  function changed() {
+    copyAttempt.current = null; setCopyPending(false);
+    currentRevision.current++; setRevision(currentRevision.current); setStatus(""); setFailure("");
+  }
+  async function copyCsv() {
+    if (copyAttempt.current) return;
+    const attempt = Symbol(), revision = currentRevision.current;
+    copyAttempt.current = attempt; setCopyPending(true); setFailure(""); setStatus("");
+    const current = () => copyAttempt.current === attempt && currentRevision.current === revision;
+    try { await navigator.clipboard.writeText(csv()); if (current()) setStatus(copy.copied); }
+    catch { if (current()) setStatus(copy.copyFailed); }
+    finally { if (current()) { copyAttempt.current = null; setCopyPending(false); } }
+  }
+  function edit(id: number, field: MatrixField, value: string) {
+    setRows(current => current.map(row => row.id === id ? { ...row, value: { ...row.value, [field]: value } } : row)); changed();
+  }
+  function download(content: string, filename: string, type: string, message: string, editable = false) {
+    try {
+      downloadBrowserText(content, filename, type);
+      if (editable) setSavedRevision(currentRevision.current);
+      setFailure(""); setStatus(message);
+    } catch { setStatus(""); setFailure(copy.fileErrors.download); }
+  }
+  async function openFile(file: File) {
+    const generation = ++importGeneration.current, baseRevision = currentRevision.current;
+    setPending(undefined); setStatus(""); setFailure(""); setReading(true);
+    try {
+      if (file.size > MAX_MATRIX_FILE_BYTES) throw new MatrixFileError("size");
+      const incoming = readLiteratureMatrixFile(new Uint8Array(await file.arrayBuffer()));
+      if (generation !== importGeneration.current) return;
+      setPending({ document: incoming, filename: file.name, kind: incoming.kind, revision: baseRevision });
+    } catch (issue) {
+      if (generation === importGeneration.current) setFailure(copy.fileErrors[issue instanceof MatrixFileError ? issue.issue : "read"]);
+    } finally { if (generation === importGeneration.current) setReading(false); }
+  }
+  const stale = pending !== undefined && pending.revision !== revision;
+  let appendIssue = "";
+  if (pending) {
+    try { appendLiteratureMatrix(snapshot(), pending.document); }
+    catch (issue) { appendIssue = issue instanceof MatrixFileError && issue.issue === "questions" ? copy.appendQuestion : copy.appendCapacity; }
+  }
+  function applyImport(append: boolean) {
+    if (!pending) return;
+    if (pending.revision !== currentRevision.current) { setFailure(copy.staleImport); return; }
+    let next: MatrixDocument;
+    try { next = append ? appendLiteratureMatrix(snapshot(), pending.document) : pending.document; }
+    catch { setFailure(appendIssue); return; }
+    setQuestion(next.question); setRows(next.rows.map(value => ({ id: nextId.current++, value })));
+    changed();
+    if (!append && pending.kind !== "library") setSavedRevision(currentRevision.current);
+    setPending(undefined); setStatus(pending.kind === "library" ? copy.libraryLoaded : append ? copy.appended : copy.loaded);
+  }
+  return <section aria-labelledby="matrix-heading" className="mt-8 border border-ink bg-paper p-4 sm:p-7">
+    <h2 id="matrix-heading" className="font-display text-2xl text-ink">{copy.title}</h2>
+    <p className="mt-3 max-w-[78ch] font-serif leading-relaxed text-ink-2">{copy.privacyNotice}</p>
+    <label className="mt-4 flex min-h-11 items-start gap-3 font-serif text-sm text-ink-2">
+      <input type="checkbox" className="mt-1 size-5 shrink-0 accent-seal" checked={recoveryEnabled} disabled={!recoveryReady} onChange={event => changeRecovery(event.target.checked)} />
+      <span>{copy.recoveryChoice}</span>
+    </label>
+    <p aria-live="polite" className="mt-2 max-w-[78ch] font-serif text-sm text-ink-3">{
+      recoveryStatus === "saved" ? copy.recoverySaved : recoveryStatus === "disabled" ? copy.recoveryDisabled :
+        recoveryStatus === "unavailable" || recoveryStatus === "invalid" ? copy.recoveryUnavailable : copy.recoveryNotice}</p>
+    {recoveryBlocked && <button type="button" className={`${buttonClass} mt-3`} onClick={() => changeRecovery(true)}>{copy.replaceRecovery}</button>}
+    {hasNotes && revision !== savedRevision && <p className="mt-3 font-serif text-sm text-seal">{copy.unsaved}</p>}
+    <div className="mt-6 font-mono text-xs text-ink-2"><label htmlFor={`${prefix}-question`}>{copy.question}</label>
+      <textarea id={`${prefix}-question`} maxLength={MAX_MATRIX_CELL_CHARS} rows={2} value={question} placeholder={copy.questionPlaceholder} onChange={event => { setQuestion(event.target.value); changed(); }} className={fieldClass} />
+    </div>
+    <div className="mt-5 flex flex-wrap gap-3">
+      <button type="button" className={`${buttonBase} bg-seal text-paper hover:bg-ink`} onClick={() => {
+        download(literatureMatrixJson(question, rows.map(row => row.value)), "literature-review-matrix.json", "application/json;charset=utf-8", copy.saved, true);
+      }}>{copy.save}</button>
+      <button type="button" className={buttonClass} onClick={() => {
+        download(csv(), "literature-review-matrix.csv", "text/csv;charset=utf-8", copy.downloaded);
+      }}>{copy.download}</button>
+      <button type="button" className={buttonClass} onClick={() => {
+        download(literatureMatrixCsv("", []), "literature-review-matrix-template.csv", "text/csv;charset=utf-8", copy.downloaded);
+      }}>{copy.template}</button>
+      <button type="button" className={buttonClass} disabled={copyPending} aria-busy={copyPending} onClick={() => void copyCsv()}>{copy.copy}</button>
+    </div>
+    <p role={failure ? "alert" : "status"} aria-live="polite" className="mt-3 min-h-6 font-serif text-sm text-seal">{failure || status}</p>
+    <div className="mt-4 border-y border-line py-4">
+      <label htmlFor={`${prefix}-file`} className="block font-mono text-xs text-ink-2">{copy.open}</label>
+      <input id={`${prefix}-file`} type="file" accept=".json,.csv,application/json,text/csv" className="mt-3 block min-h-11 w-full min-w-0 max-w-full font-serif text-sm text-ink-2 file:mr-3 file:min-h-11 file:border file:border-ink file:bg-paper-2 file:px-3 file:font-mono file:text-xs file:text-seal"
+        aria-describedby={`${prefix}-file-help`} onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void openFile(file); }} />
+      <p id={`${prefix}-file-help`} className="mt-2 max-w-[78ch] font-serif text-sm leading-relaxed text-ink-3">{copy.filePrivacyHelp}</p>
+      <p className="mt-3 max-w-[78ch] font-serif text-sm leading-relaxed text-ink-2">{copy.libraryHelp} <Link href="/literature" prefetch={false} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center text-seal underline underline-offset-4">{copy.libraryLink}</Link></p>
+      {reading && <p role="status" className="mt-3 font-serif text-seal">{copy.reading}</p>}
+      {pending && <section aria-labelledby={`${prefix}-preview`} className="mt-4 min-w-0 border border-line bg-paper-2 p-4">
+        <h3 id={`${prefix}-preview`} className="font-display text-xl text-ink">{copy.preview}</h3>
+        <dl className="mt-3 space-y-2 break-words font-serif text-sm text-ink-2">
+          <div><dt className="font-mono text-xs">{copy.fileName}</dt><dd>{pending.filename}</dd></div>
+          <div><dt className="font-mono text-xs">{copy.importedQuestion}</dt><dd className="whitespace-pre-wrap">{pending.document.question || copy.noQuestion}</dd></div>
+          <div><dt className="inline">{copy.incomingCount}: </dt><dd className="inline">{pending.document.rows.length}</dd></div>
+          <div><dt className="inline">{copy.currentCount}: </dt><dd className="inline">{rows.length}</dd></div>
+        </dl>
+        {pending.document.rows.length > 0 && <><p className="mt-3 font-mono text-xs text-ink-2">{copy.previewSources}</p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 font-serif text-sm text-ink-2">{pending.document.rows.slice(0, 3).map((row, index) => <li key={index} className="break-words"><span className="line-clamp-2">{row.title || copy.untitledSource}</span></li>)}</ol>
+        </>}
+        <p className="mt-3 max-w-[75ch] font-serif text-sm leading-relaxed text-ink-2">{copy.replaceConsentWarning}</p>
+        <p className="mt-3 max-w-[75ch] font-serif text-sm leading-relaxed text-ink-3">{copy.appendNotice}</p>
+        {pending.kind === "csv" && <p className="mt-3 max-w-[75ch] font-serif text-sm leading-relaxed text-ink-3">{copy.csvNotice}</p>}
+        {pending.kind === "library" && <p className="mt-3 max-w-[75ch] whitespace-pre-wrap font-serif text-sm leading-relaxed text-seal">{copy.libraryNotice}</p>}
+        {(stale || appendIssue) && <p role="status" className="mt-3 font-serif text-sm text-seal">{stale ? copy.staleImport : appendIssue}</p>}
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button type="button" className={buttonClass} disabled={stale || !!appendIssue || !pending.document.rows.length} onClick={() => applyImport(true)}>{copy.append}</button>
+          <button type="button" className={buttonClass} disabled={stale} onClick={() => applyImport(false)}>{copy.replace}</button>
+          <button type="button" className={buttonClass} onClick={() => { setPending(undefined); setFailure(""); }}>{copy.cancel}</button>
+        </div>
+      </section>}
+    </div>
+    <p className="mt-2 font-mono text-xs text-ink-3">{copy.countLabel}: {rows.length} / {MAX_MATRIX_ROWS}</p>
+    {!rows.length && <p className="mt-5 border-l-2 border-seal pl-4 font-serif text-ink-2">{copy.empty}</p>}
+    <div className="mt-5 space-y-5">{rows.map((row, index) => <fieldset key={row.id} className="min-w-0 border border-line px-4 pb-5">
+      <legend className="px-2 font-mono text-xs text-ink-3">{copy.sourceNumber} {index + 1}</legend>
+      <div className="mt-3 grid min-w-0 gap-4 md:grid-cols-2">{MATRIX_FIELDS.map(field => <div key={field} className="min-w-0 font-mono text-xs text-ink-2">
+        <label htmlFor={`${prefix}-${row.id}-${field}`}>{copy.columns[field]}</label>
+        <textarea id={`${prefix}-${row.id}-${field}`} rows={field === "finding" || field === "limitation" ? 3 : 2} maxLength={MAX_MATRIX_CELL_CHARS} value={row.value[field]} onChange={event => edit(row.id, field, event.target.value)} className={fieldClass} />
+      </div>)}</div>
+      <button type="button" className={`${buttonClass} mt-4`} onClick={() => {
+        setRows(current => current.filter(item => item.id !== row.id)); changed(); addButton.current?.focus();
+      }}>{copy.remove} {index + 1}</button>
+    </fieldset>)}</div>
+    <button ref={addButton} type="button" disabled={rows.length >= MAX_MATRIX_ROWS} className={`${buttonClass} mt-5`} onClick={() => {
+      if (rows.length >= MAX_MATRIX_ROWS) return;
+      focusAdded.current = true;
+      const id = nextId.current++; setRows(current => current.length >= MAX_MATRIX_ROWS ? current : [...current, { id, value: emptyMatrixRow() }]); changed();
+    }}>{copy.add}</button>
+    {rows.length >= MAX_MATRIX_ROWS && <p className="mt-3 font-serif text-sm text-ink-3">{copy.limit}</p>}
+    <p className="mt-5 max-w-[80ch] font-serif text-sm leading-relaxed text-ink-3">{copy.exportPrivacyNotice}</p>
+  </section>;
+}

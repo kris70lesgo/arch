@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160">
+  <circle cx="80" cy="80" r="80" fill="#06070c"/>
+  <g fill="none" stroke="#7aa2ff">
+    <circle cx="80" cy="80" r="74" stroke-width="3"/>
+    <circle cx="80" cy="80" r="58" stroke-width="1.2"/>
+    <circle cx="80" cy="80" r="66" stroke-width="8" stroke-dasharray="2.4 7.4"/>
+  </g>
+  <path fill="#7aa2ff" fill-rule="evenodd" d="M44 120 70 46h20l26 74H97l-6-18H69l-6 18H44zm30-32h12L80 70z"/>
+</svg>

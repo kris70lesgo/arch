@@ -1,0 +1,402 @@
+"use client";
+import { formatRecordedAmount } from "@/lib/i18n/format";
+
+/** Reader question form. A bounded budget and model remain available after the primary ask. */
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowRight, ArrowUpRight, BookOpen01 as BookOpen, ChevronDown, Zap } from "@untitledui/icons";
+import { Button } from "@/components/base/buttons/button";
+import { Label } from "@/components/base/input/label";
+import { TextAreaBase } from "@/components/base/textarea/textarea";
+// Pure data module (no env imports), so the picker and the server agree on which id is the default.
+import { DEFAULT_MODEL_ID } from "@/lib/llm/model-catalog";
+import { MAX_ASK_QUESTION_CHARS } from "@/lib/ask-input";
+import type { ResearchMode } from "@/lib/types";
+import { currentArcLabel } from "@/lib/arc-network-display";
+import { browserPaymentProfile } from "@/lib/browser-payment-profile";
+import { useResearchAvailability } from "@/lib/hooks/use-research-availability";
+import { useUnsavedNavigation } from "@/lib/hooks/use-unsaved-navigation";
+import { RESEARCH_AVAILABILITY_UNKNOWN, RESEARCH_PAUSED_MESSAGE } from "@/lib/research/availability-contract";
+import { paperLibraryHref } from "@/lib/papers/handoff";
+import { createMessages, englishMessages } from "@/lib/i18n/messages";
+import { useLocale } from "@/lib/i18n/locale-context";
+import { decisionReviewCopy as reviewCopy } from "@/lib/research/decision-review-copy";
+import { useResearchVisibility, type ResearchPublicationSelection } from "@/lib/hooks/use-research-visibility";
+import type { RunVisibility } from "@/lib/run-privacy/contracts";
+import { ResearchVisibilityPicker } from "./research-visibility-picker";
+import { UiText, UiMessage, useUiMessages } from "@/lib/i18n/ui-copy";
+import { AnswerLanguageHelp } from "./answer-language-help";
+
+
+
+// Catalogue adoption only. Interface locale and request data remain unchanged.
+const message = createMessages("en");
+
+interface AskFormProps {
+  disabled?: boolean;
+  showAnswerLanguageHelp?: boolean;
+  questionCapUsdc?: number;
+  parentId?: string | null;
+  parentVisibility?: RunVisibility;
+  publicationPreference?: ReturnType<typeof useResearchVisibility>;
+  conversation?: boolean;
+  clearOnSubmit?: boolean;
+  allowSharedPrefill?: boolean;
+  restoreQuestion?: { id: number; question: string; researchPaused?: boolean; budget?: number; replace?: boolean;
+    expectedWallet?: string | null; expectedRevision?: number };
+  payer?: "treasury" | "session" | "expired" | "paused";
+  onAsk: (
+    question: string,
+    budget: number,
+    parentId?: string,
+    model?: string,
+    researchMode?: ResearchMode,
+    scholarly?: boolean,
+    paidScholarly?: boolean,
+    reviewFirst?: boolean,
+    publication?: ResearchPublicationSelection,
+  ) => void;
+}
+
+/** Picker entry from GET /api/models — only models the server can actually run. */
+interface PickerModel {
+  id: string;
+  label: string;
+  note: string;
+}
+
+// Shareable-link prefill: a URL like keryx.cc/?q=...&budget=0.05[&run=1] lands a
+// visitor with the question (and budget) already filled — and, with run=1, dispatches
+// it automatically so the shared link opens straight onto a live run. Bounds mirror the
+// form's own limits so a crafted link can't smuggle an out-of-range budget or huge prompt.
+const MAX_AUTO_SHARED_Q = 500;
+/** A dispatch id is a UUID — pin the shape so a crafted link can't put arbitrary text on the wire. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function readSharedAsk(): {
+  q: string | null;
+  budget: number | null;
+  run: boolean;
+  parent: string | null;
+  model: string | null;
+  mode: ResearchMode;
+} {
+  if (typeof window === "undefined")
+    return { q: null, budget: null, run: false, parent: null, model: null, mode: "quick" };
+  const p = new URLSearchParams(window.location.search);
+  // Editable drafts retain the form's full limit. Legacy automatic links keep
+  // their existing 500-character ceiling and authorization behavior.
+  const q = p.get("q")?.trim().slice(0, p.get("run") === "1" ? MAX_AUTO_SHARED_Q : MAX_ASK_QUESTION_CHARS) || null;
+  const b = parseFloat(p.get("budget") ?? "");
+  const budget = Number.isFinite(b) && b >= 0 && b <= 0.08 ? b : null;
+  // Follow-up link from a dispatch permalink: the server re-reads this run and anchors the
+  // question to it. An unknown id degrades to a standalone ask server-side.
+  const rawParent = p.get("parent")?.trim() ?? "";
+  const parent = UUID_RE.test(rawParent) ? rawParent : null;
+  // Model pick from a shared link. Server-validated against the catalog (unknown → default),
+  // so the raw value is safe to carry; cap the length to keep the wire tidy.
+  const model = p.get("model")?.trim().slice(0, 40) || null;
+  const mode = p.get("mode") === "deep" ? "deep" : "quick";
+  return { q, budget, run: p.get("run") === "1", parent, model, mode };
+}
+
+const SUGGESTIONS = [
+  {
+    label: message("researchEntry.sqliteExample"),
+    q: "Compare SQLite WAL and rollback journals for a small web application. What are the concurrency and operational tradeoffs?",
+  },
+  {
+    label: message("researchEntry.educationExample"),
+    q: "Compare English-language educational YouTube topic ideas for children ages 6–9. Distinguish evidence from assumptions and explain the limits of claims about audience demand.",
+  },
+];
+
+export function AskForm({ disabled, showAnswerLanguageHelp = false, onAsk, payer = "treasury", parentId, parentVisibility, publicationPreference, conversation = false, clearOnSubmit = false, allowSharedPrefill = true, questionCapUsdc, restoreQuestion }: AskFormProps) {
+  const message = useUiMessages();
+  const { locale } = useLocale();
+  const ownVisibility = useResearchVisibility(parentVisibility, { enabled: !publicationPreference });
+  const visibility = publicationPreference ?? ownVisibility;
+  // An unbound draft is editable while the first visibility context is loading.
+  // Only the server response can bind it to an owner; it cannot be submitted yet.
+  const [draft, setDraft] = useState<{ question: string; wallet: string | null | undefined; revision: number } | null>(null);
+  const [draftEdited, setDraftEdited] = useState(false);
+  const question = draft && draft.revision === visibility.identityRevision &&
+    (draft.wallet === undefined || visibility.ready && draft.wallet === visibility.wallet) ? draft.question : "";
+  // Keep a generic dirty token during a same-owner recheck, even while the
+  // field is hidden. A confirmed binding/revision change removes it immediately.
+  useUnsavedNavigation(draftEdited && !!draft && draft.revision === visibility.identityRevision
+    && (draft.wallet === undefined || !visibility.ready || draft.wallet === visibility.wallet)
+    && draft.question.trim().length > 0);
+  const setQuestion = useCallback((next: string | ((current: string) => string)) => {
+    const publication = visibility.getSelection();
+    const revision = visibility.getIdentityRevision();
+    const wallet = publication?.expectedWallet;
+    setDraft(previous => ({ question: typeof next === "string" ? next : next(previous && (previous.wallet === undefined || previous.wallet === wallet) && previous.revision === revision ? previous.question : ""),
+      wallet, revision }));
+  }, [visibility.getSelection, visibility.getIdentityRevision]);
+  useEffect(() => {
+    const publication = visibility.getSelection();
+    const revision = visibility.getIdentityRevision();
+    setDraft(previous => {
+      if (!previous || previous.revision !== revision) return null;
+      return publication && previous.wallet === undefined ? { ...previous, wallet: publication.expectedWallet } : previous;
+    });
+  }, [visibility.ready, visibility.identityRevision, visibility.getSelection, visibility.getIdentityRevision]);
+  const { availability, checking, refresh } = useResearchAvailability();
+  const [dismissedRejection, setDismissedRejection] = useState<number | null>(null);
+  const researchPaused = availability?.state === "paused" ||
+    (restoreQuestion !== undefined && restoreQuestion.researchPaused !== false && restoreQuestion.id !== dismissedRejection);
+  const checkAvailability = async () => {
+    const observed = await refresh();
+    if (observed?.state === "not-paused" && restoreQuestion) setDismissedRejection(restoreQuestion.id);
+  };
+  const [budget, setBudget] = useState(0.05);
+  const restored = useRef<number | null>(null);
+  useEffect(() => {
+    if (!restoreQuestion || restored.current === restoreQuestion.id || !visibility.ready) return;
+    const publication = visibility.getSelection(), revision = visibility.getIdentityRevision();
+    if (!publication || restoreQuestion.expectedWallet !== undefined && restoreQuestion.expectedWallet !== publication.expectedWallet
+      || restoreQuestion.expectedRevision !== undefined && restoreQuestion.expectedRevision !== revision) return;
+    const timer = window.setTimeout(() => {
+      const current = visibility.getSelection();
+      if (!current || current.expectedWallet !== publication.expectedWallet || current.visibility !== publication.visibility
+        || visibility.getIdentityRevision() !== revision) return;
+      restored.current = restoreQuestion.id;
+      setQuestion(current => restoreQuestion.replace || !current.trim() ? restoreQuestion.question : current);
+      setDraftEdited(true);
+      if (typeof restoreQuestion.budget === "number" && Number.isFinite(restoreQuestion.budget) && restoreQuestion.budget >= 0)
+        setBudget(Math.min(0.08, restoreQuestion.budget));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [restoreQuestion, setQuestion, visibility.ready, visibility.getSelection, visibility.getIdentityRevision]);
+  const maximumBudget = payer === "session" && questionCapUsdc !== undefined && Number.isFinite(questionCapUsdc) && questionCapUsdc > 0
+    ? Math.min(0.08, questionCapUsdc) : 0.08;
+  const effectiveBudget = Math.min(budget, maximumBudget);
+  // Reasoning-model pick, chat-app style. "" = server default (DeepSeek). The picker only
+  // renders when the server offers more than one model; every pick falls back server-side.
+  const [model, setModel] = useState("");
+  const [researchMode, setResearchMode] = useState<ResearchMode>("quick");
+  const [scholarly, setScholarly] = useState(false);
+  const [paidScholarly, setPaidScholarly] = useState(false);
+  const [reviewFirst, setReviewFirst] = useState(false);
+  const [models, setModels] = useState<PickerModel[]>([]);
+  const testnet = browserPaymentProfile().testnet;
+  const advancedRef = useRef<HTMLDetailsElement>(null);
+  const questionRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const revealBudget = () => { if (advancedRef.current) advancedRef.current.open = true; };
+    document.addEventListener("keryx:tour-budget", revealBudget);
+    return () => document.removeEventListener("keryx:tour-budget", revealBudget);
+  }, []);
+  useEffect(() => {
+    fetch("/api/models")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: { models?: PickerModel[] }) => setModels(data.models ?? []))
+      .catch(() => {
+        // Non-fatal: without the list the form simply asks with the default model.
+      });
+  }, []);
+  // Seed from a shared link after mount (not in useState initializer) so the server
+  // and first client render both start empty — no hydration mismatch on the controlled inputs.
+  const prefilled = useRef(false);
+  // Survives an edit: a reader can land from a follow-up link, reword the question, and the
+  // dispatch still threads onto the parent.
+  const parentRef = useRef<string | undefined>(undefined);
+  const sharedAutoRef = useRef<ReturnType<typeof readSharedAsk> | null>(null);
+  const [sharedQuestion, setSharedQuestion] = useState<string | null>(null);
+  useEffect(() => {
+    if (prefilled.current) return;
+    if (!allowSharedPrefill) { prefilled.current = true; return; }
+    const timer = window.setTimeout(() => {
+      // Strict Mode may clean up the first scheduled effect before it runs.
+      // Consume the URL only when its callback actually applies the draft.
+      prefilled.current = true;
+      const { q, budget: b, run, parent, model: m, mode } = readSharedAsk();
+      if (q) setSharedQuestion(q);
+      if (b !== null) setBudget(b);
+      if (m) setModel(m);
+      setResearchMode(mode);
+      parentRef.current = parent ?? undefined;
+      // Opt-in auto-dispatch: only when the link explicitly asks for it and a question is present.
+      // Treasury free-trial rate limits still apply, so this can't be turned into a spend amplifier.
+      if (q && run) sharedAutoRef.current = { q, budget: b, run, parent, model: m, mode };
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [allowSharedPrefill]);
+  useEffect(() => {
+    if (!visibility.ready || sharedQuestion === null) return;
+    setQuestion(sharedQuestion); setSharedQuestion(null);
+  }, [visibility.ready, sharedQuestion, setQuestion]);
+
+  useEffect(() => {
+    const shared = sharedAutoRef.current;
+    if (!shared || sharedQuestion !== null || checking || !visibility.ready) return;
+    const publication = visibility.getSelection();
+    if (!publication) return;
+    const revision = visibility.getIdentityRevision();
+    sharedAutoRef.current = null;
+    if (availability?.state !== "not-paused" || researchPaused || disabled || payer === "paused") return;
+    const timer = window.setTimeout(() => {
+      const current = visibility.getSelection();
+      if (!current || revision !== visibility.getIdentityRevision() || current.expectedWallet !== publication.expectedWallet || current.visibility !== publication.visibility) return;
+      onAsk(shared.q!, Math.min(shared.budget ?? 0.05, maximumBudget), shared.parent ?? undefined,
+        shared.model ?? undefined, shared.mode, undefined, undefined, undefined, publication);
+      setDraftEdited(false);
+      if (clearOnSubmit) setQuestion("");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [availability, checking, question, sharedQuestion, researchPaused, disabled, payer, onAsk, maximumBudget, clearOnSubmit, visibility.ready, visibility.getSelection, visibility.getIdentityRevision, setQuestion]);
+
+  const submit = () => {
+    const q = question.trim();
+    if (!q || disabled || payer === "paused" || checking || researchPaused) return;
+    const publication = visibility.getSelection();
+    if (!publication || !draft || draft.revision !== visibility.getIdentityRevision() || draft.wallet !== publication.expectedWallet) return;
+    onAsk(q, effectiveBudget, parentId === undefined ? parentRef.current : parentId ?? undefined, model || undefined, researchMode, scholarly, paidScholarly && payer === "session" && testnet, reviewFirst, publication);
+    setDraftEdited(false);
+    if (clearOnSubmit) setQuestion("");
+  };
+
+  const offerLanguageHelp = showAnswerLanguageHelp && visibility.ready && visibility.visibility === "public" &&
+    !conversation && !parentId && !parentRef.current && !paidScholarly;
+  const availabilityPanel = (
+    <div className="mt-3 rounded-xl border border-line bg-panel p-3 text-sm text-ink-2" role="status">
+      <p lang="und" dir="auto">{checking ? <UiMessage messageKey="researchEntry.checking" /> : researchPaused ? RESEARCH_PAUSED_MESSAGE :
+        availability?.message ?? RESEARCH_AVAILABILITY_UNKNOWN}</p>
+      <div className="flex flex-wrap gap-x-3">
+        <a href="/me/asks" className="inline-flex min-h-11 items-center py-3 underline"><UiMessage messageKey="researchEntry.savedReports" /></a>
+        <button type="button" onClick={() => void checkAvailability()} disabled={checking} className="min-h-11 py-3 underline"><UiMessage messageKey="researchEntry.checkAvailability" /></button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div data-tour="ask-form">
+      <div className="kx-research-composer rounded-2xl border border-line bg-panel shadow-[0_16px_48px_-36px_rgba(0,0,0,0.7)]">
+        <div className="p-4 sm:p-6">
+          <Label htmlFor="ask-question" className="sr-only">
+            <UiMessage messageKey="researchEntry.question" />
+          </Label>
+          <TextAreaBase
+            id="ask-question"
+            lang="und"
+            dir="auto"
+            ref={questionRef}
+            value={question}
+            onChange={(event) => { sharedAutoRef.current = null; setSharedQuestion(null); setQuestion(event.currentTarget.value); setDraftEdited(true); }}
+            onKeyDown={(e) => {
+              if (!e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229 && (e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(); }
+            }}
+            placeholder={message("researchEntry.placeholder")}
+            rows={2}
+            maxLength={MAX_ASK_QUESTION_CHARS}
+            disabled={disabled}
+            aria-describedby="ask-keyboard-hint"
+            className="min-h-[112px] w-full resize-y rounded-xl border-0 bg-transparent px-2 py-3 font-sans text-base leading-7 text-ink shadow-none placeholder:text-ink-3 focus-visible:ring-0 sm:min-h-[132px]"
+          />
+          <p id="ask-keyboard-hint" className="mt-2 text-xs text-ink-3"><UiMessage messageKey="researchEntry.keyboardHint" /></p>
+          {(researchPaused || !checking && !availability) && availabilityPanel}
+
+          <div className="mt-4 border-t border-line pt-4">
+          <div className="grid items-end gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-6">
+          <fieldset className="min-w-0">
+            <legend className="font-sans text-sm font-semibold text-ink"><UiMessage messageKey="researchEntry.depth" /></legend>
+            <div className="mt-1.5 flex flex-wrap gap-2 [overflow-wrap:anywhere]">
+              {(["quick", "deep"] as const).map((mode) => (
+                <label key={mode} className={`kx-research-depth flex min-h-12 min-w-0 flex-[1_1_auto] flex-wrap cursor-pointer items-center gap-2 rounded-lg border px-4 py-2.5 font-sans text-sm font-medium capitalize transition-colors focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-seal ${researchMode === mode ? "border-seal/50 bg-seal/10 text-seal" : "border-line bg-paper text-ink-2 hover:border-seal/60"} ${disabled ? "cursor-not-allowed opacity-50" : ""}`}>
+                  <input type="radio" name="research-depth" value={mode} checked={researchMode === mode}
+                    onChange={() => setResearchMode(mode)} disabled={disabled} className="size-3.5 shrink-0 accent-seal" />
+                  {mode === "quick" ? <Zap aria-hidden="true" className="size-3.5 shrink-0" /> : <BookOpen aria-hidden="true" className="size-3.5 shrink-0" />}
+                  <UiMessage messageKey={mode === "quick" ? "researchEntry.quick" : "researchEntry.deep"} />
+                </label>
+              ))}
+            </div>
+            <p className="mt-2 font-sans text-sm leading-5 text-ink-2" aria-live="polite">
+              <UiMessage messageKey={researchMode === "quick" ? "researchEntry.quickHint" : "researchEntry.deepHint"} />
+            </p>
+          </fieldset>
+            <Button type="button" onPress={submit} isDisabled={disabled || payer === "paused" || checking || researchPaused || !visibility.ready || draft?.wallet === undefined || question.trim().length === 0}
+              data-tour="dispatch-btn"
+              size="lg" color="primary"
+              iconTrailing={<ArrowUpRight data-icon="trailing" aria-hidden="true" />}
+              className="kx-research-submit kx-press min-h-12 w-full rounded-xl sm:mb-[23px] sm:w-auto sm:min-w-44">
+              <UiMessage messageKey={disabled ? "researchEntry.researching" : researchPaused ? "researchEntry.paused" : "researchEntry.ask"} />
+            </Button>
+          </div>
+            {offerLanguageHelp && <AnswerLanguageHelp />}
+            {!conversation && <div role="group" className="mt-4 flex flex-wrap gap-2" aria-label={message("researchEntry.examplesLabel")} lang={message("researchEntry.examplesLabel") === englishMessages["researchEntry.examplesLabel"] ? "en" : locale}>
+              {SUGGESTIONS.map((s) => (
+                <Button key={s.label} type="button" isDisabled={disabled} onPress={() => { sharedAutoRef.current = null; setSharedQuestion(null); setQuestion(s.q); questionRef.current?.focus(); }}
+                  size="sm" color="secondary"
+                  iconTrailing={<ArrowRight data-icon="trailing" aria-hidden="true" />}
+                  className="kx-research-example h-auto min-h-11 max-w-full whitespace-normal rounded-lg px-3 py-2 text-left font-sans text-xs leading-snug text-ink-2 shadow-none">
+                  <UiText source={s.label} />
+                </Button>
+              ))}
+            </div>}
+            <div className="mt-4 border-l-2 border-brass/60 pl-3">
+            <p className="text-sm leading-5 text-ink-2" data-testid="composer-payer-notice">
+              <UiMessage messageKey={payer === "session" ? "researchEntry.sessionPayerNotice" : payer === "paused"
+                ? "researchEntry.unavailableSessionNotice" : payer === "expired" ? "researchEntry.expiredSessionNotice" : "researchEntry.freeTrialNotice"}
+                values={payer === "session" ? { network: currentArcLabel } : undefined} />
+            </p>
+            {visibility.ready && <p className="mt-1 text-xs leading-4 text-ink-3" role="status" data-testid="composer-publication-notice">
+              <UiMessage messageKey={visibility.visibility === "public" ? "researchTrial.publicNotice" : `researchVisibility.${visibility.visibility}Notice`} />
+            </p>}
+            {visibility.status === "error" && <p className="mt-2 text-sm text-seal" role="status">
+              <UiMessage messageKey="researchVisibility.unavailable" /> {" "}
+              <button type="button" className="min-h-11 underline" onClick={() => { if (advancedRef.current) advancedRef.current.open = true; }}><UiMessage messageKey="researchEntry.moreOptions" /></button>
+            </p>}
+            </div>
+          </div>
+          <details ref={advancedRef} className="group/options mt-4 border-t border-line pt-1">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 font-sans text-sm font-medium text-ink-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-seal [&::-webkit-details-marker]:hidden">
+              <UiMessage messageKey="researchEntry.moreOptions" />
+              <ChevronDown aria-hidden="true" className="size-4 shrink-0 group-open/options:rotate-180" />
+            </summary>
+            <div className="pb-2 pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2" data-tour="budget">
+                <label htmlFor="ask-budget" className="font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-2"><UiMessage messageKey="researchEntry.maximumBudget" /></label>
+                <span className="font-display text-[25px] font-semibold tabular-nums text-seal">${formatRecordedAmount(effectiveBudget, { minimumFractionDigits: 6, useGrouping: false })}</span>
+              </div>
+              <input id="ask-budget" type="range" min={0} max={maximumBudget} step={maximumBudget < 0.01 ? 0.000001 : 0.005} value={effectiveBudget}
+                disabled={disabled} onChange={(e) => setBudget(parseFloat(e.target.value))}
+                className="mt-2 w-full" aria-label={message("researchEntry.maximumBudgetLabel")} />
+              <p className="mt-2 font-serif text-[13px] text-ink-2"><UiMessage messageKey="researchEntry.budgetNotice" /></p>
+              {payer === "session" && <p className="mt-2 text-xs text-ink-2"><UiMessage messageKey="researchEntry.sessionNotice" values={{ network: currentArcLabel, amount: formatRecordedAmount(effectiveBudget, { minimumFractionDigits: 6, useGrouping: false }) }} /></p>}
+              {models.length > 1 && (
+                <label className="mt-3 flex flex-col gap-1 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-2">
+                  <UiMessage messageKey="researchEntry.model" />
+                  <select value={model} disabled={disabled} onChange={(e) => setModel(e.target.value)}
+                    title={models.find((m) => m.id === model)?.note ?? message("researchEntry.defaultModelNote")}
+                    className="min-h-11 w-full border border-ink bg-paper px-3 py-2 text-[12px] font-normal normal-case text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-seal">
+                    <option value="" lang={message("researchEntry.defaultModel") === englishMessages["researchEntry.defaultModel"] ? "en" : locale}>{message("researchEntry.defaultModel")}</option>
+                    {models.filter((m) => m.id !== DEFAULT_MODEL_ID).map((m) => (
+                      <option key={m.id} value={m.id} title={m.note}>{m.label}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+            <ResearchVisibilityPicker preference={visibility} disabled={disabled} parentVisibility={parentVisibility} compact />
+            <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-2 font-mono text-xs text-ink">
+              <input type="checkbox" checked={scholarly} disabled={disabled} onChange={event => setScholarly(event.target.checked)} />
+              <UiMessage messageKey="researchEntry.scholarly" />
+            </label>
+            <p className="text-xs text-ink-3"><UiMessage messageKey="researchEntry.scholarlyNotice" /></p>
+            {testnet && <>
+              <label className="mt-2 flex min-h-11 items-center gap-2 font-mono text-xs text-ink"><input type="checkbox" checked={paidScholarly} disabled={disabled || payer !== "session"} onChange={event => setPaidScholarly(event.target.checked)} /> <UiMessage messageKey="researchEntry.paidScholarly" /></label>
+              <p className="text-xs text-ink-3"><UiMessage messageKey="researchEntry.paidScholarlyNotice" /></p>
+            </>}
+            <label className="mt-2 flex min-h-11 items-center gap-2 font-mono text-xs text-ink"><input type="checkbox" checked={reviewFirst} disabled={disabled || payer !== "session" && !reviewFirst} onChange={event => setReviewFirst(event.target.checked)} /><span lang="en" dir="ltr">{reviewCopy.mode}</span></label>
+            <p lang="en" dir="ltr" className="mt-1 text-xs text-ink-3">{reviewCopy.modeNotice}</p>
+            <a href={paperLibraryHref(question)} aria-label={message("researchEntry.metadataLookupLabel")} lang={message("researchEntry.metadataLookupLabel") === englishMessages["researchEntry.metadataLookupLabel"] ? "en" : locale} className="inline-flex min-h-11 items-center font-serif text-sm text-seal underline" data-testid="paper-metadata-handoff">
+              <UiMessage messageKey="researchEntry.metadataLookup" />
+            </a>
+            <p className="mt-2 text-xs text-ink-3"><UiMessage messageKey="researchEntry.searchNotice" /></p>
+          </details>
+        </div>
+      </div>
+    </div>
+  );
+}

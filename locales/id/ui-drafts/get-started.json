@@ -1,0 +1,420 @@
+{
+  "status": "machineDraft",
+  "review": null,
+  "sourcePath": "locales/en/get-started.ts",
+  "sourceSha256": "9450616cf1959d638de574cbeec2f3a445dbdea9d93bc8dcd67301299373e2fa",
+  "entries": {
+    "navigation.start": {
+      "source": "Get started",
+      "text": "Mulai"
+    },
+    "navigation.download": {
+      "source": "Download",
+      "text": "Unduh"
+    },
+    "navigation.integrations": {
+      "source": "Integrations",
+      "text": "Integrasi"
+    },
+    "navigation.label": {
+      "source": "Ways to use Keryx",
+      "text": "Cara menggunakan Keryx"
+    },
+    "navigation.downloadAction": {
+      "source": "Get the app or extension",
+      "text": "Dapatkan aplikasi atau ekstensi"
+    },
+    "navigation.connectAction": {
+      "source": "Connect MCP, API or CLI",
+      "text": "Hubungkan MCP, API, atau CLI"
+    },
+    "start.title": {
+      "source": "Your research. Wherever you work.",
+      "text": "Riset Anda, di mana pun Anda bekerja."
+    },
+    "start.body": {
+      "source": "Ask in your browser, research a page you are reading, connect your AI assistant, or build Keryx into your own workflow. Pick a starting point below.",
+      "text": "Bertanya di peramban, teliti halaman yang sedang dibaca, hubungkan asisten AI, atau integrasikan Keryx ke alat Anda. Pilih cara untuk memulai."
+    },
+    "start.try": {
+      "source": "Try Keryx in the browser",
+      "text": "Coba Keryx di peramban"
+    },
+    "start.browse": {
+      "source": "Browse downloads",
+      "text": "Lihat unduhan"
+    },
+    "start.firstTitle": {
+      "source": "Your first cited answer",
+      "text": "Jawaban pertama Anda dengan sitasi"
+    },
+    "start.choose": {
+      "source": "Choose how you use Keryx",
+      "text": "Pilih cara menggunakan Keryx"
+    },
+    "common.steps": {
+      "source": "Get set up",
+      "text": "Siapkan"
+    },
+    "common.requirements": {
+      "source": "What you need",
+      "text": "Yang Anda perlukan"
+    },
+    "common.help": {
+      "source": "Need a hand?",
+      "text": "Perlu bantuan?"
+    },
+    "common.support": {
+      "source": "Contact support",
+      "text": "Hubungi dukungan"
+    },
+    "common.docs": {
+      "source": "Read the full guide",
+      "text": "Baca panduan lengkap"
+    },
+    "common.copy": {
+      "source": "Copy",
+      "text": "Salin"
+    },
+    "common.copied": {
+      "source": "Copied",
+      "text": "Tersalin"
+    },
+    "navigation.entryBody": {
+      "source": "Use Keryx in your browser, on Windows, from an AI assistant or inside your own tools. Find the right setup and see what each option supports.",
+      "text": "Gunakan Keryx di browser, di Windows, melalui asisten AI, atau di alat buatan Anda sendiri. Temukan pengaturan yang tepat dan lihat kemampuan setiap pilihan."
+    },
+    "common.status": {
+      "source": "Service status",
+      "text": "Status layanan"
+    },
+    "common.version": {
+      "source": "Version",
+      "text": "Versi"
+    },
+    "common.release": {
+      "source": "Release notes & checksums",
+      "text": "Catatan rilis dan checksum"
+    },
+    "start.accountTitle": {
+      "source": "An account is optional for the trial",
+      "text": "Akun bersifat opsional untuk uji coba"
+    },
+    "start.accountAction": {
+      "source": "Sign in & account setup",
+      "text": "Masuk dan siapkan akun"
+    },
+    "start.faqTitle": {
+      "source": "Before you install",
+      "text": "Sebelum menginstal"
+    },
+    "start.faq.0.question": {
+      "source": "Which option should I choose?",
+      "text": "Pilihan mana yang sebaiknya saya gunakan?"
+    },
+    "start.faq.2.question": {
+      "source": "Can I use Keryx on my phone, Mac or Linux?",
+      "text": "Bisakah saya menggunakan Keryx di ponsel, Mac, atau Linux?"
+    },
+    "start.faq.2.answer": {
+      "source": "Use the web app in a supported browser. The downloadable Operator alpha currently supports Windows x64. There are no Keryx mobile, macOS or Linux installers offered here; compatible MCP and API clients have their own platform requirements.",
+      "text": "Gunakan aplikasi web di browser yang didukung. Versi alfa Operator yang dapat diunduh saat ini mendukung Windows x64. Tidak ada penginstal Keryx untuk seluler, macOS, atau Linux yang ditawarkan di sini; klien MCP dan API yang kompatibel memiliki persyaratan platform masing-masing."
+    },
+    "surfaces.0.title": {
+      "source": "Web app",
+      "text": "Aplikasi web"
+    },
+    "surfaces.0.tag": {
+      "source": "No install",
+      "text": "Tanpa instalasi"
+    },
+    "surfaces.0.body": {
+      "source": "Ask a shareable question, inspect source choices and reopen a cited report.",
+      "text": "Ajukan pertanyaan yang boleh dibagikan, periksa pilihan sumber, dan buka kembali laporan dengan sitasi."
+    },
+    "surfaces.0.action": {
+      "source": "Open the web app",
+      "text": "Buka aplikasi web"
+    },
+    "surfaces.1.title": {
+      "source": "Windows desktop",
+      "text": "Desktop Windows"
+    },
+    "surfaces.1.tag": {
+      "source": "Operator alpha",
+      "text": "Operator alpha"
+    },
+    "surfaces.1.action": {
+      "source": "Download & install",
+      "text": "Unduh dan instal"
+    },
+    "surfaces.2.title": {
+      "source": "Browser extension",
+      "text": "Ekstensi browser"
+    },
+    "surfaces.2.tag": {
+      "source": "Manual install",
+      "text": "Instalasi manual"
+    },
+    "surfaces.2.body": {
+      "source": "Highlight text, ask from your toolbar and keep the original source links close by.",
+      "text": "Pilih teks, ajukan pertanyaan dari bilah alat, dan simpan tautan sumber asli agar mudah diakses."
+    },
+    "surfaces.2.action": {
+      "source": "Install the extension",
+      "text": "Instal ekstensi"
+    },
+    "surfaces.3.title": {
+      "source": "MCP for AI assistants",
+      "text": "MCP untuk asisten AI"
+    },
+    "surfaces.3.tag": {
+      "source": "Remote or local",
+      "text": "Jarak jauh atau lokal"
+    },
+    "surfaces.3.body": {
+      "source": "Bring Keryx tools into Codex, Claude Code, Cursor or a compatible MCP client.",
+      "text": "Tambahkan alat Keryx ke Codex, Claude Code, Cursor, atau klien MCP yang kompatibel."
+    },
+    "surfaces.3.action": {
+      "source": "Choose an MCP connection",
+      "text": "Pilih koneksi MCP"
+    },
+    "surfaces.4.title": {
+      "source": "API for developers",
+      "text": "API untuk pengembang"
+    },
+    "surfaces.4.tag": {
+      "source": "OpenAI compatible",
+      "text": "Kompatibel dengan OpenAI"
+    },
+    "surfaces.4.body": {
+      "source": "Integrate cited research and streamed source decisions into your own application.",
+      "text": "Integrasikan riset dengan sitasi dan keputusan pemilihan sumber yang dikirim secara streaming ke aplikasi Anda sendiri."
+    },
+    "surfaces.4.action": {
+      "source": "Explore the API",
+      "text": "Jelajahi API"
+    },
+    "surfaces.5.title": {
+      "source": "Command line",
+      "text": "Baris perintah"
+    },
+    "surfaces.5.tag": {
+      "source": "From source",
+      "text": "Dari kode sumber"
+    },
+    "surfaces.5.body": {
+      "source": "Inspect Operator tasks or use the documented research and buyer commands.",
+      "text": "Periksa tugas Operator atau gunakan perintah riset dan pembelian yang didokumentasikan."
+    },
+    "surfaces.5.action": {
+      "source": "Set up the CLI",
+      "text": "Siapkan CLI"
+    },
+    "surfaces.6.title": {
+      "source": "Chat bots",
+      "text": "Bot percakapan"
+    },
+    "surfaces.6.tag": {
+      "source": "Telegram · Discord · Slack",
+      "text": "Telegram · Discord · Slack"
+    },
+    "surfaces.6.body": {
+      "source": "Ask Keryx from a chat or a community workspace.",
+      "text": "Tanyakan kepada Keryx melalui percakapan atau ruang kerja komunitas."
+    },
+    "surfaces.6.action": {
+      "source": "Find your chat app",
+      "text": "Temukan aplikasi percakapan Anda"
+    },
+    "download.title": {
+      "source": "Bring Keryx to your workflow.",
+      "text": "Hadirkan Keryx dalam alur kerja Anda."
+    },
+    "download.desktopTitle": {
+      "source": "Keryx Operator for Windows",
+      "text": "Keryx Operator untuk Windows"
+    },
+    "download.desktopTag": {
+      "source": "Windows x64 · Alpha",
+      "text": "Windows x64 · Alfa"
+    },
+    "download.desktopRequirements": {
+      "source": "Windows x64 and Microsoft Edge WebView2 Runtime. Node is bundled; a separate Node installation is not required. Updates are manual in this alpha.",
+      "text": "Windows x64 dan Microsoft Edge WebView2 Runtime. Node sudah disertakan; Anda tidak perlu menginstalnya secara terpisah. Pembaruan pada versi alfa ini dilakukan secara manual."
+    },
+    "download.installer": {
+      "source": "Choose Windows installer",
+      "text": "Pilih penginstal Windows"
+    },
+    "download.portable": {
+      "source": "Choose portable ZIP",
+      "text": "Pilih ZIP portabel"
+    },
+    "download.manifest": {
+      "source": "Release manifest and checksums",
+      "text": "Manifes rilis dan checksum"
+    },
+    "download.webview": {
+      "source": "Get WebView2 Runtime",
+      "text": "Dapatkan WebView2 Runtime"
+    },
+    "download.desktopSteps.0": {
+      "source": "Open the release assets and choose the -setup.exe installer or -win32-x64.zip portable build. Review the matching -release.json manifest and -SHA256SUMS.txt checksums.",
+      "text": "Buka berkas rilis dan pilih penginstal -setup.exe atau versi portabel -win32-x64.zip. Periksa manifes -release.json dan checksum -SHA256SUMS.txt yang sesuai."
+    },
+    "download.desktopSteps.1": {
+      "source": "Run the installer in your normal Windows user session. Install WebView2 Runtime if it is missing. For the portable build, extract and keep the whole folder together.",
+      "text": "Jalankan penginstal dalam sesi pengguna Windows Anda yang biasa. Instal WebView2 Runtime jika belum ada. Untuk versi portabel, ekstrak isinya dan simpan seluruh folder tetap bersama."
+    },
+    "download.extensionTitle": {
+      "source": "Keryx in your browser",
+      "text": "Keryx di browser Anda"
+    },
+    "download.extensionTag": {
+      "source": "Chromium · Manual install",
+      "text": "Chromium · Instalasi manual"
+    },
+    "download.extensionBody": {
+      "source": "Ask about selected text from the toolbar or right-click menu. Inspect the research trace, open cited sources and export recorded references from a completed report.",
+      "text": "Ajukan pertanyaan tentang teks yang dipilih melalui bilah alat atau menu klik kanan. Periksa alur riset, buka sumber yang dikutip, dan ekspor referensi yang tercatat dari laporan yang telah selesai."
+    },
+    "download.extensionDownload": {
+      "source": "Download extension ZIP",
+      "text": "Unduh ZIP ekstensi"
+    },
+    "download.extensionRequirements": {
+      "source": "Use Chrome or Edge on desktop, or another compatible Chromium browser. For the ZIP, follow the unpacked-install steps below and enable Developer mode. The public Chrome Web Store listing is also available; check its displayed version before installing.",
+      "text": "Gunakan Chrome atau Edge di komputer, atau browser Chromium lain yang kompatibel. Untuk ZIP, ikuti langkah pemasangan tanpa paket di bawah dan aktifkan mode pengembang (Developer mode). Halaman publik di Chrome Web Store juga tersedia; periksa versi yang ditampilkan sebelum menginstal."
+    },
+    "download.extensionSteps.0": {
+      "source": "Download and extract the extension ZIP. The extracted directory contains manifest.json directly.",
+      "text": "Unduh dan ekstrak ZIP ekstensi. Berkas manifest.json berada langsung di dalam folder hasil ekstraksi."
+    },
+    "download.extensionSteps.1": {
+      "source": "Open chrome://extensions in Chrome or edge://extensions in Edge, then turn on Developer mode.",
+      "text": "Buka chrome://extensions di Chrome atau edge://extensions di Edge, lalu aktifkan mode pengembang (Developer mode)."
+    },
+    "download.extensionSteps.2": {
+      "source": "Choose Load unpacked and select the extracted directory containing manifest.json. Pin Keryx to your toolbar.",
+      "text": "Pilih Muat yang belum dipaketkan (Load unpacked), lalu pilih folder hasil ekstraksi yang berisi manifest.json. Sematkan Keryx ke bilah alat Anda."
+    },
+    "download.alternativeTitle": {
+      "source": "Use Keryx without a download",
+      "text": "Gunakan Keryx tanpa mengunduh"
+    },
+    "download.alternativeBody": {
+      "source": "The web app works on desktop and mobile browsers. AI assistants can connect through remote MCP; developers can use the hosted API.",
+      "text": "Aplikasi web berfungsi di browser komputer dan ponsel. Asisten AI dapat terhubung melalui MCP jarak jauh; pengembang dapat menggunakan API yang dihosting."
+    },
+    "integrations.title": {
+      "source": "Keryx, connected.",
+      "text": "Keryx, terhubung."
+    },
+    "integrations.mcpTitle": {
+      "source": "Connect an AI assistant with MCP",
+      "text": "Hubungkan asisten AI dengan MCP"
+    },
+    "integrations.remoteTitle": {
+      "source": "Remote MCP",
+      "text": "MCP jarak jauh"
+    },
+    "integrations.remoteAction": {
+      "source": "Open remote MCP setup",
+      "text": "Buka pengaturan MCP jarak jauh"
+    },
+    "integrations.remoteEndpoint": {
+      "source": "Hosted MCP endpoint",
+      "text": "Endpoint MCP yang dihosting"
+    },
+    "integrations.stdioTitle": {
+      "source": "Local stdio MCP",
+      "text": "MCP lokal melalui stdio"
+    },
+    "integrations.stdioConfig": {
+      "source": "Stdio client configuration",
+      "text": "Konfigurasi klien Stdio"
+    },
+    "integrations.apiTitle": {
+      "source": "Build with the API",
+      "text": "Kembangkan dengan API"
+    },
+    "integrations.apiBase": {
+      "source": "Chat Completions base URL",
+      "text": "URL dasar Chat Completions"
+    },
+    "integrations.apiModel": {
+      "source": "Model",
+      "text": "Model"
+    },
+    "integrations.apiConfigTitle": {
+      "source": "Connect an OpenAI-compatible client",
+      "text": "Hubungkan klien yang kompatibel dengan OpenAI"
+    },
+    "integrations.apiReadOnly": {
+      "source": "Check available models (Bash, read-only)",
+      "text": "Periksa model yang tersedia (Bash, hanya baca)"
+    },
+    "integrations.apiReference": {
+      "source": "OpenAPI reference",
+      "text": "Referensi OpenAPI"
+    },
+    "integrations.apiRecipes": {
+      "source": "SDK examples & streaming guide",
+      "text": "Contoh SDK dan panduan streaming"
+    },
+    "integrations.cliTitle": {
+      "source": "Work from the command line",
+      "text": "Bekerja dari baris perintah"
+    },
+    "integrations.cliBody": {
+      "source": "The source checkout includes Operator, research and buyer commands. The CLI is currently distributed with the repository; keryx-mcp is the separate npm MCP package.",
+      "text": "Kode sumber mencakup perintah Operator, riset, dan pembeli. CLI saat ini didistribusikan bersama repositori; keryx-mcp adalah paket MCP npm yang terpisah."
+    },
+    "integrations.cliRequirements": {
+      "source": "Git, Node 22.19+ or 24+, and the pinned npm 11.19.0 installer. Clone the project and install dependencies before running commands.",
+      "text": "Git, Node 22.19+ atau 24+, dan npm pada versi yang ditetapkan, 11.19.0. Klon proyek dan instal dependensinya sebelum menjalankan perintah."
+    },
+    "integrations.cliSetup": {
+      "source": "Install from source & inspect help",
+      "text": "Instal dari kode sumber dan lihat bantuan"
+    },
+    "integrations.cliGuide": {
+      "source": "CLI commands & configuration",
+      "text": "Perintah dan konfigurasi CLI"
+    },
+    "integrations.botsTitle": {
+      "source": "Ask from your chat app",
+      "text": "Bertanya dari aplikasi chat Anda"
+    },
+    "integrations.telegramBody": {
+      "source": "Open the Keryx bot and send a question. In a group, use /ask followed by your question.",
+      "text": "Buka bot Keryx dan kirim pertanyaan. Di grup, gunakan /ask diikuti pertanyaan Anda."
+    },
+    "integrations.telegramAction": {
+      "source": "Open Telegram bot",
+      "text": "Buka bot Telegram"
+    },
+    "integrations.discordAction": {
+      "source": "Add to Discord",
+      "text": "Tambahkan ke Discord"
+    },
+    "integrations.slackAction": {
+      "source": "Slack administrator setup",
+      "text": "Pengaturan untuk administrator Slack"
+    },
+    "integrations.selfHost": {
+      "source": "Self-hosting guide",
+      "text": "Panduan hosting mandiri"
+    },
+    "integrations.discordBody": {
+      "source": "Add the Keryx application to a server you manage, then use /ask with your question. Review Discord's requested permissions before installing.",
+      "text": "Tambahkan aplikasi Keryx ke server yang Anda kelola, lalu gunakan /ask diikuti pertanyaan Anda. Tinjau izin yang diminta Discord sebelum memasang aplikasi."
+    },
+    "integrations.slackBody": {
+      "source": "A workspace administrator creates the Slack app from Keryx's documented manifest and configures /keryx. A public one-click OAuth installer is not offered here.",
+      "text": "Administrator ruang kerja membuat aplikasi Slack dari manifes Keryx yang didokumentasikan dan mengonfigurasi /keryx. Pemasang OAuth publik sekali klik tidak disediakan di sini."
+    }
+  }
+}

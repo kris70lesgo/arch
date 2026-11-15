@@ -1,0 +1,659 @@
+# Keryx System Architecture
+
+**Current network:** Arc mainnet, observed October 4, 2026; [status and contracts](mainnet-status.md).
+The overview below follows the mainnet profile. Detailed legacy sequences and risks
+were originally documented at v0.19.0 (August 25); current consent, durable admission,
+custody, hosted roles and recovery are specified in [server runtime](mainnet-server-runtime.md)
+and [runtime domains](mainnet-runtime-domains.md). Phase completion is historical.
+
+---
+
+## System Overview
+
+Keryx is a non-custodial AI citation-payment agent dApp on Arc mainnet. The system spans three domains:
+
+1. **User browser** — SIWE wallet auth, session key generation, x402 co-signing
+2. **Backend services** — agent brain, DB, IPFS encryption, API keys
+3. **Blockchain + Circle** — SourceRegistry on Arc, x402 settlement via Circle Gateway, USDC as settlement token
+
+---
+
+## High-Level Data Flows
+
+### User Interactive Flow (Web App)
+
+```
+BROWSER                              KERYX SERVER                     ARC + CIRCLE
+────────                             ────────────                     ────────────
+
+1. User visits keryx.cc
+   ├─ See hero + "Ask" CTA
+   └─ Not authed → /connect button
+
+2. Connect Wallet (MetaMask Arc mainnet)
+   ├─ wagmi detects wallet
+   ├─ GET /api/auth/nonce → receive nonce cookie (5m TTL)
+   └─ User signs SIWE message in wallet (no tx)
+
+3. POST /api/auth/verify {message, signature}
+   ├─ Server: siwe.verify() + role derivation (creator/dev/asker)
+   └─ Return: JWT session cookie (7d TTL) + httpOnly flag
+
+4. User on /ask page
+   ├─ If low on USDC → /faucet drip (testnet only)
+   └─ Click "Fund Session"
+
+5. Fund Session (one MetaMask tx)
+   ├─ Browser: generatePrivateKey() → ephemeral session key (held in tab)
+   ├─ sessAddr = privateKeyToAccount(sk).address
+   ├─ User: MetaMask tx ×1 → Transfer(sessAddr, budget) + native-USDC for gas
+   └─ Browser: viem GatewayClient.deposit(budget) into Circle Gateway
+
+6. POST /api/session/grant {sessAddr, budget, txHash}
+   ├─ Server stores grant: {sessAddr, cap, spent:0, status:active}
+   └─ Session is now funded and ready
+
+7. User asks question + sets budget + Quick/Deep depth
+   ├─ POST /api/ask {question, budget, sessionId, mode}
+   └─ Server streams SSE:
+
+8. SSE Loop: Agent Execution (inside agent/run-agent.ts)
+   ├─ decompose: break question into sub-claims
+   ├─ discover: query registry + signed offer book; select one relevant article per publication
+   ├─ decide: BUY / SKIP / CACHE per exact version and effective price (rationale logged)
+   ├─ coverage pre-check: free previews must map every payable read to a real sub-claim
+   │  └─ may downgrade BUY/CACHE → SKIP; cannot add spend, payTo, or reward authority
+   ├─ Quick: ≤2 reads, no external marketplace/gap expansion; Deep: existing ≤4 + bounded expansion
+   │
+   │  ON BUY:
+   │  ├─ emit SSE event: sign-request {reqId, payTo, amount, verifyingContract, ...}
+   │  ├─ Browser receives → builds EIP-712 msg from requirements
+   │  ├─ Browser signs with session key sk (NO wallet prompt)
+   │  ├─ POST /api/ask/sign {sessionId, reqId, paymentHeader}
+   │  └─ Server resolves pending promise, retries source with header
+   │
+   ├─ fetch: GET /api/source/[id]/item/[itemId]?version=…&offer=… with x402 signature
+   │  ├─ Server rejects a changed version, offer, or expiry before payment
+   │  └─ x402 verify/settle → decrypt only that article → emit SSE "step: fetched"
+   │
+   ├─ sufficiency: "have we read enough?" → STOP if yes, next BUY if no
+   ├─ synthesize: LLM answer + [S#] citations
+   ├─ attribute: weight each source by contribution (0..1)
+   └─ settle: emit SSE "settle" + USDC-to-wallet breakdown
+
+9. SSE Done: event: done {summary, settled_amount, creator_payouts}
+   └─ Browser shows receipt
+
+10. User revokes session (optional)
+    ├─ POST /api/session/revoke
+    ├─ Browser: GatewayClient.withdraw() residual balance
+    └─ Grant marked revoked, in-flight runs abort
+```
+
+### Article Asset and Payment Authority
+
+An article candidate has two identities with deliberately different jobs:
+
+| Identity | Authority |
+|---|---|
+| `itemId + contentVersion` | Discovery, paid delivery, cache, evidence, citation display, receipt metadata |
+| Registry `sourceId` | Active/verified status, list-price ceiling, creator, source-owned `payTo`, author reward splits |
+| Signed `offerId` | Temporary article discount only; exact item/version/price/expiry, never a payee |
+
+Plaintext versions are SHA-256 digests of the stored article identity and body; encrypted versions
+are their immutable IPFS CIDs. A paid article request must name the selected version. If ingest
+updates the row between discovery and purchase, the route returns 409 before a challenge can be
+signed. The cache is version-keyed and therefore cannot turn an old feed bundle or another article
+revision into a free read. Sources without item rows retain `/api/source/[id]` as a compatibility
+path; that route is not used for normal article discovery. The free source preview exposes each
+article's `itemId`, `contentVersion`, canonical URL, and ready-to-call `paidPath` while still applying
+the creator's configured summary depth, so external agents can participate without DB access.
+
+### Living Answer Audit
+
+Archived dispatches never mutate. `lib/answers-version-audit.ts` compares each citation's stored
+`itemId + contentVersion` with the current `source_items` asset using the same SHA-256/IPFS version
+function that protects the paid route. `GET /api/dispatch/[id]/freshness` publishes that
+metadata-only result for other agents. `superseded` means a replacement version exists;
+`unavailable` remains unknown. Neither state reads plaintext, changes confidence, changes a payment,
+or triggers a dispatch.
+
+The permalink's re-ask link runs the normal paid research path. If the resulting child dispatch has
+the same normalized question as its parent, `lib/answers-delta.ts` compares the two immutable
+receipts (sources, versions, coverage, confidence, evidence counts and Circle-settled payouts).
+Missing payment rows remain unprovable and offline simulations remain zero settled money. A genuine
+follow-up with different scope is not compared. This closes the loop from "material moved" to
+"here is what the reader-authorized paid reread actually changed" without creating standing spend
+authority.
+
+### Portable Research Receipt
+
+`lib/research-receipt.ts` builds a deterministic read model from one immutable `QueryRun` plus its
+current durable `payment_events` rows. `GET /api/dispatch/[id]/receipt` exposes the result and the
+permalink links both an inline JSON view and an attachment download. The payload contains:
+
+- the exact public answer plus a stable UTF-8 SHA-256;
+- the visible BUY/SKIP/CACHE plan and exact item/version metadata;
+- each decomposed claim, evidence-bounded coverage and capped public evidence spans;
+- cited weights/planned rewards, kept separate from actual settlement;
+- sanitized creator payment rows and separate settled/pending/failed/simulated totals.
+
+The entire payload is canonicalized with recursively sorted object keys and SHA-256 hashed. The
+repository verifier recomputes that digest from a file or URL, compares the HTTPS response header
+when present, and accepts a separately retained `--expect` digest. The embedded self-hash catches an
+unrecomputed edit but is not an authenticity signature: it neither proves who originally served the bytes nor replaces a
+publisher content manifest, Circle settlement evidence, SourceRegistry authority, or ArcScan proof.
+
+For new real runs, the projection compares durable settled/pending/failed rows with the number of
+settled plus pending authorizations recorded when the run finished. A missing/extra row makes the
+snapshot `incomplete`; it never falls back to `totalToCreators`. Payer/session addresses, EIP-3009
+authorization ids and internal database ids are omitted. Reconciliation can legitimately replace a
+pending state with exact Circle settled/failed evidence, producing a new snapshot digest while the
+answer hash remains unchanged. Receipt generation performs no payment, reservation, registry write,
+purchase or decrypt operation.
+
+### Ambiguous Settlement Reconciliation
+
+A signed authorization that crossed the HTTP submission boundary without a valid Circle response
+is persisted as `pending`; it is excluded from settled spend, earnings, notifications, fulfillment,
+and traction. The scheduled reconciler queries Circle with documented payer, payee, Arc network,
+USDC and start-date filters, then follows every trusted `pageAfter` cursor inside a fixed scan bound.
+Circle does not document a nonce search filter, so query parameters are never treated as proof.
+
+Only one exact nonce + payer + payee + sending/recipient network + token + integer micro-USDC match
+can promote the row. An exact Circle `failed` state may atomically terminalize it and release browser
+capacity only against the same grant generation. Missing, malformed, conflicting, cross-origin, or
+truncated search evidence changes no financial state.
+
+Every new browser or treasury attempt stores the exact signed EIP-3009 `validBefore` as
+`authorization_expires_at`; old rows remain NULL. Health/status split unresolved rows into browser
+reservations and treasury attempts, and show expired/unknown validity windows. An elapsed window is
+diagnostic context only: the authorization may have been accepted before expiry, so it cannot prove
+failure or release capacity.
+
+### Creator-Signed Article Offer Book
+
+The publisher pricing wallet signs EIP-712 over `sourceId`, `itemId`, `contentVersion`, integer
+`priceUsdc6`, `expiresAt`, and a nonce. For an on-chain source that signer must equal the freshly
+read `SourceRegistry.creator`; the offer cannot exceed the live registry price and cannot outlive
+30 days. SQLite/Supabase stores one current immutable revision per article. Replacing or revoking
+it immediately makes an older paid path return 409 before a challenge can be signed.
+
+`GET /api/offers` and `/market` expose free metadata, effective/list price, paid path, and the
+signature envelope. During a dispatch the agent ranks candidates by expected value per effective
+dollar. The browser independently refreshes registry authority and verifies offer signature,
+identity, expiry, challenge amount, active state, and payee; the server-funded buyer performs the
+same amount/payee/body checks around Circle settlement. No offer can redirect payout or raise the
+registry ceiling. A missing, invalid, expired, or unavailable offer degrades to list price during
+discovery and fails closed if its stale `offerId` is explicitly presented to the paid route.
+
+### Wanted-Claim Offers
+
+The wanted board still accepts creator offers for a failed claim and records a bounded intent.
+No autonomous worker currently processes those intents or initiates a paid retry. A future
+fulfillment policy needs an explicit product decision before it is reintroduced.
+
+`/wanted/[gapId]` is a canonical read-only projection of the current board: it rebuilds the same live board,
+shows the failed dispatch receipt, and scopes the anonymous feed judge to one current claim. A stale
+or filled id cannot continue to registration from the probe, and the social/share URL carries no
+claim text, payout address, budget, or authority.
+
+The intent row is coordination only. Registration and verification never initiate spend; payTo
+still comes from SourceRegistry. Preview matching prevents an unrelated feed item from being
+attached to a gap. The atomic gap-and-owner admission rule prevents one wallet from multiplying
+a single wanted claim across sources or posts, while the daily wallet quota bounds distinct offers.
+
+An existing creator can answer the same brief without relisting a feed. The SIWE owner surface
+selects the best-matching already-indexed article from its free title/preview and snapshots
+`sourceId + itemId + contentVersion + articleOfferId?`. This records an offer; it does not
+start an automatic question or payment.
+
+### Creator Registration Flow
+
+```
+BROWSER                      KERYX SERVER                   ARC MAINNET
+────────                     ────────────                   ───────────
+
+1. Creator visits keryx.cc/register
+   └─ Connect Wallet + SIWE sign-in (same as user flow)
+
+2. Creator form
+   ├─ Wallet address (auto-filled from SIWE)
+   ├─ Source URL
+   ├─ IPFS CID (upload via Pinata first, or use plaintext)
+   ├─ Author splits (self 100%, or multi-author)
+   └─ Tags (topic keywords)
+
+3. POST /api/sources (SIWE JWT required, role=creator)
+   ├─ Server: Create source in DB (sources table)
+   ├─ Server: Call SourceRegistry.registerSource(url, cid, splits, tags)
+   └─ Arc RPC: Tx settled, SourceRegistry emits SourceRegistered event
+
+4. Indexer (async)
+   ├─ Poll Arc RPC for events from SourceRegistry
+   ├─ Cache event data in DB (sources table)
+   └─ Enables fast discovery in subsequent /ask runs
+
+5. Creator sees earnings
+   ├─ GET /api/payments (SIWE JWT required)
+   └─ Shows all payment_events where creator_wallet = session.address
+```
+
+---
+
+## Component Interactions
+
+### Authentication & Authorization
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ SIWE (Sign-In-With-Ethereum)                                    │
+├─────────────────────────────────────────────────────────────────┤
+│ 1. wagmi v3 + viem v2 connect wallet on selected Arc mainnet chain       │
+│ 2. GET /api/auth/nonce → server issues nonce (5m cookie)        │
+│ 3. Client SIWE message build: domain, chainId 5042, nonce    │
+│ 4. User signs in wallet (non-custodial, no tx)                  │
+│ 5. POST /api/auth/verify {message, signature}                   │
+│    ├─ siwe.verify() checks: signature, nonce, domain, chainId   │
+│    ├─ Delete nonce (single-use)                                 │
+│    ├─ Role derivation: isCreatorWallet(addr) from registry?     │
+│    │                   isDevWallet(addr) from env allowlist?    │
+│    │                   else: asker                              │
+│    └─ jose.signJWT {address, role, exp: 7d} → httpOnly cookie   │
+│ 6. getSession(req) in route handlers: verify JWT, return {addr, role}
+│                                                                  │
+│ No server accounts. No password. Wallet = identity.             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Non-Custodial Payment Spend
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Browser Co-Sign Session Key Spend                               │
+├─────────────────────────────────────────────────────────────────┤
+│ 1. User funds session EOA (one MetaMask tx)                     │
+│    ├─ generatePrivateKey() → ephemeral session key (tab memory) │
+│    ├─ sessAddr = privateKeyToAccount(sk).address                │
+│    └─ MetaMask tx: USDC.transfer(sessAddr, budget)              │
+│                                                                  │
+│ 2. POST /api/session/grant {sessAddr, budget, txHash}           │
+│    └─ Server: verify tx on Arc RPC, store grant record          │
+│                                                                  │
+│ 3. Browser: GatewayClient.deposit(budget)                       │
+│    └─ Session EOA credits budget into Circle Gateway            │
+│                                                                  │
+│ 4. On each source BUY (inside agent loop):                      │
+│    SSE event: sign-request {reqId, payTo, amount, ...}          │
+│    ├─ Browser: builds EIP-712 msg from payTo/amount/contract   │
+│    ├─ Browser: signTypedData(msg) with session key sk (NO prompt)
+│    ├─ POST /api/ask/sign {sessionId, reqId, signedHeader}       │
+│    └─ Server: resolves pending promise, retries with header     │
+│                                                                  │
+│ 5. x402 verify: Circle verifies EIP-712 signature               │
+│    └─ Source received payment from session EOA                  │
+│                                                                  │
+│ Spend cap = funded amount. Only browser signs. Server sees no key.
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### On-Chain Registry
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ SourceRegistry (Arc mainnet 0x42a640...)                        │
+├─────────────────────────────────────────────────────────────────┤
+│ Solidity contract: registerSource(url, cid, splits, tags)       │
+│                                                                  │
+│ Source ID = keccak256(msg.sender, urlHash)                     │
+│   → creator-scoped: same URL, different creator = different ID  │
+│   → prevents URL squatting                                       │
+│                                                                  │
+│ Splits: {[author_addr]: basis_points} Σ = 10,000              │
+│   → multi-author split hardcoded on-chain                       │
+│   → payout split deterministic, transparent                     │
+│                                                                  │
+│ Events: SourceRegistered, SourceUpdated, SourceDeactivated      │
+│   → Emitted on every register/update/deactivate                 │
+│   → Off-chain indexer polls Arc RPC → caches in DB (sources)    │
+│                                                                  │
+│ Access control: onlyCreator modifier                            │
+│   → msg.sender must match the source's creator wallet           │
+└─────────────────────────────────────────────────────────────────┘
+
+Indexer Loop (every ~30s in production):
+├─ Query Arc RPC: logs from SourceRegistry since last polled block
+├─ Parse events: extract (url, creator, cid, splits, tags)
+├─ Store in DB sources table (caches on-chain state)
+└─ Enables fast /ask discovery without querying Arc every time
+```
+
+### Encrypted Content & IPFS
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ IPFS Content Encryption & Payment-Gated Decryption              │
+├─────────────────────────────────────────────────────────────────┤
+│ UPLOAD PATH:                                                    │
+│ 1. Creator provides source content (plaintext or already ciphr)  │
+│ 2. Server: AES-256-GCM encrypt {plaintext, CONTENT_MASTER_KEY}  │
+│ 3. Server: Upload ciphertext to Pinata IPFS                     │
+│ 4. Server: Store CID in DB sources.content_cid                  │
+│                                                                  │
+│ FETCH PATH (x402):                                              │
+│ 1. Agent selected article + version from free metadata          │
+│ 2. GET /api/source/[id]/item/[itemId]?version=… → 402 challenge │
+│ 3. Browser signs EIP-712 → POST /api/ask/sign                   │
+│ 4. Server: verifies version, x402 signature, price, and payTo   │
+│ 5. Inside x402.produce() callback:                              │
+│    ├─ Fetch ciphertext from Pinata (CID known)                  │
+│    ├─ AES-256-GCM decrypt {ciphertext, CONTENT_MASTER_KEY}      │
+│    └─ Return plaintext (now paid for)                           │
+│ 6. Agent reads plaintext content → includes in synthesis        │
+│                                                                  │
+│ FREE PREVIEW:                                                   │
+│ GET /api/source/[id]/preview → plaintext (no x402, 10% excerpt) │
+│                                                                  │
+│ Trade-off: Server holds CONTENT_MASTER_KEY. Upgrade path: Lit.   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Settlement & Accounting
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Settlement & Attribution (End of Agent Loop)                    │
+├─────────────────────────────────────────────────────────────────┤
+│ 1. Agent synthesizes answer + cites sources [S1], [S2], ...      │
+│ 2. Agent computes attribution weights:                          │
+│    ├─ S1 weight = 0.6 (heavily cited)                           │
+│    ├─ S2 weight = 0.3 (moderately cited)                        │
+│    └─ S3 weight = 0.1 (mentioned once)                          │
+│                                                                  │
+│ 3. Total citation reward budget = (total_spent × citation_rate) │
+│    e.g., spent $0.10 on 3 sources, citation_rate = 50% →       │
+│    citation_pool = $0.05 (rest goes to fetch toll)              │
+│                                                                  │
+│ 4. For each cited source (S1, S2, ...):                         │
+│    ├─ POST /api/cite/[id] with weight                           │
+│    ├─ x402 dynamic price: min($0.0001, weight × citation_pool)  │
+│    ├─ Verify settlement → payout to source author wallet        │
+│    └─ Store in DB payment_events (type: citation)               │
+│                                                                  │
+│ 5. Multi-author split (from SourceRegistry):                    │
+│    ├─ payOut $0.015 → author_addr_1: 60%, author_addr_2: 40%   │
+│    └─ Circle verifies split on its end (Keryx sends 1 tx)       │
+│                                                                  │
+│ 6. Store aggregate in payment_events:                           │
+│    ├─ source_id, payout_wallet, amount, timestamp, query_id    │
+│    └─ Used by /api/metrics + creator /api/payments dashboard   │
+│                                                                  │
+│ Two-tier: fetch_toll (small, per-buy) + citation_reward (scaled)│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Evidence-gated citation settlement
+
+Before step 2 above can allocate a citation reward, synthesis proposes
+`claimIndex + source marker + exact quote + support`. The orchestrator verifies that the claim and
+marker exist, the quote occurs in content actually read, and the marker is both inline in the
+answer and declared cited. Public evidence excerpts are capped at 240 characters. Final per-claim
+coverage is the lower of the last post-purchase
+assessment and the strongest qualifying evidence. Rejected markers are removed from the answer
+and never reach `payCitation`; if the final assessment is unavailable, reward authorization fails
+closed while answer delivery continues. Fetch tolls already paid remain settled. The persisted `evidence`
+and `claimCoverage` fields are the source of truth for new dispatches, with historical trace
+coverage retained as a compatibility fallback. Nullable scalar evidence counters keep dashboard
+aggregation independent of full receipt payloads and leave pre-ledger history unsampled.
+
+## Data Persistence
+
+### Database Schema
+
+**`sources`** — one per registered creator source
+| Column | Type | Notes |
+|--------|------|-------|
+| id | TEXT PRIMARY KEY | UUID |
+| url | TEXT | canonical source URL |
+| url_hash | BLOB | keccak256(url) for on-chain ID |
+| creator_wallet | TEXT | SIWE-authed creator address |
+| content_cid | TEXT | IPFS CID (encrypted plaintext) |
+| splits | JSON | {author_addr: bp, ...} (10,000 sum) |
+| tags | TEXT | comma-delimited (topic keywords) |
+| status | TEXT | active / deactivated |
+| created_at | DATETIME | registration timestamp |
+| on_chain_source_id | TEXT | from SourceRegistry event |
+
+**`source_notify`** — one per source with a notify-on-citation webhook (off-chain, owner-private)
+| Column | Type | Notes |
+|--------|------|-------|
+| source_id | TEXT PRIMARY KEY | links to sources |
+| notify_url | TEXT | creator endpoint Keryx POSTs on a paid citation |
+| secret | TEXT | per-source HMAC key for X-Keryx-Signature (shown to owner once) |
+| updated_at | DATETIME | last set/rotate |
+
+**`payment_events`** — one per BUY or citation
+| Column | Type | Notes |
+|--------|------|-------|
+| id | TEXT PRIMARY KEY | UUID |
+| query_id | TEXT | links to queries |
+| source_id | TEXT | links to sources |
+| payout_wallet | TEXT | recipient (author wallet) |
+| amount_usdc | REAL | USDC settled (6 decimals) |
+| type | TEXT | fetch_toll \| citation_reward |
+| tx_hash | TEXT | Arc tx (if settled) |
+| settled | BOOLEAN | true = on-chain confirmed |
+| settlement_status / authorization_id | TEXT | explicit state + EIP-3009 correlation nonce |
+| authorization_expires_at | DATETIME | exact signed `validBefore`; nullable for historical rows |
+| grant_epoch | TEXT | browser reservation generation; NULL for treasury attempts |
+| timestamp | DATETIME | when payment occurred |
+| offer_id / list_price_usdc | TEXT / REAL | signed discount provenance for article fetches |
+
+**`article_offers`** — one current creator-signed discount revision per article
+| Column | Type | Notes |
+|--------|------|-------|
+| source_id / item_id | TEXT | exact parent source and article |
+| id | TEXT | keccak256 of the EIP-712 signature; carried in paid paths and receipts |
+| content_version | TEXT | stale after any article content change |
+| price_usdc6 / expires_at | INTEGER | exact x402 amount and unix-second expiry |
+| signer / nonce / signature | TEXT | public creator authorization proof |
+
+**`gap_intents`** — creator offers against measured demand gaps
+| Column | Type | Notes |
+|--------|------|-------|
+| gap_id / claim | TEXT | stable semantic id + server-snapshotted open claim |
+| failed_query_id | TEXT | dispatch whose question is retried |
+| source_id / source_item_link | TEXT | offered verified source and matched RSS post |
+| owner_wallet | TEXT | must continue to match source ownership before lease |
+| status / attempts | TEXT / INTEGER | pending, running, filled, missed, unpaid, failed; max 3 |
+| lease_expires_at | INTEGER | crash-reclaimable single-worker lease |
+| retry_run_id / coverage / reward_usdc | scalar | public result; reward is settled-only |
+
+**`queries`** — one per agent run
+| Column | Type | Notes |
+|--------|------|-------|
+| id | TEXT PRIMARY KEY | UUID |
+| question | TEXT | user question |
+| asker_wallet | TEXT | who asked (SIWE) |
+| budget_usdc | REAL | user-requested budget |
+| spent_usdc | REAL | actual amount spent |
+| answer | TEXT | synthesized answer |
+| trace | JSON | reasoning log (compact) |
+| created_at | DATETIME | query timestamp |
+
+**`api_keys`** — creator-issued API keys
+| Column | Type | Notes |
+|--------|------|-------|
+| id | TEXT PRIMARY KEY | UUID |
+| creator_wallet | TEXT | issuer (SIWE auth) |
+| key_hash | TEXT | SHA-256(rawKey) — stored hash only |
+| name | TEXT | human label |
+| usage_count | INTEGER | incremented per /api/agent/ask call |
+| last_used | DATETIME | tracking |
+| created_at | DATETIME | mint timestamp |
+
+**`session_grants`** — user-funded session EOAs (cap accounting only; no private key)
+| Column | Type | Notes |
+|--------|------|-------|
+| session_id | TEXT PRIMARY KEY | lowercased SIWE owner wallet |
+| sess_addr | TEXT | browser-held funded session EOA |
+| owner_addr | TEXT | grant owner identity |
+| cap | REAL | Gateway-verified USDC ceiling |
+| spent | REAL | atomically reserved/consumed spend |
+| expiry | INTEGER | unix-ms grant expiry (1h default) |
+| tx_hash | TEXT | funding transaction or recovered marker |
+| grant_epoch | TEXT | fresh generation id on create/recover; binds safe failed-payment release |
+
+**`reasoning_circuits`** — shared LLM provider-step health (no prompt/response data)
+| Column | Type | Notes |
+|--------|------|-------|
+| key | TEXT PRIMARY KEY | provider wire name + reasoning step |
+| failures | INTEGER | retained failure streak |
+| open_until | INTEGER | unix-ms adaptive cooldown |
+| probe_until | INTEGER | single half-open probe lease |
+| updated_at | INTEGER | unix-ms last transition |
+
+---
+
+## Deployment Topology
+
+### Local Development
+```
+localhost:3939                   Node.js server
+├─ Next.js 16 App Router        + SQLite (data/keryx.db)
+├─ Wagmi hooks (client-side)     + isolated Hardhat tests + selected Arc RPC
+├─ Agent brain + offline gateway + Optional Anthropic API key
+└─ SSE + /api/ask endpoint
+```
+
+### VPS Production (keryx.cc)
+```
+keryx.cc (Cloudflare CNAME)
+├─ VPS Node.js server (pm2)      + SQLite (/var/data/keryx.db — on disk)
+├─ Cloudflare Tunnel             + SourceRegistry indexer (polls Arc RPC)
+├─ HTTPS reverse proxy           + Pinata IPFS gateway
+└─ Traction metrics (live dashboard)
+```
+
+### CI/CD
+- **Commit hook**: linting, build check
+- **Push to main**: deploy script runs, restarts app, backfills indexer
+- **Release**: tag + GitHub release + traction update via `arc-canteen`
+
+---
+
+## Security & Trust Model
+
+### Non-Custodial Guarantees
+1. **User funds** live in session EOA + Circle Gateway balance (user holds the key)
+2. **Server never holds** user private keys or session keys (key held in browser tab)
+3. **Payment cap** enforced server-side AND browser-side (spend cannot exceed funded amount)
+4. **Source wallet validation** — fetch-toll payTo verified against on-chain registry
+
+### Threat Coverage
+- **SIWE nonce replay** → single-use + 5-min expiry
+- **JWT forgery** → HMAC HS256 verification + exp check
+- **Unauthorized registry update** → onlyCreator modifier + on-chain verification
+- **Server x402 amount inflation** → browser independently tracks signed total
+- **Content tampering** → IPFS immutable hash, x402 payload hash verified
+- **Private key exposure** → grep audit (no `sk`, `CONTENT_MASTER_KEY`, or `JWT_SECRET` in logs/responses)
+
+**Documented residuals** (trade-offs, tracked):
+- R1: Citation payTo redirect under full compromise (cap-bounded; author manifest fix post-hackathon)
+- R2 historical gap: current mainnet grant admission checks known Circle capacity and
+  retained lifetime debits/holds; availability observations are not future funding guarantees.
+- R3: Worker-held session key; only AES-GCM ciphertext is tab-persisted. XSS during the one-time
+  wallet derivation signature can reproduce it, and same-origin injected code can spend the cap to
+  registry-valid payees. A separate-origin signer boundary is the remaining mitigation.
+- R4 historical gap: current mainnet grants, nonces and spend reservations are durable in
+  sealed SQLite. Restore/replay/concurrent-writer acceptance remains separately evidenced.
+
+See `docs/security-threat-model.md` for full matrix.
+
+---
+
+## Scaling & Future Paths
+
+### Historical MVP limitations (August 2026)
+- **In-process rate-limit**: `rate-limiter-flexible` — single-instance only
+- **Indexer polling**: every 30s, no backpressure if Arc RPC slow
+- **IPFS key on server**: no client-side decryption without server trust
+- **Source enumeration**: `sourceIds[]` call is O(n), not paginated
+
+### Historical post-hackathon proposals
+1. Redis rate-limit → multi-instance scale
+2. Event-only indexing (subscribe to Arc finality)
+3. Lit Protocol key release (once Arc added to Lit)
+4. Pagination + cursor-based source discovery
+5. Multi-tenant enterprise tier (API key scoping, custom SourceRegistry deployments)
+
+---
+
+## Metrics & Observability
+
+### Live Metrics (/api/metrics)
+```json
+{
+  "total_settled_usdc": 125.43,
+  "total_queries": 847,
+  "unique_askers": 142,
+  "top_sources": [
+    {"source_url": "...", "citations": 124, "earnings_usdc": 8.75}
+  ],
+  "creators": {
+    "count": 14,
+    "total_earned_usdc": 125.43
+  },
+  "uptime_hours": 72.5
+}
+```
+
+### Usage reporting
+- Settled payment events are recorded in `payment_events`.
+- Ledger, Proof, Status, and public metrics APIs report combined usage and settled payment totals.
+  Each stored run and payment retains its execution origin for audit and operational diagnostics.
+
+---
+
+## API Surface (RESTful + OpenAPI)
+
+| Endpoint | Auth | Purpose |
+|----------|------|---------|
+| POST `/api/ask` | Anonymous treasury tier or SIWE-owned grant | Stream agent execution (SSE) |
+| POST `/api/ask/sign` | Active grant + scoped pending reqId | Receive browser-signed EIP-712 |
+| GET `/api/sources` | public | List sources (paginated) |
+| POST `/api/sources` | creator JWT | Register new source (optional `notifyUrl`) |
+| GET/POST `/api/creator/[id]/notify` | owner JWT | Get / set / rotate / disable citation webhook (secret shown once) |
+| GET `/api/source/[id]/item/[itemId]?version=…&offer=…` | x402 | Fetch one exact article version at list price or a current signed offer (402 if unpaid) |
+| GET `/api/offers` | public | Payable article book with effective prices and verifiable signed offers |
+| GET/POST/DELETE `/api/creator/[id]/offers` | owner SIWE | Inspect, publish, or revoke current article offers |
+| GET `/api/source/[id]` | x402 | Legacy source-bundle fetch for rows without articles |
+| GET `/api/source/[id]/preview` | public | Free plaintext preview |
+| POST `/api/cite/[id]` | x402 | Citation reward endpoint |
+| GET `/api/keys` | creator JWT | List API keys |
+| POST `/api/keys` | creator JWT | Mint new API key (show once) |
+| DELETE `/api/keys/[key_id]` | creator JWT | Revoke key |
+| GET `/api/payments` | creator JWT | Creator earnings history |
+| GET `/api/metrics` | public | Aggregate traction |
+| POST `/api/session/grant` | JWT | Create session grant |
+| GET `/api/session/credit` | JWT | Check grant balance |
+| GET `/api/onramp/session` | public | Whether mainnet card funding is configured |
+| POST `/api/onramp/session` | JWT, same-origin | Mint one Circle Arc Onramp widget session for the signed-in wallet; request body ignored |
+| POST `/api/session/revoke` | JWT | Strict captured `{sessionId, grantEpoch, sessAddr}` JSON; atomic revoke,409 replacement conflict,428 older-client refresh; residual is advisory |
+| GET `/api/faucet` | public | Testnet USDC drip (2h cooldown per address) |
+| GET `/api/docs` | public | OpenAPI spec (Scalar UI) |
+| GET/POST/DELETE `/mcp` | public or ask-scoped API key | Stateless MCP Streamable HTTP; `research` is budget-clamped and rate-limited |
+
+---
+
+## Conclusion
+
+Keryx's dApp architecture distributes trust: users fund themselves (non-custodial), sources register on-chain 
+(transparent), payments settle via Circle (auditable), and the agent brain reasons over immutable content 
+(IPFS hash-verified). The browser co-sign flow lets users transact without approving each payment, while 
+the cap remains hard.
+
+All phases (01–06) shipped 2026-06-18. See `plans/260618-0025-*/` for implementation details and 
+`docs/security-threat-model.md` for verified threat coverage.

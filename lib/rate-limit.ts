@@ -1,0 +1,88 @@
+/**
+ * Rate limiting, keyed by API key id (not the raw key string) or by client IP.
+ *
+ * Counters are persisted (see lib/rate-limit-store.ts) so they survive a deploy and are shared by
+ * every process on the box. The in-process limiter remains only as the fallback path.
+ */
+
+import { NextResponse } from "next/server";
+import { consumePoint } from "./rate-limit-store";
+
+const WINDOW_MS = 60_000;
+
+/** Per-tier budgets, all over a 60s window. */
+const tiers = {
+  // Authenticated key callers: 10 calls per window.
+  ask: 10,
+  // Unauthenticated (IP-based) callers hitting public read endpoints.
+  public: 60,
+  // Anonymous (no-session) /api/ask calls drive a real treasury-funded agent run — expensive in
+  // LLM tokens and real USDC. Keyed by client IP. 5/60s is generous for a human demoing the site
+  // but blocks scripted treasury-drain / fake-volume loops. Session co-sign uses its own tier.
+  treasuryAsk: 5,
+  // Browser co-sign spends the user's grant rather than Keryx's treasury, but every dispatch still
+  // consumes server-side model/search capacity. Key by the SIWE-verified owner wallet.
+  sessionAsk: 10,
+  // Unkeyed A2A callers (/api/agent/ask without a Bearer key). The x402 fee gates the run, but an
+  // unauthenticated caller could still loop large-budget treasury payouts — IP-key it. More
+  // generous than treasuryAsk because A2A is a paid path; keyed callers use the `ask` tier instead.
+  a2aPublic: 10,
+  // Owner-triggered feed refresh, keyed by SOURCE id (not caller): each call is an outbound
+  // fetch of the creator's feed host, and hammering a third-party blog is the thing to stop.
+  feedRefresh: 2,
+  // Anonymous "check my feed against the demand board", keyed by IP. Every call makes this server
+  // fetch an address the caller chose, so it is deliberately tighter than the public read tier —
+  // room to try a handful of feeds, none to sweep a network through us.
+  feedProbe: 6,
+  // Card-onramp widget sessions, keyed by the signed-in owner wallet. Each one is an outbound
+  // Circle call on Keryx's API key; a person retrying a purchase needs only a few.
+  cardOnramp: 6,
+} as const;
+
+export type RateLimitTier = keyof typeof tiers;
+
+/**
+ * Consume one point for the given key on the given tier.
+ *
+ * Returns null when the request is allowed.
+ * Returns a 429 Response with Retry-After header when the limit is exceeded.
+ * The caller should `return checkRateLimit(...)` — truthy means blocked.
+ */
+export async function checkRateLimit(
+  key: string,
+  tier: RateLimitTier,
+  opts?: { code?: string; message?: string },
+): Promise<NextResponse | null> {
+  const { allowed, msBeforeNext } = await consumePoint(key, tier, tiers[tier], WINDOW_MS);
+  if (allowed) return null;
+
+  const retryAfter = Math.max(1, Math.ceil(msBeforeNext / 1000));
+  // The caller can supply a friendlier error `code` + `message` so the client can
+  // tell an expected throttle (e.g. free-trial limit hit → invite to connect a wallet)
+  // apart from a generic abuse block. Defaults preserve the original contract.
+  return NextResponse.json(
+    {
+      error: opts?.code ?? "rate limit exceeded",
+      ...(opts?.message ? { message: opts.message } : {}),
+      retryAfter,
+    },
+    {
+      status: 429,
+      headers: { "Retry-After": String(retryAfter) },
+    },
+  );
+}
+
+/**
+ * Best-effort client IP for IP-keyed rate limiting. keryx.cc sits behind a Cloudflare Tunnel, so
+ * the real client IP arrives in `cf-connecting-ip`; fall back to the first `x-forwarded-for` hop,
+ * then `x-real-ip`. Unknowns share one bucket (conservative — they rate-limit together).
+ */
+export function clientIp(req: { headers: Headers }): string {
+  const h = req.headers;
+  const cf = h.get("cf-connecting-ip");
+  if (cf) return cf.trim();
+  const xff = h.get("x-forwarded-for");
+  if (xff) return xff.split(",")[0]!.trim();
+  return h.get("x-real-ip")?.trim() ?? "unknown";
+}

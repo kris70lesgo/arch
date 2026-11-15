@@ -1,0 +1,92 @@
+import { spawn } from "node:child_process";
+import { extractionWorker } from "./extraction-worker";
+import { acquireParserSlot } from "./parser-slots";
+import { pdfTextScopeSchema, pdfTextScopeTruncated } from "./pdf-text-scope";
+import { rememberExtractionFailure, type ExtractionDiagnostic } from "./extraction-failure";
+
+export interface PdfExtractionOptions {
+  signal?: AbortSignal;
+  maxPages: number;
+  maxChars: number;
+  timeoutMs: number;
+}
+
+export interface PdfExtraction {
+  text: string;
+  pagesRead: number;
+  totalPages: number;
+  truncated: boolean;
+  pagesWithoutText: number[];
+  textLimitReached: boolean;
+}
+
+const MAX_BYTES = 2 * 1024 * 1024;
+const failure = (reason: ExtractionDiagnostic["reason"]) => {
+  const error = new Error("PDF text extraction failed");rememberExtractionFailure(error, { format: "pdf", reason });return error;
+};
+const cancelled = () => new DOMException("PDF extraction cancelled", "AbortError");
+
+/** Parse untrusted PDF bytes in a disposable process with no inherited secrets. */
+export async function extractPdfText(bytes: Uint8Array, options: PdfExtractionOptions): Promise<PdfExtraction> {
+  if (options.signal?.aborted) throw cancelled();
+  if (!bytes.length || bytes.length > MAX_BYTES ||
+      !Number.isInteger(options.maxPages) || options.maxPages < 1 || options.maxPages > 100 ||
+      !Number.isInteger(options.maxChars) || options.maxChars < 1 || options.maxChars > 200_000 ||
+      !Number.isInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 60_000) throw failure("input-rejected");
+
+  return new Promise((resolve, reject) => {
+    let release: () => void;
+    try { release = acquireParserSlot(); } catch { reject(failure("parser-busy")); return; }
+    let worker: string;
+    try { worker = extractionWorker("pdf"); } catch { release();reject(failure("worker-binding"));return; }
+    let child: ReturnType<typeof spawn>;
+    try { child = spawn(process.execPath, ["--max-old-space-size=64", worker,
+      String(options.maxPages), String(options.maxChars)], {
+      windowsHide: true,
+      env: { NODE_ENV: "production" },
+      stdio: ["pipe", "pipe", "ignore"],
+    }); } catch { release(); reject(failure("worker-start")); return; }
+    let output = "";
+    let outputBytes = 0;
+    let error: Error | undefined;
+    let settled = false;
+    const stop = (reason: Error) => {
+      error ??= reason;
+      child.kill("SIGKILL");
+    };
+    const abort = () => stop(cancelled());
+    const timer = setTimeout(() => stop(failure("deadline")), options.timeoutMs);
+    options.signal?.addEventListener("abort", abort, { once: true });
+    const finish = (reason?: Error) => {
+      if (settled) return;
+      settled = true;
+      release();
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
+      if (reason) { reject(reason); return; }
+      try {
+        const value: PdfExtraction = JSON.parse(output);
+        if (typeof value.text !== "string" || !value.text.trim() || value.text.length > options.maxChars ||
+            !Number.isInteger(value.pagesRead) || value.pagesRead < 1 || value.pagesRead > options.maxPages ||
+            !Number.isInteger(value.totalPages) || value.totalPages < value.pagesRead ||
+            typeof value.truncated !== "boolean") throw failure("invalid-output");
+        const scope = pdfTextScopeSchema.safeParse({ format: "keryx-pdf-text-scope-v1", pagesRead: value.pagesRead,
+          totalPages: value.totalPages, pagesWithoutText: value.pagesWithoutText, textLimitReached: value.textLimitReached });
+        if (!scope.success || value.truncated !== pdfTextScopeTruncated(scope.data)) throw failure("invalid-output");
+        resolve({ text: value.text, pagesRead: value.pagesRead, totalPages: value.totalPages, truncated: value.truncated,
+          pagesWithoutText: scope.data.pagesWithoutText, textLimitReached: scope.data.textLimitReached });
+      } catch { reject(failure("invalid-output")); }
+    };
+    child.stdout!.setEncoding("utf8");
+    child.stdout!.on("data", (chunk: string) => {
+      outputBytes += Buffer.byteLength(chunk, "utf8");
+      if (outputBytes > options.maxChars * 6 + 2048) { stop(failure("output-limit")); return; }
+      output += chunk;
+    });
+    child.on("error", () => finish(error ?? failure("worker-start")));
+    child.on("close", (code) => finish(error ?? (code === 0 ? undefined : failure("worker-exit"))));
+    child.stdin!.on("error", () => stop(failure("worker-io")));
+    child.stdin!.end(bytes);
+    if (options.signal?.aborted) abort();
+  });
+}

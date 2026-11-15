@@ -1,0 +1,320 @@
+/**
+ * indexer.ts — projects SourceRegistry on-chain events into the KeryxDB cache.
+ *
+ * Strategy: event-driven, checkpoint-backed. A WebSocket log subscription (see
+ * indexer-event-subscription.ts) wakes a checkpointed getLogs pass the moment the registry
+ * emits; a slow heartbeat poll backstops WS drops. All writes flow through the one getLogs
+ * path, so restarts resume cleanly from `lastSyncedBlock` in sync_state and a missed push
+ * can never lose an event.
+ *
+ * Arc testnet has deterministic BFT finality — no reorgs are possible. Events are indexed
+ * immediately once visible in getLogs results, with zero confirmation-depth logic.
+ *
+ * Offline dev: `config.registryAddress` unset → syncOnce() returns immediately, no-op.
+ *
+ * Checkpoint safety: getRegistrySource() now throws on RPC error instead of
+ * returning null. applyLogs() propagates the throw, syncOnce() does NOT advance the
+ * checkpoint past the failed chunk, and the next tick retries from the same fromBlock.
+ * Idempotent upsert makes retry safe.
+ *
+ * Off-chain metadata merge: on SourceRegistered, the indexer reads source_meta
+ * (written by POST /api/sources at register time) and fills name/description/url/rssUrl
+ * from there. Payment-critical fields (payoutWallet, authors, fetchPrice) always come from
+ * chain. If metadata is missing, short placeholders are used (not hex id slice).
+ *
+ * Active flag: SourceDeactivated sets active=false via a real Source field.
+ * listSources() filters active=true, so deactivated sources are never surfaced to the agent.
+ */
+
+import { createPublicClient, keccak256, type Address, type Log } from "viem";
+import { arcTestnet, chainForProfile } from "@/lib/chains";
+import { assertArcRpcChain, attestedArcAuthorityHttp } from "@/lib/arc-rpc-attestation";
+import { config } from "@/lib/config";
+import { REGISTRY_ABI, getRegistrySource } from "@/lib/registry/registry-client";
+import { subscribeRegistryLogs } from "./indexer-event-subscription";
+import { safeErrorMessage } from "../ops/safe-error-message";
+import type { KeryxDB } from "./keryx-db";
+import type { Author, Source } from "@/lib/types";
+import { assertConfiguredRegistryAuthority, configuredRegistryAuthorities, registryCheckpointKey, sameRegistryAuthority, type SourceRegistryAuthority } from "../registry/source-registry-authority";
+import { REVISIONED_REGISTRY_ABI } from "../registry/registry-abi";
+import { retainRegistryCollision } from "../registry/registry-collisions";
+
+// BigInt() constructor used instead of a `10000n` literal — tsconfig targets ES2017, which predates
+// BigInt literal syntax (ES2020+), though BigInt itself is available at runtime.
+// 10_000 is the widest span Arc's public RPC serves; 50_000 is refused. At 500 a cold start from the
+// deploy block would have cost ~7,000 getLogs calls in a single pass.
+const CHUNK_SIZE = BigInt(10_000);
+// Chunks per pass. A cold or long-stalled index catches up over several ticks instead of hammering
+// the RPC in one unbounded loop — each pass still checkpoints, so no ground is re-covered.
+const MAX_CHUNKS_PER_PASS = 20;
+const SYNC_KEY = "lastSyncedBlock";
+
+function getPublicClient() {
+  return createPublicClient({
+    chain: config.profile ? chainForProfile(config.profile) : arcTestnet,
+    transport: attestedArcAuthorityHttp(config.rpcUrl),
+  });
+}
+
+/**
+ * Run one sync pass: fetch all new registry events from lastSyncedBlock+1 → head,
+ * apply them to the cache, and checkpoint after each SUCCESSFULLY processed chunk.
+ * If applyLogs throws (RPC error mid-chunk), setSyncState is NOT called — the next
+ * tick retries from the same fromBlock.
+ * No-op when registryAddress is not configured (offline dev mode).
+ */
+export async function syncOnce(db: KeryxDB): Promise<void> {
+  if (!config.registryAddress) return;
+  const authorities = configuredRegistryAuthorities();
+  if (!authorities.length) return syncRegistry(db);
+  const failures: unknown[] = [];
+  for (const authority of authorities) {
+    try { await syncRegistry(db, authority, authorities.filter(origin => origin.version === 1).length === 1); }
+    catch (error) { failures.push(error); }
+  }
+  if (failures.length) throw failures[0];
+}
+
+async function syncRegistry(db: KeryxDB, authority?: SourceRegistryAuthority, uniqueLegacyV1 = false): Promise<void> {
+
+  const client = getPublicClient();
+  if (authority) {
+    const code = await client.getCode({ address: authority.address });
+    if (!code || code === "0x" || keccak256(code) !== authority.codeHash ||
+        authority.version !== 1 && await client.readContract({ address: authority.address, abi: REVISIONED_REGISTRY_ABI, functionName: "registryVersion" }) !== authority.version)
+      throw new Error("Indexer registry differs from its reviewed immutable origin");
+  }
+  const head = await client.getBlockNumber();
+
+  const syncKey = authority ? registryCheckpointKey(authority) : SYNC_KEY;
+  let lastRaw = await db.getSyncState(syncKey);
+  if (authority?.version === 1 && uniqueLegacyV1 && lastRaw === null) {
+    // Historical singleton checkpoint belonged to V1. It never bootstraps V2/V3.
+    const legacyRaw = await db.getSyncState(SYNC_KEY);
+    if (legacyRaw !== null) {
+      if (!/^(0|[1-9]\d{0,19})$/.test(legacyRaw) || BigInt(legacyRaw) < BigInt(authority.deployBlock) || BigInt(legacyRaw) > head)
+        throw new Error("Legacy V1 checkpoint is outside its reviewed chain window");
+      await assertArcRpcChain(config.rpcUrl);
+      await db.setSyncState(syncKey, legacyRaw); lastRaw = legacyRaw;
+    }
+  }
+  const lastSynced = lastRaw !== null ? BigInt(lastRaw) : authority ? BigInt(authority.deployBlock) - BigInt(1) : BigInt(config.registryDeployBlock ?? 0);
+
+  const from = lastSynced + BigInt(1);
+  if (from > head) return;
+
+  let chunks = 0;
+  for (let lo = from; lo <= head; lo += CHUNK_SIZE) {
+    if (chunks++ >= MAX_CHUNKS_PER_PASS) return; // the next tick resumes from the checkpoint
+    const hi = lo + CHUNK_SIZE - BigInt(1) < head ? lo + CHUNK_SIZE - BigInt(1) : head;
+
+    const logs = await client.getLogs({
+      address: (authority?.address ?? config.registryAddress) as Address,
+      events: REGISTRY_ABI.filter(
+        (e): e is (typeof REGISTRY_ABI)[number] & { type: "event" } => e.type === "event",
+      ),
+      fromBlock: lo,
+      toBlock: hi,
+    });
+
+    // applyLogs throws if any RPC call fails — do NOT advance checkpoint on error.
+    await applyLogs(logs, db, authority);
+    // Re-attest before the durable cursor moves, including an empty log chunk.
+    await assertArcRpcChain(config.rpcUrl);
+    await db.setSyncState(syncKey, hi.toString());
+  }
+}
+
+/**
+ * Map raw viem log events to Source cache rows and upsert them.
+ *
+ * SourceRegistered / SourceUpdated:
+ *   - Payment fields (payoutWallet, authors, fetchPrice, contentCid, active) from chain.
+ *   - Human-readable fields (name, description, url) merged from source_meta table.
+ *   - getRegistrySource() throws on RPC error — propagates up so checkpoint does not advance.
+ *
+ * SourceDeactivated:
+ *   - Sets active=false on the cached row via a targeted upsert.
+ *   - Uses a partial update that preserves existing human-readable fields.
+ *
+ * A source is found by its on-chain id first, and only then by the row id. Sources registered on
+ * Arc before this cache existed carry human-readable slug ids with the hash in `onchain_id`; keying
+ * a row by the hash alone would mint a second row beside them on the first `SourceUpdated`, and a
+ * `SourceDeactivated` would sail past the real one.
+ */
+export async function applyLogs(logs: Log[], db: KeryxDB, authority?: SourceRegistryAuthority): Promise<void> {
+  if (authority) assertConfiguredRegistryAuthority(authority);
+  for (const log of logs) {
+    if (authority && log.address && log.address.toLowerCase() !== authority.address)
+      throw new Error("Registry event belongs to another immutable origin");
+    const eventName = (log as { eventName?: string }).eventName;
+
+    if (eventName === "SourceRegistered" || eventName === "SourceUpdated") {
+      const args = (log as { args?: Record<string, unknown> }).args ?? {};
+      const id = args["id"] as `0x${string}` | undefined;
+      if (!id) continue;
+
+      // getRegistrySource now throws on RPC error — propagates to syncOnce.
+      const record = authority ? await getRegistrySource(id, { authority }) : await getRegistrySource(id);
+      // Record not found (zero-address creator) means the event is stale or mismatched.
+      // Skip inactive records on initial index — SourceDeactivated will handle them.
+      if (!record || !record.active) continue;
+
+      // fetchPriceUsdc6 is in 6-decimal USDC units; convert to float USDC for the cache layer.
+      const fetchPrice = Number(record.fetchPriceUsdc6) / 1_000_000;
+
+      const existing = await resolveSource(db, id);
+      if (authority && existing) {
+        if (!existing.registryAuthority) throw new Error("Existing source requires its original registry origin binding");
+        assertConfiguredRegistryAuthority(existing.registryAuthority);
+        if (!sameRegistryAuthority(existing.registryAuthority, authority)) {
+          await quarantineCollision(db, log, id, existing.id, authority, existing.registryAuthority); continue;
+        }
+      }
+
+      // Map on-chain basis-point splits → Author.splitWeight = basisPoints / 10_000, stored as a
+      // float in the cache. The float is lossless for payouts: settlement allocates the reward in
+      // integer micro-USDC (allocateSplit) so the legs sum to exactly the reward regardless of any
+      // float representation of the weights — no per-payout rounding drift downstream.
+      // Author names are off-chain; carry over the one this row already had for that wallet.
+      const knownNames = new Map(
+        (existing?.authors ?? []).map((a) => [a.walletAddress.toLowerCase(), a.name]),
+      );
+      const authors: Author[] = record.authors.map((a) => ({
+        name: knownNames.get(a.wallet.toLowerCase()) ?? a.wallet,
+        walletAddress: a.wallet,
+        splitWeight: a.basisPoints / 10_000,
+      }));
+
+      // Tags stored on-chain as comma-separated string; split for the cache array.
+      const tags = record.tags
+        ? record.tags.split(",").map((t) => t.trim()).filter(Boolean)
+        : [];
+
+      // Read off-chain metadata written by POST /api/sources at register time.
+      // Payment fields always come from chain; name/description/url come from source_meta.
+      const meta = await db.getSourceMeta(id);
+      if (authority && meta?.registryAuthority && !sameRegistryAuthority(meta.registryAuthority, authority)) {
+        assertConfiguredRegistryAuthority(meta.registryAuthority);
+        await quarantineCollision(db, log, id, existing?.id ?? id, authority, meta.registryAuthority); continue;
+      }
+
+      const source: Source = {
+        // Keep the id the row already has. Sources that predate this cache use a slug.
+        id: existing?.id ?? id,
+        name: meta?.name || existing?.name || `source-${id.slice(2, 8)}`, // short non-hex fallback
+        url: meta?.url || existing?.url || "",
+        description: meta?.description || existing?.description || "",
+        // Not on-chain. A first-time registrant's feed arrives via source_meta; an existing row
+        // already knows its own. Losing it strands the source: verification would then check the
+        // site's homepage for a token the creator placed in the feed.
+        rssUrl: meta?.rssUrl || existing?.rssUrl,
+        walletAddress: record.payoutWallet,
+        fetchPrice,
+        tags,
+        authors,
+        active: true,
+        // On-chain register() is the same permissionless squatting vector as the web form, so a
+        // freshly-indexed source starts UNVERIFIED (off the agent's money path until its owner
+        // proves feed control via POST /api/sources/verify). Re-indexing must never downgrade an
+        // already-verified row.
+        verified: existing?.verified ?? false,
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+        ipfsCid: record.contentCid || undefined,
+        // Without this the row would carry no registry id, and the payTo guard — which only
+        // consults the chain for sources that have one — would quietly wave its payouts through.
+        onchainId: id,
+        registerTx: existing?.registerTx ?? (log as { transactionHash?: string }).transactionHash,
+        ...(authority ? { registryAuthority: authority } : {}),
+      };
+
+      await db.upsertSource(source);
+    } else if (eventName === "SourceDeactivated") {
+      const args = (log as { args?: Record<string, unknown> }).args ?? {};
+      const id = args["id"] as string | undefined;
+      if (!id) continue;
+
+      // Re-upsert with active=false, preserving every off-chain field.
+      // If the row doesn't exist yet (e.g. the indexer missed the Register event due to an RPC
+      // failure and the chunk was retried), skip — the Register retry sets active from the
+      // on-chain record, which already reads false.
+      const existing = await resolveSource(db, id);
+      if (authority && existing) {
+        if (!existing.registryAuthority) throw new Error("Existing source requires its original registry origin binding");
+        assertConfiguredRegistryAuthority(existing.registryAuthority);
+        if (!sameRegistryAuthority(existing.registryAuthority, authority)) {
+          await quarantineCollision(db, log, id, existing.id, authority, existing.registryAuthority); continue;
+        }
+      }
+      if (existing) {
+        await db.upsertSource({ ...existing, active: false });
+      }
+    }
+  }
+}
+
+async function quarantineCollision(db: KeryxDB, log: Log, id: string, sourceId: string, observedOrigin: SourceRegistryAuthority, retainedOrigin: SourceRegistryAuthority): Promise<void> {
+  const eventName = (log as { eventName?: string }).eventName;
+  if (eventName !== "SourceRegistered" && eventName !== "SourceUpdated" && eventName !== "SourceDeactivated")
+    throw new Error("Unrecognized registry collision event");
+  await retainRegistryCollision(db, { format: "keryx-registry-collision-v1", status: "withheld", onchainId: id, sourceId, observedOrigin, retainedOrigin,
+    eventName,
+    ...(log.transactionHash ? { transactionHash: log.transactionHash } : {}), ...(log.blockNumber !== null && log.blockNumber !== undefined ? { blockNumber: log.blockNumber.toString() } : {}) });
+}
+
+/**
+ * The row this on-chain id belongs to: by registry id first, then by row id for the rows the
+ * indexer minted itself (those are keyed by the hash, having never had a slug).
+ */
+async function resolveSource(db: KeryxDB, onchainId: string): Promise<Source | null> {
+  return (await db.getSourceByOnchainId(onchainId)) ?? (await db.getSource(onchainId));
+}
+
+let ownedStop: (() => Promise<void>) | undefined;
+
+/** Start the existing coalesced registry sync and retain its owned async drain. */
+export function startIndexer(db: KeryxDB, heartbeatMs = 30_000): () => Promise<void> {
+  if (ownedStop) return ownedStop;
+
+  let running: Promise<void> | undefined;
+  let pending = false;
+  let stopped = false;
+  const sync = () => {
+    if (stopped) return;
+    if (running) {
+      pending = true;
+      return;
+    }
+    running = (async () => {
+      try {
+        await syncOnce(db);
+      } catch (err) {
+        console.error("[keryx indexer]", safeErrorMessage(err));
+      } finally {
+        running = undefined;
+        if (pending && !stopped) {
+          pending = false;
+          sync();
+        }
+      }
+    })();
+  };
+
+  const unsubscribe = subscribeRegistryLogs(sync);
+  const timerId = setInterval(sync, heartbeatMs);
+  let closing: Promise<void> | undefined;
+  const stop = () => {
+    if (!closing) closing = (async () => {
+      stopped = true;
+      pending = false;
+      clearInterval(timerId);
+      // Even a subscription-close failure cannot strand the already-owned pass.
+      try { unsubscribe(); } finally { await running; }
+      if (ownedStop === stop) ownedStop = undefined;
+    })();
+    return closing;
+  };
+  ownedStop = stop;
+  sync(); // Preserve the existing immediate catch-up pass.
+  return stop;
+}
