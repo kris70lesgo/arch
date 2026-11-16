@@ -1,11 +1,11 @@
-# Contributing to Keryx
+# Contributing to Arch
 
-Keryx is a research agent with cited reports, visible source decisions and USDC
+Arch is a research workspace with cited reports, visible source decisions and USDC
 creator rewards. Public production uses Arc mainnet. Local testnet and offline
 fixtures are separate environments; keep their labels and payment evidence intact.
 
 Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Use the
-[issue chooser](https://github.com/tang-vu/keryx/issues/new/choose) for bugs,
+[issue chooser](https://github.com/kris70lesgo/arch/issues/new/choose) for bugs,
 accessibility barriers and feature requests. Report vulnerabilities privately
 under the [security policy](SECURITY.md); use [support](SUPPORT.md) for account or
 installation help. English and Vietnamese reports are welcome.
