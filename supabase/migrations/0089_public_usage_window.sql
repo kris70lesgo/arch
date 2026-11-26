@@ -1,6 +1,6 @@
 -- Ordinary storage only. No history rewrite, payment mutation, or native enrollment.
 do $$ begin
-  if to_regclass('public.keryx_storage_identity') is not null or to_regclass('keryx_storage.identity') is not null then
+  if not public.keryx_ordinary_storage_available_v1() then
     raise exception 'usage_unavailable';
   end if;
 end $$;
@@ -12,7 +12,7 @@ as $$
 declare
   lower_bound timestamptz; upper_bound timestamptz; result jsonb; runs jsonb; payments jsonb;
 begin
-  if to_regclass('public.keryx_storage_identity') is not null or to_regclass('keryx_storage.identity') is not null then
+  if not public.keryx_ordinary_storage_available_v1() then
     raise exception 'usage_unavailable';
   end if;
   if p_window is null or jsonb_typeof(p_window) <> 'object'

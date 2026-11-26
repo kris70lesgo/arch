@@ -3,7 +3,7 @@ begin;
 create function public.deliverable_acceptance_ordinary_v1() returns void
 language plpgsql security invoker set search_path=pg_catalog,public as $$
 begin
-  if to_regclass('keryx_storage.identity') is not null or to_regclass('public.keryx_storage_identity') is not null then
+  if not public.keryx_ordinary_storage_available_v1() then
     raise exception 'acceptance_unavailable';
   end if;
 end; $$;

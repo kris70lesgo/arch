@@ -3,7 +3,7 @@ begin;
 create function public.anonymous_run_claims_ordinary_v1() returns void
 language plpgsql security invoker set search_path=pg_catalog,public as $$
 begin
-  if to_regclass('keryx_storage.identity') is not null or to_regclass('public.keryx_storage_identity') is not null then
+  if not public.keryx_ordinary_storage_available_v1() then
     raise exception 'claims_unavailable';
   end if;
 end; $$;
@@ -79,7 +79,7 @@ begin raise exception 'claims_unavailable'; end; $$;
 create trigger anonymous_run_claims_seal_immutable before update or delete on public.anonymous_run_claims_catalog_seal
   for each row execute function public.anonymous_run_claims_seal_immutable_v1();
 alter table public.anonymous_run_claims_catalog_seal enable row level security;
-revoke all on public.anonymous_run_claims_catalog_seal from public,anon,authenticated;
+revoke all on public.anonymous_run_claims_catalog_seal from public,anon,authenticated,service_role;
 grant select on public.anonymous_run_claims_catalog_seal to service_role;
 create policy anonymous_run_claims_seal_read on public.anonymous_run_claims_catalog_seal for select to service_role using(true);
 

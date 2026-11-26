@@ -78,7 +78,7 @@ alter table public.run_privacy enable row level security;
 alter table public.run_privacy_defaults enable row level security;
 alter table public.run_privacy_audit enable row level security;
 alter table public.run_privacy_catalog_seal enable row level security;
-revoke all on public.run_privacy,public.run_privacy_defaults,public.run_privacy_audit,public.run_privacy_catalog_seal from public,anon,authenticated;
+revoke all on public.run_privacy,public.run_privacy_defaults,public.run_privacy_audit,public.run_privacy_catalog_seal from public,anon,authenticated,service_role;
 grant select,insert,update on public.run_privacy,public.run_privacy_defaults to service_role;
 grant select,insert on public.run_privacy_audit to service_role;
 grant select on public.run_privacy_catalog_seal to service_role;
@@ -107,7 +107,7 @@ select jsonb_build_object(
 ); $$;
 create function public.run_privacy_guard_v1() returns void language plpgsql security invoker set search_path=pg_catalog,public as $$
 begin
-  if to_regclass('keryx_storage.identity') is not null or to_regclass('public.keryx_storage_identity') is not null then raise exception 'privacy_unavailable'; end if;
+  if not public.keryx_ordinary_storage_available_v1() then raise exception 'privacy_unavailable'; end if;
   lock table public.run_privacy,public.run_privacy_defaults,public.run_privacy_audit,public.run_privacy_catalog_seal,
     public.query_runs,public.web_sessions,public.a2a_orders,public.query_memories,public.gap_intents in access share mode;
   if (select snapshot from public.run_privacy_catalog_seal where singleton) is distinct from public.run_privacy_catalog_v1() then raise exception 'privacy_unavailable'; end if;
@@ -296,7 +296,7 @@ grant execute on function public.run_privacy_capture_v1(),public.run_privacy_cat
   public.run_privacy_memory_guard_v1(),public.run_privacy_erased_v1(jsonb),public.run_privacy_v1(text,text,jsonb,jsonb,boolean) to service_role;
 -- Validate ordinary prerequisites before freezing the source-created seal. No guessed owner/backfill.
 do $$ begin
-  if to_regclass('keryx_storage.identity') is not null or to_regclass('public.keryx_storage_identity') is not null then raise exception 'privacy_unavailable'; end if;
+  if not public.keryx_ordinary_storage_available_v1() then raise exception 'privacy_unavailable'; end if;
   if (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public'
     and c.relname in ('query_runs','web_sessions','a2a_orders','query_memories','gap_intents') and c.relkind='r' and c.relpersistence='p')<>5 then raise exception 'privacy_unavailable'; end if;
 end; $$;

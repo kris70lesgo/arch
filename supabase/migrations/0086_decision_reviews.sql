@@ -1,7 +1,18 @@
 begin;
 -- Additive ordinary SOURCE domain only. Never apply to enrolled storage.
+select pg_advisory_xact_lock(634781904177021::bigint);
+lock table keryx_storage.identity in share row exclusive mode;
+lock table keryx_storage.enrolled_schema in share row exclusive mode;
+create function public.keryx_ordinary_storage_available_v1() returns boolean
+language sql stable security definer set search_path=pg_catalog,pg_temp as $$
+  select not exists (select 1 from keryx_storage.identity)
+    and not exists (select 1 from keryx_storage.enrolled_schema)
+    and to_regclass('public.keryx_storage_identity') is null;
+$$;
+revoke all on function public.keryx_ordinary_storage_available_v1() from public,anon,authenticated;
+grant execute on function public.keryx_ordinary_storage_available_v1() to service_role;
 do $$ begin
-  if to_regclass('keryx_storage.identity') is not null or to_regclass('public.keryx_storage_identity') is not null then
+  if not public.keryx_ordinary_storage_available_v1() then
     raise exception 'review_unavailable';
   end if;
 end; $$;
@@ -31,7 +42,7 @@ grant select,insert,update on public.decision_review_records,public.decision_rev
 create function public.decision_review_ordinary_v1() returns void
 language plpgsql security invoker set search_path=pg_catalog,public as $$
 begin
-  if to_regclass('keryx_storage.identity') is not null or to_regclass('public.keryx_storage_identity') is not null then
+  if not public.keryx_ordinary_storage_available_v1() then
     raise exception 'review_unavailable';
   end if;
 end; $$;
